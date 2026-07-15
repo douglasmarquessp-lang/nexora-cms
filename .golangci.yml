@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - dupl
+    - goconst
+    - gocritic
+    - gofmt
+    - goimports
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - unconvert
+    - whitespace
+    - wsl
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: nexora
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+  govet:
+    enable-all: true
+  errcheck:
+    check-type-assertions: true
+  gosimple:
+    checks: ["all"]
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - dupl
+  max-issues-per-linter: 0
+  max-same-issues: 0

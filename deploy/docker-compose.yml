@@ -1,0 +1,121 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nexora-postgres
+    environment:
+      POSTGRES_USER: nexora
+      POSTGRES_PASSWORD: nexora_secret
+      POSTGRES_DB: nexora
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexora-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: dev
+    container_name: nexora-api
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: nexora
+      DATABASE_PASSWORD: nexora_secret
+      DATABASE_NAME: nexora
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: dev-jwt-secret-nexora-2026
+      DEBUG: "true"
+      LOG_LEVEL: debug
+    volumes:
+      - ..:/app
+      - go_cache:/root/.cache/go-build
+    working_dir: /app
+    command: air -c .air.toml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: dev
+    container_name: nexora-migrate
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: nexora
+      DATABASE_PASSWORD: nexora_secret
+      DATABASE_NAME: nexora
+    volumes:
+      - ..:/app
+    working_dir: /app
+    command: go run cmd/migrate/main.go up
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: ../web
+      dockerfile: ../deploy/Dockerfile.admin
+    container_name: nexora-admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../web:/app
+      - node_admin_modules:/app/node_modules
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      - api
+
+  site:
+    build:
+      context: ../site
+      dockerfile: ../deploy/Dockerfile.site
+    container_name: nexora-site
+    ports:
+      - "3001:3000"
+    volumes:
+      - ../site:/app
+      - node_site_modules:/app/node_modules
+    working_dir: /app
+    command: npm run dev
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  go_cache:
+  node_admin_modules:
+  node_site_modules:

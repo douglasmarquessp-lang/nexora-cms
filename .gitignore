@@ -1,0 +1,40 @@
+# Binários
+nexora
+*.exe
+*.out
+*.test
+
+# Dependências
+node_modules/
+vendor/
+
+# Ambiente
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+.next/
+
+# Dados locais
+data/
+data/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.prof

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.next/
+bin/
+tmp/
+vendor/
+data/
+*.log
+*.sql
+*.yml
+*.yaml
+go.mod
+go.sum
+Dockerfile
+.DS_Store
