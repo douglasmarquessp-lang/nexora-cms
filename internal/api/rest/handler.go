@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
@@ -13,7 +14,9 @@ type Context struct {
 func (c *Context) JSON(status int, data interface{}) {
 	c.ResponseWriter.Header().Set("Content-Type", "application/json")
 	c.ResponseWriter.WriteHeader(status)
-	json.NewEncoder(c.ResponseWriter).Encode(data)
+	if err := json.NewEncoder(c.ResponseWriter).Encode(data); err != nil {
+		slog.Error("failed to encode JSON response", "error", err)
+	}
 }
 
 func (c *Context) Error(status int, code, message string, details ...interface{}) {
@@ -25,7 +28,9 @@ func (c *Context) Error(status int, code, message string, details ...interface{}
 	}
 
 	if len(details) > 0 {
-		body["error"].(map[string]interface{})["details"] = details[0]
+		if errMap, ok := body["error"].(map[string]interface{}); ok {
+			errMap["details"] = details[0]
+		}
 	}
 
 	c.JSON(status, body)

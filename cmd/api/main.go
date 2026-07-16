@@ -14,8 +14,11 @@ import (
 	"nexora/internal/api"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
+	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
 	categoriesModule "nexora/internal/modules/categories"
+	mediaModule "nexora/internal/modules/media"
+	pluginsModule "nexora/internal/plugins"
 	postsModule "nexora/internal/modules/posts"
 	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
@@ -25,7 +28,16 @@ import (
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/ratelimit"
+	"nexora/internal/pkg/storage"
 )
+
+type eventBusAdapter struct {
+	bus *kernel.EventBus
+}
+
+func (a *eventBusAdapter) Emit(ctx context.Context, eventType string, payload interface{}, siteID string) error {
+	return a.bus.Emit(ctx, kernel.EventType(eventType), payload, siteID)
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -65,13 +77,26 @@ func main() {
 
 	k := kernel.New(cfg, log, db)
 
+	storageDriver := storage.NewDriver(
+		cfg.Storage.Driver,
+		cfg.Storage.LocalPath,
+		"/uploads",
+		cfg.Storage.S3Bucket,
+		cfg.Storage.S3Region,
+		cfg.Storage.S3Endpoint,
+		cfg.Storage.S3Key,
+		cfg.Storage.S3Secret,
+	)
+
 	authMod := authModule.NewAuthModule(cfg, log, db)
 	siteMod := siteModule.NewSiteModule(cfg, log, db, ch)
 	postsMod := postsModule.NewPostModule(cfg, log, db, ch)
 	categoriesMod := categoriesModule.NewCategoryModule(cfg, log, db, ch)
 	tagsMod := tagsModule.NewTagModule(cfg, log, db, ch)
+	assetsMod := assetsModule.NewAssetModule(cfg, log, db, ch, storageDriver)
+	mediaMod := mediaModule.NewMediaModule(cfg, log, db, ch, storageDriver)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			os.Exit(1)
@@ -98,6 +123,19 @@ func main() {
 
 	tagsSvc := tagsMod.Service()
 	tagsSvc.SetEventBus(k.EventBus())
+
+	assetsSvc := assetsMod.Service()
+	assetsSvc.SetEventBus(k.EventBus())
+
+	mediaSvc := mediaMod.Service()
+	mediaSvc.SetEventBus(k.EventBus())
+
+	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
+		PluginsDir: "plugins",
+	}, log, &eventBusAdapter{bus: k.EventBus()})
+	if err := pluginManager.Init(ctx); err != nil {
+		log.Warn("plugin manager initialization", "error", err)
+	}
 
 	if err := k.Start(ctx); err != nil {
 		log.Error("kernel start failed", "error", err)
@@ -129,6 +167,9 @@ func main() {
 		PostsSvc:       postsSvc,
 		CategoriesSvc:  categoriesSvc,
 		TagsSvc:        tagsSvc,
+		AssetsSvc:      assetsSvc,
+		MediaSvc:       mediaSvc,
+		PluginManager:  pluginManager,
 		CasbinEnforcer: enforcer,
 		RateLimits:     rateLimiter,
 	}

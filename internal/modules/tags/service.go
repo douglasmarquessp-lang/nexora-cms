@@ -251,7 +251,9 @@ func (s *Service) List(ctx context.Context, siteID uuid.UUID) (*TagListResponse,
 	}
 
 	var total int
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM tags WHERE site_id = $1 AND deleted_at IS NULL`, siteID).Scan(&total)
+	if err := p.QueryRow(ctx, `SELECT COUNT(*) FROM tags WHERE site_id = $1 AND deleted_at IS NULL`, siteID).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count tags: %w", err)
+	}
 
 	return &TagListResponse{
 		Tags:  tags,

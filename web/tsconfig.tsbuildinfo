@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/api/client.ts","./src/lib/utils.ts","./src/pages/Dashboard.tsx","./src/pages/Login.tsx","./src/pages/NotFound.tsx","./src/stores/auth.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/api/client.ts","./src/lib/utils.ts","./src/pages/Dashboard.tsx","./src/pages/Login.tsx","./src/pages/MediaLibrary.tsx","./src/pages/NotFound.tsx","./src/pages/Plugins.tsx","./src/stores/auth.ts"],"version":"5.9.3"}

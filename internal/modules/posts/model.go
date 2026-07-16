@@ -142,3 +142,25 @@ type PostSummary struct {
 type SetStatusRequest struct {
 	Status PostStatus `json:"status"`
 }
+
+type AutosaveRequest struct {
+	Title   string        `json:"title"`
+	Content []interface{} `json:"content"`
+	Excerpt string        `json:"excerpt"`
+}
+
+type Autosave struct {
+	ID        uuid.UUID              `json:"id"`
+	PostID    uuid.UUID              `json:"post_id"`
+	SiteID    uuid.UUID              `json:"site_id"`
+	UserID    uuid.UUID              `json:"user_id"`
+	Title     string                 `json:"title"`
+	Content   []interface{}          `json:"content"`
+	Excerpt   string                 `json:"excerpt"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
+}
+
+var (
+	ErrAutosaveNotFound = errors.New("autosave not found")
+)

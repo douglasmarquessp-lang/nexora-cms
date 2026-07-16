@@ -100,14 +100,16 @@ func (s *MFAService) ValidateBackupCode(hashedCodes []string, code string) (bool
 	return false, ""
 }
 
-func (s *MFAService) GenerateBackupCodes() []string {
+func (s *MFAService) GenerateBackupCodes() ([]string, error) {
 	codes := make([]string, 8)
 	for i := range codes {
 		b := make([]byte, 4)
-		rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			return nil, fmt.Errorf("failed to generate backup code: %w", err)
+		}
 		codes[i] = fmt.Sprintf("%08x", b)
 	}
-	return codes
+	return codes, nil
 }
 
 func (s *MFAService) HashBackupCodes(codes []string) []string {
@@ -133,7 +135,10 @@ func (s *MFAService) Enroll(ctx context.Context, userID uuid.UUID, svc *Service)
 		return nil, err
 	}
 
-	backupCodes := s.GenerateBackupCodes()
+	backupCodes, err := s.GenerateBackupCodes()
+	if err != nil {
+		return nil, err
+	}
 	hashedBackupCodes := s.HashBackupCodes(backupCodes)
 
 	_, err = svc.db.Pool.Exec(ctx,

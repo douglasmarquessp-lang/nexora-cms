@@ -270,8 +270,14 @@ func TestOAuthProviderConfig_Defaults(t *testing.T) {
 }
 
 func TestGenerateState(t *testing.T) {
-	s1 := generateState()
-	s2 := generateState()
+	s1, err := generateState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, err := generateState()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(s1) != 32 {
 		t.Errorf("expected hex string length 32, got %d", len(s1))

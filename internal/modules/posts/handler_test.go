@@ -384,6 +384,177 @@ func TestHandler_SetStatus(t *testing.T) {
 	})
 }
 
+func TestHandler_Autosave(t *testing.T) {
+	h, _ := setupHandlerTest(t)
+
+	t.Run("missing site", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/posts/"+uuid.New().String()+"/autosave", strings.NewReader(`{"title":"autosave"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withUserID(req)
+		rest.AdaptHandler(h.Autosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("no auth", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/posts/"+uuid.New().String()+"/autosave", strings.NewReader(`{"title":"autosave"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withSiteID(req)
+		rest.AdaptHandler(h.Autosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid id", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/posts/invalid/autosave", strings.NewReader(`{"title":"autosave"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"id": "invalid"})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.Autosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		postID := uuid.New().String()
+		req := httptest.NewRequest(http.MethodPost, "/posts/"+postID+"/autosave", strings.NewReader(`{invalid`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"id": postID})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.Autosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		postID := uuid.New().String()
+		req := httptest.NewRequest(http.MethodPost, "/posts/"+postID+"/autosave", strings.NewReader(`{"title":"autosave"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"id": postID})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.Autosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d", rec.Code)
+		}
+	})
+}
+
+func TestHandler_GetAutosave(t *testing.T) {
+	h, _ := setupHandlerTest(t)
+
+	t.Run("missing site", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/posts/"+uuid.New().String()+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withUserID(req)
+		rest.AdaptHandler(h.GetAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("no auth", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/posts/"+uuid.New().String()+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withSiteID(req)
+		rest.AdaptHandler(h.GetAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid id", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/posts/invalid/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": "invalid"})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.GetAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		postID := uuid.New().String()
+		req := httptest.NewRequest(http.MethodGet, "/posts/"+postID+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": postID})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.GetAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d", rec.Code)
+		}
+	})
+}
+
+func TestHandler_DeleteAutosave(t *testing.T) {
+	h, _ := setupHandlerTest(t)
+
+	t.Run("missing site", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/posts/"+uuid.New().String()+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withUserID(req)
+		rest.AdaptHandler(h.DeleteAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("no auth", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/posts/"+uuid.New().String()+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+		req = withSiteID(req)
+		rest.AdaptHandler(h.DeleteAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid id", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/posts/invalid/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": "invalid"})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.DeleteAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		postID := uuid.New().String()
+		req := httptest.NewRequest(http.MethodDelete, "/posts/"+postID+"/autosave", nil)
+		req = withChiParams(req, map[string]string{"id": postID})
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.DeleteAutosave).ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d", rec.Code)
+		}
+	})
+}
+
 func TestHandler_ResponseFormat(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 

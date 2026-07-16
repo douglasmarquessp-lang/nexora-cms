@@ -159,7 +159,10 @@ func TestMFAService_ValidateBackupCode_Empty(t *testing.T) {
 
 func TestMFAService_ValidateBackupCode_Valid(t *testing.T) {
 	s := NewMFAService()
-	codes := s.GenerateBackupCodes()
+	codes, err := s.GenerateBackupCodes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	hashed := s.HashBackupCodes(codes)
 
 	ok, remaining := s.ValidateBackupCode(hashed, codes[0])
@@ -190,7 +193,10 @@ func TestMFAService_ValidateBackupCode_Invalid(t *testing.T) {
 
 func TestMFAService_GenerateBackupCodes(t *testing.T) {
 	s := NewMFAService()
-	codes := s.GenerateBackupCodes()
+	codes, err := s.GenerateBackupCodes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(codes) != 8 {
 		t.Errorf("expected 8 backup codes, got %d", len(codes))
 	}

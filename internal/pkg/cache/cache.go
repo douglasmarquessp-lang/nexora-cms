@@ -33,7 +33,10 @@ func (c *memoryCache) Get(_ context.Context, key string) ([]byte, error) {
 	if !ok {
 		return nil, nil
 	}
-	entry := val.(memCacheEntry)
+	entry, ok := val.(memCacheEntry)
+	if !ok {
+		return nil, nil
+	}
 	if !entry.expires.IsZero() && time.Now().After(entry.expires) {
 		c.store.Delete(key)
 		return nil, nil

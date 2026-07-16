@@ -265,13 +265,19 @@ func (s *Service) getPost(ctx context.Context, siteID uuid.UUID, postID *uuid.UU
 	post.ScheduledAt = scheduledAt
 
 	if len(contentJSON) > 0 {
-		json.Unmarshal(contentJSON, &post.Content)
+		if err := json.Unmarshal(contentJSON, &post.Content); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal post content: %w", err)
+		}
 	}
 	if len(postMetaJSON) > 0 {
-		json.Unmarshal(postMetaJSON, &post.PostMeta)
+		if err := json.Unmarshal(postMetaJSON, &post.PostMeta); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal post meta: %w", err)
+		}
 	}
 	if len(metadataJSON) > 0 {
-		json.Unmarshal(metadataJSON, &post.Metadata)
+		if err := json.Unmarshal(metadataJSON, &post.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal post metadata: %w", err)
+		}
 	}
 	if post.Content == nil {
 		post.Content = []interface{}{}
@@ -750,6 +756,114 @@ func (s *Service) getPostTags(ctx context.Context, p database.Pool, postID uuid.
 		tags = []Tag{}
 	}
 	return tags, nil
+}
+
+func (s *Service) Autosave(ctx context.Context, siteID, postID, userID uuid.UUID, req AutosaveRequest) (*Autosave, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+
+	contentJSON := "[]"
+	if len(req.Content) > 0 {
+		b, _ := json.Marshal(req.Content)
+		contentJSON = string(b)
+	}
+
+	metadataJSON := "{}"
+	now := time.Now()
+
+	_, err = p.Exec(ctx,
+		`INSERT INTO post_autosaves (post_id, site_id, user_id, content, title, excerpt, metadata, created_at)
+		 VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8)
+		 ON CONFLICT (post_id, user_id)
+		 DO UPDATE SET content = $4::jsonb, title = $5, excerpt = $6, metadata = $7::jsonb, created_at = $8`,
+		postID, siteID, userID, contentJSON, req.Title, req.Excerpt, metadataJSON, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to autosave post: %w", err)
+	}
+
+	autosave := &Autosave{
+		PostID:    postID,
+		SiteID:    siteID,
+		UserID:    userID,
+		Title:     req.Title,
+		Content:   req.Content,
+		Excerpt:   req.Excerpt,
+		Metadata:  make(map[string]interface{}),
+		CreatedAt: now,
+	}
+
+	if autosave.Content == nil {
+		autosave.Content = []interface{}{}
+	}
+
+	return autosave, nil
+}
+
+func (s *Service) GetAutosave(ctx context.Context, siteID, postID, userID uuid.UUID) (*Autosave, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+
+	var a Autosave
+	var contentJSON, metadataJSON []byte
+	var createdAt time.Time
+
+	err = p.QueryRow(ctx,
+		`SELECT id, post_id, site_id, user_id, COALESCE(title,''), COALESCE(content::text,'[]'), COALESCE(excerpt,''), COALESCE(metadata::text,'{}'), created_at
+		 FROM post_autosaves WHERE post_id = $1 AND site_id = $2 AND user_id = $3`,
+		postID, siteID, userID,
+	).Scan(
+		&a.ID, &a.PostID, &a.SiteID, &a.UserID, &a.Title,
+		&contentJSON, &a.Excerpt, &metadataJSON, &createdAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrAutosaveNotFound
+		}
+		return nil, fmt.Errorf("failed to get autosave: %w", err)
+	}
+
+	a.CreatedAt = createdAt
+
+	if len(contentJSON) > 0 {
+		if err := json.Unmarshal(contentJSON, &a.Content); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal autosave content: %w", err)
+		}
+	}
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &a.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal autosave metadata: %w", err)
+		}
+	}
+	if a.Content == nil {
+		a.Content = []interface{}{}
+	}
+	if a.Metadata == nil {
+		a.Metadata = make(map[string]interface{})
+	}
+
+	return &a, nil
+}
+
+func (s *Service) DeleteAutosave(ctx context.Context, siteID, postID, userID uuid.UUID) error {
+	p, err := s.pool()
+	if err != nil {
+		return err
+	}
+
+	_, err = p.Exec(ctx,
+		`DELETE FROM post_autosaves WHERE post_id = $1 AND site_id = $2 AND user_id = $3`,
+		postID, siteID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete autosave: %w", err)
+	}
+
+	return nil
 }
 
 func isValidStatus(status PostStatus) bool {

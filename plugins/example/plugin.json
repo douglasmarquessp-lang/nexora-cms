@@ -1,0 +1,59 @@
+{
+  "id": "example-plugin",
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "author": "Nexora CMS",
+  "description": "A functional example plugin demonstrating the plugin system capabilities including hooks, routes, and admin pages.",
+  "license": "MIT",
+  "homepage": "https://nexora.example.com/plugins/example",
+  "min_core_version": "0.1.0",
+  "dependencies": [],
+  "permissions": [
+    {
+      "permission": "example.read",
+      "description": "Read example plugin data",
+      "default_roles": ["admin", "editor"]
+    },
+    {
+      "permission": "example.write",
+      "description": "Write example plugin data",
+      "default_roles": ["admin"]
+    }
+  ],
+  "hooks": [
+    {
+      "hook": "after_post_save",
+      "priority": 10
+    },
+    {
+      "hook": "before_render",
+      "priority": 5
+    },
+    {
+      "hook": "after_upload",
+      "priority": 10
+    }
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/plugins/example/hello",
+      "handler": "hello",
+      "type": "api"
+    },
+    {
+      "method": "GET",
+      "path": "/plugins/example/dashboard",
+      "handler": "dashboard",
+      "type": "admin"
+    }
+  ],
+  "admin_pages": [
+    {
+      "title": "Example",
+      "path": "/admin/plugins/example",
+      "icon": "puzzle",
+      "position": 100
+    }
+  ]
+}

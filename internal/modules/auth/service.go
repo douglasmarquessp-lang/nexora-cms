@@ -195,7 +195,9 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*AuthR
 	}
 
 	if time.Now().After(session.ExpiresAt) {
-		s.deleteSession(ctx, session.ID)
+		if err := s.deleteSession(ctx, session.ID); err != nil {
+			s.log.Warn("failed to delete expired session", "error", err, "session_id", session.ID)
+		}
 		return nil, ErrSessionExpired
 	}
 
@@ -204,7 +206,9 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*AuthR
 		return nil, ErrUserNotFound
 	}
 
-	s.deleteSession(ctx, session.ID)
+	if err := s.deleteSession(ctx, session.ID); err != nil {
+		s.log.Warn("failed to delete old session", "error", err, "session_id", session.ID)
+	}
 
 	newAccessToken, err := s.tokenManager.GenerateAccessToken(user.ID.String())
 	if err != nil {
@@ -235,11 +239,15 @@ func (s *Service) Logout(ctx context.Context, userID uuid.UUID, refreshToken str
 	if refreshToken != "" {
 		session, err := s.findSessionByRefreshToken(ctx, refreshToken)
 		if err == nil && session.UserID == userID {
-			s.deleteSession(ctx, session.ID)
+			if err := s.deleteSession(ctx, session.ID); err != nil {
+				s.log.Warn("failed to delete session on logout", "error", err, "session_id", session.ID)
+			}
 		}
 	}
 
-	s.deleteUserSessions(ctx, userID)
+	if err := s.deleteUserSessions(ctx, userID); err != nil {
+		s.log.Warn("failed to delete user sessions on logout", "error", err, "user_id", userID)
+	}
 
 	s.auditLog.LogUserAction(ctx, userID, audit.ActionUserLogout, nil)
 

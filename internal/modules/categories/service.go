@@ -277,7 +277,9 @@ func (s *Service) List(ctx context.Context, siteID uuid.UUID) (*CategoryListResp
 	}
 
 	var total int
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM categories WHERE site_id = $1 AND deleted_at IS NULL`, siteID).Scan(&total)
+	if err := p.QueryRow(ctx, `SELECT COUNT(*) FROM categories WHERE site_id = $1 AND deleted_at IS NULL`, siteID).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count categories: %w", err)
+	}
 
 	return &CategoryListResponse{
 		Categories: categories,

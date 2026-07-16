@@ -10,8 +10,11 @@ import (
 	"nexora/internal/api/health"
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
+	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
 	categoriesModule "nexora/internal/modules/categories"
+	mediaModule "nexora/internal/modules/media"
+	pluginsModule "nexora/internal/plugins"
 	postsModule "nexora/internal/modules/posts"
 	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
@@ -35,6 +38,9 @@ type Dependencies struct {
 	PostsSvc         *postsModule.Service
 	CategoriesSvc    *categoriesModule.Service
 	TagsSvc          *tagsModule.Service
+	AssetsSvc        *assetsModule.Service
+	MediaSvc         *mediaModule.Service
+	PluginManager    *pluginsModule.Manager
 	CasbinEnforcer   *casbinPkg.Enforcer
 	RateLimits       *ratelimit.Limiter
 }
@@ -101,6 +107,9 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	postsHandler := postsModule.NewHandler(deps.PostsSvc, deps.Log)
 	categoriesHandler := categoriesModule.NewHandler(deps.CategoriesSvc, deps.Log)
 	tagsHandler := tagsModule.NewHandler(deps.TagsSvc, deps.Log)
+	assetsHandler := assetsModule.NewHandler(deps.AssetsSvc, deps.Log)
+	mediaHandler := mediaModule.NewHandler(deps.MediaSvc, deps.Log)
+	pluginHandler := pluginsModule.NewHandler(deps.PluginManager)
 
 	r.Get("/posts", rest.AdaptHandler(postsHandler.List))
 	r.Post("/posts", rest.AdaptHandler(postsHandler.Create))
@@ -108,6 +117,9 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	r.Put("/posts/{id}", rest.AdaptHandler(postsHandler.Update))
 	r.Delete("/posts/{id}", rest.AdaptHandler(postsHandler.Delete))
 	r.Patch("/posts/{id}/status", rest.AdaptHandler(postsHandler.SetStatus))
+	r.Post("/posts/{id}/autosave", rest.AdaptHandler(postsHandler.Autosave))
+	r.Get("/posts/{id}/autosave", rest.AdaptHandler(postsHandler.GetAutosave))
+	r.Delete("/posts/{id}/autosave", rest.AdaptHandler(postsHandler.DeleteAutosave))
 
 	r.Get("/categories", rest.AdaptHandler(categoriesHandler.List))
 	r.Get("/categories/tree", rest.AdaptHandler(categoriesHandler.Tree))
@@ -121,6 +133,18 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	r.Get("/tags/{id}", rest.AdaptHandler(tagsHandler.Get))
 	r.Put("/tags/{id}", rest.AdaptHandler(tagsHandler.Update))
 	r.Delete("/tags/{id}", rest.AdaptHandler(tagsHandler.Delete))
+
+	r.Get("/assets", rest.AdaptHandler(assetsHandler.List))
+	r.Post("/assets/upload", rest.AdaptHandler(assetsHandler.Upload))
+	r.Get("/assets/{id}", rest.AdaptHandler(assetsHandler.Get))
+	r.Put("/assets/{id}", rest.AdaptHandler(assetsHandler.Update))
+	r.Delete("/assets/{id}", rest.AdaptHandler(assetsHandler.Delete))
+	r.Post("/assets/link", rest.AdaptHandler(assetsHandler.LinkToPost))
+	r.Delete("/assets/{postID}/link/{assetID}", rest.AdaptHandler(assetsHandler.UnlinkFromPost))
+	r.Get("/posts/{postID}/assets", rest.AdaptHandler(assetsHandler.GetPostAssets))
+
+	mediaModule.RegisterRoutes(r, mediaHandler, deps.CasbinEnforcer)
+	pluginsModule.RegisterRoutes(r, pluginHandler)
 }
 
 func wrapMiddleware(mw func(http.Handler) http.Handler, handler http.Handler) http.HandlerFunc {

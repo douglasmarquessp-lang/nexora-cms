@@ -302,3 +302,113 @@ func (h *Handler) SetStatus(ctx *rest.Context) {
 
 	ctx.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
+
+func (h *Handler) Autosave(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	userID, ok := auth.GetUserIDFromCtx(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	postID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid post ID")
+		return
+	}
+
+	var req AutosaveRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+
+	autosave, err := h.svc.Autosave(ctx.Request.Context(), siteID, postID, userID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrDatabaseNotAvail):
+			ctx.Error(http.StatusServiceUnavailable, "DB_UNAVAILABLE", err.Error())
+		default:
+			h.log.Error("failed to autosave", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to autosave")
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, autosave)
+}
+
+func (h *Handler) GetAutosave(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	userID, ok := auth.GetUserIDFromCtx(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	postID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid post ID")
+		return
+	}
+
+	autosave, err := h.svc.GetAutosave(ctx.Request.Context(), siteID, postID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrAutosaveNotFound):
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "no autosave found")
+		case errors.Is(err, ErrDatabaseNotAvail):
+			ctx.Error(http.StatusServiceUnavailable, "DB_UNAVAILABLE", err.Error())
+		default:
+			h.log.Error("failed to get autosave", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to get autosave")
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, autosave)
+}
+
+func (h *Handler) DeleteAutosave(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	userID, ok := auth.GetUserIDFromCtx(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	postID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid post ID")
+		return
+	}
+
+	err = h.svc.DeleteAutosave(ctx.Request.Context(), siteID, postID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrDatabaseNotAvail):
+			ctx.Error(http.StatusServiceUnavailable, "DB_UNAVAILABLE", err.Error())
+		default:
+			h.log.Error("failed to delete autosave", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to delete autosave")
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}

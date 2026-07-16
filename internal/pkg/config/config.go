@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -78,6 +79,7 @@ type StorageConfig struct {
 	S3Key        string
 	S3Secret     string
 	S3Endpoint   string
+	MaxFileSize  int
 }
 
 type CacheConfig struct {
@@ -88,7 +90,9 @@ type CacheConfig struct {
 var errDefaultJWTSecret = fmt.Errorf("JWT_SECRET must be changed from the default value for security")
 
 func Load() (*Config, error) {
-	godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		slog.Warn(".env file not found, using environment variables", "error", err)
+	}
 
 	cfg := &Config{}
 
@@ -139,13 +143,14 @@ func Load() (*Config, error) {
 	}
 
 	cfg.Storage = StorageConfig{
-		Driver:     getEnv("STORAGE_DRIVER", "local"),
-		LocalPath:  getEnv("STORAGE_LOCAL_PATH", "./data/storage"),
-		S3Bucket:   getEnv("STORAGE_S3_BUCKET", ""),
-		S3Region:   getEnv("STORAGE_S3_REGION", ""),
-		S3Key:      getEnv("STORAGE_S3_KEY", ""),
-		S3Secret:   getEnv("STORAGE_S3_SECRET", ""),
-		S3Endpoint: getEnv("STORAGE_S3_ENDPOINT", ""),
+		Driver:       getEnv("STORAGE_DRIVER", "local"),
+		LocalPath:    getEnv("STORAGE_LOCAL_PATH", "./data/storage"),
+		S3Bucket:     getEnv("STORAGE_S3_BUCKET", ""),
+		S3Region:     getEnv("STORAGE_S3_REGION", ""),
+		S3Key:        getEnv("STORAGE_S3_KEY", ""),
+		S3Secret:     getEnv("STORAGE_S3_SECRET", ""),
+		S3Endpoint:   getEnv("STORAGE_S3_ENDPOINT", ""),
+		MaxFileSize:  getEnvInt("STORAGE_MAX_FILE_SIZE", 50*1024*1024),
 	}
 
 	cfg.Cache = CacheConfig{

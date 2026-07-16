@@ -14,7 +14,9 @@ import (
 )
 
 func main() {
-	godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		slog.Warn(".env file not found, using environment variables", "error", err)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -50,7 +52,10 @@ func main() {
 	case "down":
 		steps := 1
 		if len(os.Args) > 2 {
-			fmt.Sscanf(os.Args[2], "%d", &steps)
+			if n, err := fmt.Sscanf(os.Args[2], "%d", &steps); err != nil || n != 1 {
+				slog.Warn("invalid step count, using default", "value", os.Args[2])
+				steps = 1
+			}
 		}
 		if err := m.Steps(-steps); err != nil && err != migrate.ErrNoChange {
 			slog.Error("migration down failed", "error", err)

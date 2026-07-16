@@ -20,8 +20,9 @@ func New(cfg *config.Config) *Logger {
 		Level: parseLevel(cfg.LogLevel),
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.SourceKey {
-				source := a.Value.Any().(*slog.Source)
-				source.File = trimSourcePath(source.File)
+				if source, ok := a.Value.Any().(*slog.Source); ok {
+					source.File = trimSourcePath(source.File)
+				}
 			}
 			return a
 		},

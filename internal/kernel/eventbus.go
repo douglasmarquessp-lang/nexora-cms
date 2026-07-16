@@ -23,6 +23,13 @@ const (
 	EventPasswordChange EventType = "password.changed"
 	EventMFAEnabled     EventType = "mfa.enabled"
 	EventMFADisabled    EventType = "mfa.disabled"
+
+	EventMediaUploaded  EventType = "media.uploaded"
+	EventMediaUpdated   EventType = "media.updated"
+	EventMediaDeleted   EventType = "media.deleted"
+	EventMediaRestored  EventType = "media.restored"
+	EventFolderCreated  EventType = "folder.created"
+	EventFolderDeleted  EventType = "folder.deleted"
 )
 
 type Event struct {

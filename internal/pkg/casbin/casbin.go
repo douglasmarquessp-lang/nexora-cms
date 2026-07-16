@@ -61,7 +61,9 @@ func (a *pgxAdapter) LoadPolicy(m model.Model) error {
 			rule = append(rule, v5)
 		}
 
-		persist.LoadPolicyArray(rule, m)
+		if err := persist.LoadPolicyArray(rule, m); err != nil {
+			return fmt.Errorf("failed to load policy array: %w", err)
+		}
 	}
 
 	return nil

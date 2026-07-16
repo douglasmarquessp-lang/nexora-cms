@@ -276,10 +276,14 @@ func (s *Service) GetSite(ctx context.Context, siteID uuid.UUID) (*Site, error) 
 	site.DeletedAt = deletedAt
 
 	if len(settingsJSON) > 0 {
-		json.Unmarshal(settingsJSON, &site.Settings)
+		if err := json.Unmarshal(settingsJSON, &site.Settings); err != nil {
+			s.log.Warn("failed to unmarshal site settings", "error", err, "site_id", siteID)
+		}
 	}
 	if len(featureFlagsJSON) > 0 {
-		json.Unmarshal(featureFlagsJSON, &site.FeatureFlags)
+		if err := json.Unmarshal(featureFlagsJSON, &site.FeatureFlags); err != nil {
+			s.log.Warn("failed to unmarshal site feature flags", "error", err, "site_id", siteID)
+		}
 	}
 	if site.Settings == nil {
 		site.Settings = make(map[string]interface{})
@@ -343,10 +347,14 @@ func (s *Service) GetSiteBySlug(ctx context.Context, slug string) (*Site, error)
 	site.DeletedAt = deletedAt
 
 	if len(settingsJSON) > 0 {
-		json.Unmarshal(settingsJSON, &site.Settings)
+		if err := json.Unmarshal(settingsJSON, &site.Settings); err != nil {
+			s.log.Warn("failed to unmarshal site settings", "error", err, "slug", slug)
+		}
 	}
 	if len(featureFlagsJSON) > 0 {
-		json.Unmarshal(featureFlagsJSON, &site.FeatureFlags)
+		if err := json.Unmarshal(featureFlagsJSON, &site.FeatureFlags); err != nil {
+			s.log.Warn("failed to unmarshal site feature flags", "error", err, "slug", slug)
+		}
 	}
 	if site.Settings == nil {
 		site.Settings = make(map[string]interface{})
@@ -414,10 +422,14 @@ func (s *Service) GetSiteByDomain(ctx context.Context, domain string) (*Site, er
 	site.DeletedAt = deletedAt
 
 	if len(settingsJSON) > 0 {
-		json.Unmarshal(settingsJSON, &site.Settings)
+		if err := json.Unmarshal(settingsJSON, &site.Settings); err != nil {
+			s.log.Warn("failed to unmarshal site settings", "error", err, "domain", domain)
+		}
 	}
 	if len(featureFlagsJSON) > 0 {
-		json.Unmarshal(featureFlagsJSON, &site.FeatureFlags)
+		if err := json.Unmarshal(featureFlagsJSON, &site.FeatureFlags); err != nil {
+			s.log.Warn("failed to unmarshal site feature flags", "error", err, "domain", domain)
+		}
 	}
 	if site.Settings == nil {
 		site.Settings = make(map[string]interface{})
@@ -493,10 +505,14 @@ func (s *Service) ListSites(ctx context.Context, userID uuid.UUID, page, perPage
 		}
 
 		if len(settingsJSON) > 0 {
-			json.Unmarshal(settingsJSON, &site.Settings)
+			if err := json.Unmarshal(settingsJSON, &site.Settings); err != nil {
+				s.log.Warn("failed to unmarshal site settings", "error", err, "site_id", site.ID)
+			}
 		}
 		if len(featureFlagsJSON) > 0 {
-			json.Unmarshal(featureFlagsJSON, &site.FeatureFlags)
+			if err := json.Unmarshal(featureFlagsJSON, &site.FeatureFlags); err != nil {
+				s.log.Warn("failed to unmarshal site feature flags", "error", err, "site_id", site.ID)
+			}
 		}
 		if site.Settings == nil {
 			site.Settings = make(map[string]interface{})
@@ -509,7 +525,9 @@ func (s *Service) ListSites(ctx context.Context, userID uuid.UUID, page, perPage
 	}
 
 	if len(sites) > 0 {
-		p.QueryRow(ctx, `SELECT COUNT(*) FROM sites WHERE deleted_at IS NULL`).Scan(&total)
+		if err := p.QueryRow(ctx, `SELECT COUNT(*) FROM sites WHERE deleted_at IS NULL`).Scan(&total); err != nil {
+			return nil, fmt.Errorf("failed to count sites: %w", err)
+		}
 	} else {
 		total = 0
 	}
@@ -861,7 +879,9 @@ func (s *Service) GetGlobalSetting(ctx context.Context, key string) (*GlobalSett
 	}
 
 	if len(valueJSON) > 0 {
-		json.Unmarshal(valueJSON, &gs.Value)
+		if err := json.Unmarshal(valueJSON, &gs.Value); err != nil {
+			s.log.Warn("failed to unmarshal global setting value", "error", err, "key", key)
+		}
 	}
 
 	s.cacheSet(ctx, cacheKey, gs)
@@ -902,7 +922,9 @@ func (s *Service) SetGlobalSetting(ctx context.Context, req UpdateGlobalSettingR
 	}
 
 	if len(valueBytes) > 0 {
-		json.Unmarshal(valueBytes, &gs.Value)
+		if err := json.Unmarshal(valueBytes, &gs.Value); err != nil {
+			s.log.Warn("failed to unmarshal global setting value", "error", err, "key", gs.Key)
+		}
 	}
 
 	s.cacheDel(ctx, "setting:global:"+gs.Key, "settings:global")
@@ -945,7 +967,9 @@ func (s *Service) ListGlobalSettings(ctx context.Context) ([]GlobalSetting, erro
 			gs.Description = *description
 		}
 		if len(valueJSON) > 0 {
-			json.Unmarshal(valueJSON, &gs.Value)
+			if err := json.Unmarshal(valueJSON, &gs.Value); err != nil {
+				s.log.Warn("failed to unmarshal global setting value", "error", err, "key", gs.Key)
+			}
 		}
 
 		settings = append(settings, gs)
@@ -982,7 +1006,9 @@ func (s *Service) GetSiteSetting(ctx context.Context, siteID uuid.UUID, key stri
 	}
 
 	if len(valueJSON) > 0 {
-		json.Unmarshal(valueJSON, &ss.Value)
+		if err := json.Unmarshal(valueJSON, &ss.Value); err != nil {
+			s.log.Warn("failed to unmarshal site setting value", "error", err, "key", key, "site_id", siteID)
+		}
 	}
 
 	s.cacheSet(ctx, cacheKey, ss)
@@ -1020,7 +1046,9 @@ func (s *Service) SetSiteSetting(ctx context.Context, siteID uuid.UUID, req SetS
 	}
 
 	if len(valueJSON) > 0 {
-		json.Unmarshal(valueJSON, &ss.Value)
+		if err := json.Unmarshal(valueJSON, &ss.Value); err != nil {
+			s.log.Warn("failed to unmarshal site setting value", "error", err, "key", req.Key, "site_id", siteID)
+		}
 	}
 
 	s.cacheDel(ctx, "setting:site:"+siteID.String()+":"+req.Key, "settings:site:"+siteID.String())
@@ -1060,7 +1088,9 @@ func (s *Service) ListSiteSettings(ctx context.Context, siteID uuid.UUID) ([]Sit
 		}
 
 		if len(valueJSON) > 0 {
-			json.Unmarshal(valueJSON, &ss.Value)
+			if err := json.Unmarshal(valueJSON, &ss.Value); err != nil {
+				s.log.Warn("failed to unmarshal site setting value", "error", err, "key", ss.Key, "site_id", siteID)
+			}
 		}
 
 		settings = append(settings, ss)

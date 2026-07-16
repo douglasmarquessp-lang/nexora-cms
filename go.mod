@@ -1,6 +1,6 @@
 module nexora
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/casbin/casbin/v2 v2.97.0
@@ -12,6 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/pashagolub/pgxmock/v3 v3.4.0
 	golang.org/x/crypto v0.28.0
+	golang.org/x/image v0.44.0
 )
 
 require (
@@ -23,7 +24,8 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
-	golang.org/x/text v0.19.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

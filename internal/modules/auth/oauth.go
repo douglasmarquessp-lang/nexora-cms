@@ -81,7 +81,10 @@ func (s *OAuthService) GetAuthorizationURL(provider, redirectURI string) (string
 		return "", fmt.Errorf("unsupported OAuth provider: %s", provider)
 	}
 
-	state := generateState()
+	state, err := generateState()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate state: %w", err)
+	}
 	s.stateStore[state] = time.Now().Add(10 * time.Minute)
 
 	u, _ := url.Parse(p.AuthURL)
@@ -243,8 +246,10 @@ func (s *OAuthService) getUserInfo(p *OAuthProviderConfig, accessToken, provider
 	return userInfo, nil
 }
 
-func generateState() string {
+func generateState() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate state: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
