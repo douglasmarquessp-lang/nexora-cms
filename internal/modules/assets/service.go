@@ -196,7 +196,7 @@ func (s *Service) processImage(ctx context.Context, fullPath string, siteID, ass
 	if err != nil {
 		return nil, fmt.Errorf("failed to open image: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	src, _, err := goimage.Decode(f)
 	if err != nil {

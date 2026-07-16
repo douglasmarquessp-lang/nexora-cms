@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -119,14 +120,18 @@ func (c *Cache) Set(ctx context.Context, key string, value interface{}, ttl time
 	}
 
 	if c.redis != nil {
-		_ = c.redis.Set(ctx, key, data, ttl)
+		if err := c.redis.Set(ctx, key, data, ttl); err != nil {
+			slog.Warn("redis set failed", "key", key, "error", err)
+		}
 	}
 	return c.mem.Set(ctx, key, data, ttl)
 }
 
 func (c *Cache) Delete(ctx context.Context, key string) error {
 	if c.redis != nil {
-		_ = c.redis.Delete(ctx, key)
+		if err := c.redis.Delete(ctx, key); err != nil {
+			slog.Warn("redis delete failed", "key", key, "error", err)
+		}
 	}
 	return c.mem.Delete(ctx, key)
 }
@@ -158,7 +163,9 @@ func (c *Cache) SetJSON(ctx context.Context, key string, value interface{}, ttl 
 	}
 
 	if c.redis != nil {
-		_ = c.redis.Set(ctx, key, data, ttl)
+		if err := c.redis.Set(ctx, key, data, ttl); err != nil {
+			slog.Warn("redis setjson failed", "key", key, "error", err)
+		}
 	}
 	return c.mem.Set(ctx, key, data, ttl)
 }

@@ -149,7 +149,7 @@ func (a *pgxAdapter) insertRules(rules []ruleEntry) error {
 	}
 
 	br := a.pool.SendBatch(context.Background(), batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	for range rules {
 		if _, err := br.Exec(); err != nil {

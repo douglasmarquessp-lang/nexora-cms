@@ -44,7 +44,7 @@ func (s *MFAService) GenerateTOTP(secret string) (string, error) {
 	binary.BigEndian.PutUint64(buf, uint64(counter))
 
 	mac := hmac.New(sha1.New, key)
-	mac.Write(buf)
+	_, _ = mac.Write(buf)
 	hash := mac.Sum(nil)
 
 	offset := hash[len(hash)-1] & 0x0F
@@ -250,7 +250,7 @@ func (s *MFAService) generateTOTPForCounter(secret string, counter int64) (strin
 	binary.BigEndian.PutUint64(buf, uint64(counter))
 
 	mac := hmac.New(sha1.New, key)
-	mac.Write(buf)
+	_, _ = mac.Write(buf)
 	hash := mac.Sum(nil)
 
 	offset := hash[len(hash)-1] & 0x0F
@@ -266,7 +266,7 @@ func hashBackupCode(code string) string {
 
 func sha1Bytes(data []byte) []byte {
 	h := sha1.New()
-	h.Write(data)
+	_, _ = h.Write(data)
 	return h.Sum(nil)
 }
 

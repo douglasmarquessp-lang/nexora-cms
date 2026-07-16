@@ -64,7 +64,7 @@ func DecodeImage(path string) (image.Image, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("image: failed to open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	src, format, err := image.Decode(f)
 	if err != nil {
@@ -79,7 +79,7 @@ func DecodeImageInto(path string) (*ImageInfo, image.Image, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("image: failed to open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, img, err := Decode(f)
 	if err != nil {
@@ -94,7 +94,7 @@ func GetImageInfo(path string) (*ImageInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("image: failed to open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, _, err := Decode(f)
 	return info, err
@@ -282,7 +282,7 @@ func saveImage(img image.Image, path, format string) error {
 	if err != nil {
 		return fmt.Errorf("image: failed to create file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	switch strings.ToLower(format) {
 	case "jpeg", "jpg":
@@ -301,7 +301,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("image: failed to open source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -312,7 +312,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("image: failed to create destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {

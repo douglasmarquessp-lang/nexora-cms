@@ -50,7 +50,7 @@ func (h *Handler) Upload(ctx *rest.Context) {
 			ctx.Error(http.StatusBadRequest, "MISSING_FILE", "file is required")
 			return
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		req := UploadRequest{
 			AltText: ctx.Request.FormValue("alt_text"),
@@ -97,7 +97,7 @@ func (h *Handler) Upload(ctx *rest.Context) {
 		}
 
 		media, err := h.svc.Upload(ctx.Request.Context(), siteID, userID, file, header, req)
-		file.Close()
+		_ = file.Close()
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %s", header.Filename, err.Error()))
 			continue

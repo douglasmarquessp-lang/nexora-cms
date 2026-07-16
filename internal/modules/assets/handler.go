@@ -49,7 +49,7 @@ func (h *Handler) Upload(ctx *rest.Context) {
 		ctx.Error(http.StatusBadRequest, "MISSING_FILE", "file is required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	req := UploadRequest{
 		AltText:     ctx.Request.FormValue("alt_text"),

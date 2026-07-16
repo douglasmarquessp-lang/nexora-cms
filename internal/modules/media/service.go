@@ -193,7 +193,7 @@ func (s *Service) processImage(ctx context.Context, fullPath string, siteID, med
 			return nil, fmt.Errorf("failed to open image: %w", err)
 		}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	src, _, err := image.Decode(f)
 	if err != nil {
@@ -439,7 +439,7 @@ func (s *Service) Copy(ctx context.Context, siteID, userID uuid.UUID, mediaIDs [
 		if err != nil {
 			continue
 		}
-		defer data.Close()
+		defer func() { _ = data.Close() }()
 
 		buf := new(bytes.Buffer)
 		if _, err := io.Copy(buf, data); err != nil {

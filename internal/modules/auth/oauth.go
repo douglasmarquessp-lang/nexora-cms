@@ -195,7 +195,7 @@ func (s *OAuthService) exchangeCode(p *OAuthProviderConfig, code string) (string
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -231,7 +231,7 @@ func (s *OAuthService) getUserInfo(p *OAuthProviderConfig, accessToken, provider
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
