@@ -143,11 +143,19 @@ func (h *Handler) Delete(ctx *rest.Context) {
 		return
 	}
 
-	err = h.svc.DeleteSite(ctx.Request.Context(), siteID)
+	userID, ok := auth.GetUserIDFromCtx(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	err = h.svc.DeleteSite(ctx.Request.Context(), siteID, userID)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrSiteNotFound):
 			ctx.Error(http.StatusNotFound, "NOT_FOUND", "site not found")
+		case errors.Is(err, ErrSiteNotAvailable):
+			ctx.Error(http.StatusForbidden, "FORBIDDEN", "site not available")
 		default:
 			h.log.Error("failed to delete site", "error", err)
 			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to delete site")

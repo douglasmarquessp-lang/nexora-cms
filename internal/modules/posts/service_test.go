@@ -240,7 +240,7 @@ func TestService_FireEvent_WithBus(t *testing.T) {
 
 	svc.fireEvent(context.Background(), EventPostCreated, map[string]interface{}{
 		"post_id": uuid.New().String(),
-	})
+	}, uuid.New())
 }
 
 func TestService_FireEvent_WithoutBus(t *testing.T) {
@@ -250,7 +250,7 @@ func TestService_FireEvent_WithoutBus(t *testing.T) {
 
 	svc.fireEvent(context.Background(), EventPostCreated, map[string]interface{}{
 		"post_id": uuid.New().String(),
-	})
+	}, uuid.New())
 }
 
 func TestService_FireEvent_WithSubscriber(t *testing.T) {
@@ -274,7 +274,7 @@ func TestService_FireEvent_WithSubscriber(t *testing.T) {
 	svc.fireEvent(context.Background(), EventPostCreated, map[string]interface{}{
 		"post_id": uuid.New().String(),
 		"slug":    "my-test-post",
-	})
+	}, uuid.New())
 
 	select {
 	case slug := <-received:

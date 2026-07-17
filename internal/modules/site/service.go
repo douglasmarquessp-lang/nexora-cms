@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/audit"
@@ -81,9 +82,10 @@ func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, pay
 	}
 }
 
-func (s *Service) SetRLSContext(ctx context.Context, userID uuid.UUID, role string) context.Context {
+func (s *Service) SetRLSContext(ctx context.Context, userID uuid.UUID, role string, siteID uuid.UUID) context.Context {
 	ctx = context.WithValue(ctx, "app.current_user_id", userID.String())
 	ctx = context.WithValue(ctx, "app.current_user_role", role)
+	ctx = context.WithValue(ctx, "app.current_site_id", siteID.String())
 	return ctx
 }
 
@@ -640,23 +642,105 @@ func (s *Service) UpdateSite(ctx context.Context, siteID uuid.UUID, req UpdateSi
 	return updatedSite, nil
 }
 
-func (s *Service) DeleteSite(ctx context.Context, siteID uuid.UUID) error {
-	p, err := s.pool()
-	if err != nil {
-		return err
-	}
-
+func (s *Service) DeleteSite(ctx context.Context, siteID uuid.UUID, userID uuid.UUID) error {
 	site, err := s.GetSite(ctx, siteID)
 	if err != nil {
 		return err
 	}
 
-	_, err = p.Exec(ctx,
+	if site.OwnerID != userID {
+		var role string
+		if s.db != nil && s.db.Pool != nil {
+			err := s.db.Pool.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, userID).Scan(&role)
+			if err != nil || role != "superadmin" {
+				return ErrSiteNotAvailable
+			}
+		} else {
+			return ErrSiteNotAvailable
+		}
+	}
+
+	pgxPool, ok := s.db.Pool.(*pgxpool.Pool)
+	if !ok {
+		return fmt.Errorf("database pool does not support transactions")
+	}
+
+	tx, err := pgxPool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	cleanup := []string{
+		`DELETE FROM publication_queue WHERE site_id = $1`,
+		`DELETE FROM autocontent_results WHERE autocontent_job_id IN (SELECT id FROM autocontent_jobs WHERE site_id = $1)`,
+		`DELETE FROM autocontent_steps WHERE autocontent_job_id IN (SELECT id FROM autocontent_jobs WHERE site_id = $1)`,
+		`DELETE FROM autocontent_jobs WHERE site_id = $1`,
+		`DELETE FROM workflow_templates WHERE site_id = $1`,
+		`DELETE FROM generation_quality_gates WHERE generation_job_id IN (SELECT id FROM generation_jobs WHERE site_id = $1)`,
+		`DELETE FROM generation_pipeline_logs WHERE generation_job_id IN (SELECT id FROM generation_jobs WHERE site_id = $1)`,
+		`DELETE FROM generation_pipeline WHERE generation_job_id IN (SELECT id FROM generation_jobs WHERE site_id = $1)`,
+		`DELETE FROM generation_stats WHERE site_id = $1`,
+		`DELETE FROM generation_jobs WHERE site_id = $1`,
+		`DELETE FROM editorial_prompt_data WHERE site_id = $1`,
+		`DELETE FROM editorial_translations WHERE site_id = $1`,
+		`DELETE FROM editorial_quality_scores WHERE site_id = $1`,
+		`DELETE FROM editorial_seo_data WHERE site_id = $1`,
+		`DELETE FROM editorial_style_rules WHERE site_id = $1`,
+		`DELETE FROM pipeline_stages WHERE pipeline_id IN (SELECT id FROM editorial_pipelines WHERE site_id = $1)`,
+		`DELETE FROM editorial_pipelines WHERE site_id = $1`,
+		`DELETE FROM article_versions WHERE article_job_id IN (SELECT id FROM article_jobs WHERE site_id = $1)`,
+		`DELETE FROM article_sections WHERE article_job_id IN (SELECT id FROM article_jobs WHERE site_id = $1)`,
+		`DELETE FROM article_outlines WHERE article_job_id IN (SELECT id FROM article_jobs WHERE site_id = $1)`,
+		`DELETE FROM article_jobs WHERE site_id = $1`,
+		`DELETE FROM writing_styles WHERE site_id = $1`,
+		`DELETE FROM research_briefings WHERE research_job_id IN (SELECT id FROM research_jobs WHERE site_id = $1)`,
+		`DELETE FROM research_entities WHERE research_job_id IN (SELECT id FROM research_jobs WHERE site_id = $1)`,
+		`DELETE FROM research_sources WHERE research_job_id IN (SELECT id FROM research_jobs WHERE site_id = $1)`,
+		`DELETE FROM research_jobs WHERE site_id = $1`,
+		`DELETE FROM editorial_widgets WHERE site_id = $1`,
+		`DELETE FROM editorial_calendar_events WHERE site_id = $1`,
+		`DELETE FROM approval_requests WHERE site_id = $1`,
+		`DELETE FROM post_revisions WHERE site_id = $1`,
+		`DELETE FROM editorial_tasks WHERE site_id = $1`,
+		`DELETE FROM post_autosaves WHERE site_id = $1`,
+		`DELETE FROM post_assets WHERE post_id IN (SELECT id FROM posts WHERE site_id = $1)`,
+		`DELETE FROM post_tags WHERE post_id IN (SELECT id FROM posts WHERE site_id = $1)`,
+		`DELETE FROM post_categories WHERE post_id IN (SELECT id FROM posts WHERE site_id = $1)`,
+		`DELETE FROM posts WHERE site_id = $1`,
+		`DELETE FROM categories WHERE site_id = $1`,
+		`DELETE FROM tags WHERE site_id = $1`,
+		`DELETE FROM assets WHERE site_id = $1`,
+		`DELETE FROM media_variants WHERE media_id IN (SELECT id FROM media WHERE site_id = $1)`,
+		`DELETE FROM media WHERE site_id = $1`,
+		`DELETE FROM folders WHERE site_id = $1`,
+		`DELETE FROM seo_scores WHERE site_id = $1`,
+		`DELETE FROM seo_metadata WHERE site_id = $1`,
+		`DELETE FROM seo_internal_links WHERE site_id = $1`,
+		`DELETE FROM seo_audits WHERE site_id = $1`,
+		`DELETE FROM seo_clusters WHERE site_id = $1`,
+		`DELETE FROM seo_keywords WHERE site_id = $1`,
+		`DELETE FROM seo_projects WHERE site_id = $1`,
+		`DELETE FROM site_domains WHERE site_id = $1`,
+		`DELETE FROM site_settings WHERE site_id = $1`,
+	}
+
+	for _, q := range cleanup {
+		if _, err := tx.Exec(ctx, q, siteID); err != nil {
+			return fmt.Errorf("cleanup failed: %w", err)
+		}
+	}
+
+	_, err = tx.Exec(ctx,
 		`UPDATE sites SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
 		siteID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to delete site: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	s.auditLog.Log(ctx, audit.Entry{

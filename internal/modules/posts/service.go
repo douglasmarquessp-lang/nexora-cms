@@ -47,9 +47,9 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}) {
+func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
 	if s.eventBus != nil {
-		s.eventBus.EmitAsync(ctx, eventType, payload, "")
+		s.eventBus.EmitAsync(ctx, eventType, payload, siteID.String())
 	}
 }
 
@@ -198,7 +198,7 @@ func (s *Service) Create(ctx context.Context, siteID, authorID uuid.UUID, req Cr
 		"title":   req.Title,
 		"slug":    slug,
 		"status":  string(status),
-	})
+	}, siteID)
 
 	if status == PostStatusPublished {
 		s.fireEvent(ctx, EventPostPublished, map[string]interface{}{
@@ -206,7 +206,7 @@ func (s *Service) Create(ctx context.Context, siteID, authorID uuid.UUID, req Cr
 			"site_id": siteID.String(),
 			"title":   req.Title,
 			"slug":    slug,
-		})
+		}, siteID)
 	}
 
 	return post, nil
@@ -530,7 +530,7 @@ func (s *Service) Update(ctx context.Context, siteID, postID uuid.UUID, req Upda
 			"post_id": postID.String(),
 			"site_id": siteID.String(),
 			"title":   existing.Title,
-		})
+		}, siteID)
 
 		if req.Status != nil {
 			switch *req.Status {
@@ -538,12 +538,12 @@ func (s *Service) Update(ctx context.Context, siteID, postID uuid.UUID, req Upda
 				s.fireEvent(ctx, EventPostPublished, map[string]interface{}{
 					"post_id": postID.String(),
 					"site_id": siteID.String(),
-				})
+				}, siteID)
 			case PostStatusArchived:
 				s.fireEvent(ctx, EventPostArchived, map[string]interface{}{
 					"post_id": postID.String(),
 					"site_id": siteID.String(),
-				})
+				}, siteID)
 			}
 		}
 
@@ -590,7 +590,7 @@ func (s *Service) Delete(ctx context.Context, siteID, postID uuid.UUID) error {
 		"post_id": postID.String(),
 		"site_id": siteID.String(),
 		"slug":    post.Slug,
-	})
+	}, siteID)
 
 	return nil
 }
@@ -640,9 +640,9 @@ func (s *Service) SetStatus(ctx context.Context, siteID, postID uuid.UUID, statu
 
 	switch status {
 	case PostStatusPublished:
-		s.fireEvent(ctx, EventPostPublished, payload)
+		s.fireEvent(ctx, EventPostPublished, payload, siteID)
 	case PostStatusArchived:
-		s.fireEvent(ctx, EventPostArchived, payload)
+		s.fireEvent(ctx, EventPostArchived, payload, siteID)
 	}
 
 	return nil

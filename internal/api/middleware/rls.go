@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"nexora/internal/modules/auth"
@@ -30,7 +31,12 @@ func RLSContext(svc *sitePkg.Service, dbPool interface{ Exec(ctx context.Context
 				role = "user"
 			}
 
-			ctx = svc.SetRLSContext(ctx, userID, role)
+			siteID, _ := GetSiteID(ctx)
+			if siteID == uuid.Nil {
+				siteID = uuid.Nil
+			}
+
+			ctx = svc.SetRLSContext(ctx, userID, role, siteID)
 
 			if dbPool != nil {
 				_, _ = dbPool.Exec(ctx,
@@ -40,6 +46,10 @@ func RLSContext(svc *sitePkg.Service, dbPool interface{ Exec(ctx context.Context
 				_, _ = dbPool.Exec(ctx,
 					`SELECT set_config('app.current_user_role', $1, true)`,
 					role,
+				)
+				_, _ = dbPool.Exec(ctx,
+					`SELECT set_config('app.current_site_id', $1, true)`,
+					siteID.String(),
 				)
 			}
 

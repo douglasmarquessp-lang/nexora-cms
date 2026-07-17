@@ -78,9 +78,9 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}) {
+func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
 	if s.eventBus != nil {
-		s.eventBus.EmitAsync(ctx, eventType, payload, "")
+		s.eventBus.EmitAsync(ctx, eventType, payload, siteID.String())
 	}
 }
 
@@ -174,7 +174,7 @@ func (s *Service) Upload(ctx context.Context, siteID, userID uuid.UUID, file mul
 		"site_id":  siteID.String(),
 		"filename": header.Filename,
 		"mime":     mimeType,
-	})
+	}, siteID)
 
 	s.invalidateCache(ctx, siteID)
 
@@ -345,7 +345,7 @@ func (s *Service) Update(ctx context.Context, siteID, mediaID uuid.UUID, req Upd
 	s.fireEvent(ctx, EventMediaUpdated, map[string]interface{}{
 		"media_id": mediaID.String(),
 		"site_id":  siteID.String(),
-	})
+	}, siteID)
 
 	s.invalidateCache(ctx, siteID)
 
@@ -385,7 +385,7 @@ func (s *Service) Delete(ctx context.Context, siteID, mediaID uuid.UUID) error {
 	s.fireEvent(ctx, EventMediaDeleted, map[string]interface{}{
 		"media_id": mediaID.String(),
 		"site_id":  siteID.String(),
-	})
+	}, siteID)
 
 	s.invalidateCache(ctx, siteID)
 
@@ -403,7 +403,7 @@ func (s *Service) Restore(ctx context.Context, siteID, mediaID uuid.UUID) error 
 	s.fireEvent(ctx, EventMediaRestored, map[string]interface{}{
 		"media_id": mediaID.String(),
 		"site_id":  siteID.String(),
-	})
+	}, siteID)
 
 	s.invalidateCache(ctx, siteID)
 
@@ -559,7 +559,7 @@ func (s *Service) CreateFolder(ctx context.Context, siteID, userID uuid.UUID, re
 		"folder_id": f.ID.String(),
 		"site_id":   siteID.String(),
 		"name":      req.Name,
-	})
+	}, siteID)
 
 	return f, nil
 }
@@ -640,7 +640,7 @@ func (s *Service) DeleteFolder(ctx context.Context, siteID, folderID uuid.UUID) 
 	s.fireEvent(ctx, EventFolderDeleted, map[string]interface{}{
 		"folder_id": folderID.String(),
 		"site_id":   siteID.String(),
-	})
+	}, siteID)
 
 	s.invalidateCache(ctx, siteID)
 

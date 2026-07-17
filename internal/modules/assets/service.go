@@ -62,9 +62,9 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}) {
+func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
 	if s.eventBus != nil {
-		s.eventBus.EmitAsync(ctx, eventType, payload, "")
+		s.eventBus.EmitAsync(ctx, eventType, payload, siteID.String())
 	}
 }
 
@@ -186,7 +186,7 @@ func (s *Service) Upload(ctx context.Context, siteID, userID uuid.UUID, file mul
 		"site_id":  siteID.String(),
 		"filename": header.Filename,
 		"mime":     mimeType,
-	})
+	}, siteID)
 
 	return &asset, nil
 }
@@ -469,7 +469,7 @@ func (s *Service) Update(ctx context.Context, siteID, assetID uuid.UUID, req Upd
 		s.fireEvent(ctx, EventAssetUpdated, map[string]interface{}{
 			"asset_id": assetID.String(),
 			"site_id":  siteID.String(),
-		})
+		}, siteID)
 	}
 
 	if req.AltText != nil {
@@ -532,7 +532,7 @@ func (s *Service) Delete(ctx context.Context, siteID, assetID uuid.UUID) error {
 	s.fireEvent(ctx, EventAssetDeleted, map[string]interface{}{
 		"asset_id": assetID.String(),
 		"site_id":  siteID.String(),
-	})
+	}, siteID)
 
 	return nil
 }

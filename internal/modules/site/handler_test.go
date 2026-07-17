@@ -219,6 +219,7 @@ func TestHandler_Delete(t *testing.T) {
 		rec := httptest.NewRecorder()
 		siteID := uuid.New().String()
 		req := httptest.NewRequest(http.MethodDelete, "/sites/"+siteID, nil)
+		req = withUserID(req)
 		req = withChiParams(req, map[string]string{"id": siteID})
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {

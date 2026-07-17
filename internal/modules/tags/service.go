@@ -46,9 +46,9 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}) {
+func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
 	if s.eventBus != nil {
-		s.eventBus.EmitAsync(ctx, eventType, payload, "")
+		s.eventBus.EmitAsync(ctx, eventType, payload, siteID.String())
 	}
 }
 
@@ -148,11 +148,11 @@ func (s *Service) Create(ctx context.Context, siteID uuid.UUID, req CreateTagReq
 	})
 
 	s.fireEvent(ctx, EventTagCreated, map[string]interface{}{
-		"tag_id": tagID.String(),
+		"tag_id":  tagID.String(),
 		"site_id": siteID.String(),
-		"name":   req.Name,
-		"slug":   slug,
-	})
+		"name":    req.Name,
+		"slug":    slug,
+	}, siteID)
 
 	return tag, nil
 }
@@ -332,7 +332,7 @@ func (s *Service) Update(ctx context.Context, siteID, tagID uuid.UUID, req Updat
 		"tag_id":  tagID.String(),
 		"site_id": siteID.String(),
 		"name":    updated.Name,
-	})
+	}, siteID)
 
 	return updated, nil
 }
@@ -368,7 +368,7 @@ func (s *Service) Delete(ctx context.Context, siteID, tagID uuid.UUID) error {
 		"tag_id":  tagID.String(),
 		"site_id": siteID.String(),
 		"name":    existing.Name,
-	})
+	}, siteID)
 
 	return nil
 }

@@ -16,11 +16,18 @@ import (
 	"nexora/internal/kernel"
 	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
+	editorialModule "nexora/internal/modules/editorial"
 	categoriesModule "nexora/internal/modules/categories"
 	mediaModule "nexora/internal/modules/media"
 	pluginsModule "nexora/internal/plugins"
+	researchModule "nexora/internal/modules/research"
 	postsModule "nexora/internal/modules/posts"
 	siteModule "nexora/internal/modules/site"
+	writerModule "nexora/internal/modules/writer"
+	editorialEngineModule "nexora/internal/modules/editorialengine"
+	generatorModule "nexora/internal/modules/contentgenerator"
+	autocontentModule "nexora/internal/modules/autocontent"
+	aiModule "nexora/internal/ai"
 	tagsModule "nexora/internal/modules/tags"
 	"nexora/internal/pkg/cache"
 	casbinPkg "nexora/internal/pkg/casbin"
@@ -95,8 +102,15 @@ func main() {
 	tagsMod := tagsModule.NewTagModule(cfg, log, db, ch)
 	assetsMod := assetsModule.NewAssetModule(cfg, log, db, ch, storageDriver)
 	mediaMod := mediaModule.NewMediaModule(cfg, log, db, ch, storageDriver)
+	editorialMod := editorialModule.NewEditorialModule(cfg, log, db, ch)
+	researchMod := researchModule.NewResearchModule(cfg, log, db, ch)
+	writerMod := writerModule.NewWriterModule(cfg, log, db, ch)
+	editorialEngineMod := editorialEngineModule.NewEditorialEngineModule(cfg, log, db, ch)
+	generatorMod := generatorModule.NewGeneratorModule(cfg, log, db, ch)
+	autocontentMod := autocontentModule.NewAutocontentModule(cfg, log, db, ch)
+	aiMod := aiModule.NewAIModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, aiMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			os.Exit(1)
@@ -129,6 +143,27 @@ func main() {
 
 	mediaSvc := mediaMod.Service()
 	mediaSvc.SetEventBus(k.EventBus())
+
+	editorialSvc := editorialMod.Service()
+	editorialSvc.SetEventBus(k.EventBus())
+
+	researchSvc := researchMod.Service()
+	researchSvc.SetEventBus(k.EventBus())
+
+	writerSvc := writerMod.Service()
+	writerSvc.SetEventBus(k.EventBus())
+
+	editorialEngineSvc := editorialEngineMod.Service()
+	editorialEngineSvc.SetEventBus(k.EventBus())
+
+	generatorSvc := generatorMod.Service()
+	generatorMod.SetEventBus(k.EventBus())
+
+	autocontentSvc := autocontentMod.Service()
+	autocontentMod.SetEventBus(k.EventBus())
+
+	aiSvc := aiMod.Service()
+	aiMod.SetEventBus(k.EventBus())
 
 	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
 		PluginsDir: "plugins",
@@ -169,7 +204,14 @@ func main() {
 		TagsSvc:        tagsSvc,
 		AssetsSvc:      assetsSvc,
 		MediaSvc:       mediaSvc,
-		PluginManager:  pluginManager,
+		EditorialSvc:   editorialSvc,
+		ResearchSvc:    researchSvc,
+		WriterSvc:          writerSvc,
+		EditorialEngineSvc: editorialEngineSvc,
+		GeneratorSvc:          generatorSvc,
+		AutocontentSvc:        autocontentSvc,
+		AIManager:             aiSvc,
+		PluginManager:      pluginManager,
 		CasbinEnforcer: enforcer,
 		RateLimits:     rateLimiter,
 	}

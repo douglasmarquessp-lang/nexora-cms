@@ -193,7 +193,7 @@ func TestService_FireEvent_WithBus(t *testing.T) {
 
 	svc.fireEvent(context.Background(), EventTagCreated, map[string]interface{}{
 		"tag_id": uuid.New().String(),
-	})
+	}, uuid.New())
 }
 
 func TestService_FireEvent_WithoutBus(t *testing.T) {
@@ -203,7 +203,7 @@ func TestService_FireEvent_WithoutBus(t *testing.T) {
 
 	svc.fireEvent(context.Background(), EventTagCreated, map[string]interface{}{
 		"tag_id": uuid.New().String(),
-	})
+	}, uuid.New())
 }
 
 func TestService_FireEvent_WithSubscriber(t *testing.T) {
@@ -227,7 +227,7 @@ func TestService_FireEvent_WithSubscriber(t *testing.T) {
 	svc.fireEvent(context.Background(), EventTagCreated, map[string]interface{}{
 		"tag_id": uuid.New().String(),
 		"name":   "Test Tag",
-	})
+	}, uuid.New())
 
 	select {
 	case name := <-received:

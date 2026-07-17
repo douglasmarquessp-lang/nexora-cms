@@ -136,7 +136,7 @@ func TestService_DeleteSite_NoDB(t *testing.T) {
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
 
-	err := svc.DeleteSite(context.Background(), uuid.New())
+	err := svc.DeleteSite(context.Background(), uuid.New(), uuid.New())
 	if err != ErrDatabaseNotAvailable {
 		t.Errorf("expected ErrDatabaseNotAvailable, got: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestService_SetRLSContext(t *testing.T) {
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
 
-	ctx := svc.SetRLSContext(context.Background(), uuid.New(), "admin")
+	ctx := svc.SetRLSContext(context.Background(), uuid.New(), "admin", uuid.New())
 	if ctx == nil {
 		t.Fatal("expected non-nil context")
 	}
@@ -678,7 +678,8 @@ func TestService_SetRLSContext_Values(t *testing.T) {
 	svc := NewService(cfg, log, nil, nil)
 
 	userID := uuid.New()
-	ctx := svc.SetRLSContext(context.Background(), userID, "admin")
+	siteID := uuid.New()
+	ctx := svc.SetRLSContext(context.Background(), userID, "admin", siteID)
 
 	uidStr, ok := ctx.Value("app.current_user_id").(string)
 	if !ok {
@@ -695,6 +696,14 @@ func TestService_SetRLSContext_Values(t *testing.T) {
 	if role != "admin" {
 		t.Errorf("expected 'admin', got '%s'", role)
 	}
+
+	sidStr, ok := ctx.Value("app.current_site_id").(string)
+	if !ok {
+		t.Fatal("expected app.current_site_id in context")
+	}
+	if sidStr != siteID.String() {
+		t.Errorf("expected %s, got %s", siteID.String(), sidStr)
+	}
 }
 
 func TestService_SetRLSContext_DifferentRoles(t *testing.T) {
@@ -705,7 +714,7 @@ func TestService_SetRLSContext_DifferentRoles(t *testing.T) {
 	roles := []string{"superadmin", "siteadmin", "editor", "author", "subscriber"}
 	for _, role := range roles {
 		t.Run(role, func(t *testing.T) {
-			ctx := svc.SetRLSContext(context.Background(), uuid.New(), role)
+			ctx := svc.SetRLSContext(context.Background(), uuid.New(), role, uuid.New())
 			r, ok := ctx.Value("app.current_user_role").(string)
 			if !ok || r != role {
 				t.Errorf("expected role %q, got %q", role, r)
