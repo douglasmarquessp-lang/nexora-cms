@@ -17,6 +17,8 @@ linters:
     - nakedret
     - revive
     - unconvert
+  disable:
+    - gosimple
 
 linters-settings:
   revive:
@@ -65,22 +67,6 @@ issues:
     - linters:
         - staticcheck
       text: "SA4023"
-    - path: internal/modules/seo/service\.go
-      linters:
-        - staticcheck
-      text: "S1005|S1009"
-    - path: internal/modules/editorial/service\.go
-      linters:
-        - staticcheck
-      text: "S1039"
-    - path: internal/modules/posts/service\.go
-      linters:
-        - staticcheck
-      text: "S1039"
-    - path: internal/modules/site/service\.go
-      linters:
-        - staticcheck
-      text: "S1039"
     - path: internal/ai/
       linters:
         - misspell
