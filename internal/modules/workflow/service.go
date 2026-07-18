@@ -256,7 +256,6 @@ func (s *Service) UpdateJob(ctx context.Context, siteID, jobID uuid.UUID, req Up
 	if req.GenerateEN != nil {
 		setClauses = append(setClauses, fmt.Sprintf("generate_en = $%d", argIdx))
 		args = append(args, *req.GenerateEN)
-		argIdx++
 	}
 
 	if len(setClauses) == 0 {
@@ -406,7 +405,6 @@ func (s *Service) UpdateQueueItem(ctx context.Context, siteID, itemID uuid.UUID,
 	if req.FeaturedImageURL != nil {
 		setClauses = append(setClauses, fmt.Sprintf("featured_image_url = $%d", argIdx))
 		args = append(args, *req.FeaturedImageURL)
-		argIdx++
 	}
 
 	if len(setClauses) == 0 {
@@ -520,41 +518,20 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Workf
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error) {
-	p, err := s.pool()
-	if err != nil {
-		return nil, err
-	}
-
-	job, err := s.getJobByID(ctx, p, siteID, jobID)
-	if err != nil {
-		return nil, err
-	}
-	if job.Status != JobStatusRunning {
-		return nil, ErrJobNotRunning
-	}
-
-	now := time.Now()
-	_, err = p.Exec(ctx,
-		`UPDATE workflow_jobs SET status = 'paused', updated_at = $1 WHERE id = $2 AND site_id = $3`,
-		now, jobID, siteID,
+	return s.transitionJobStatus(ctx, siteID, jobID,
+		JobStatusRunning, ErrJobNotRunning,
+		"paused", "workflow.paused", EventWorkflowPaused, "pause",
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to pause workflow job: %w", err)
-	}
-
-	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.paused", "job", &jobID,
-		string(JobStatusRunning), string(JobStatusPaused), nil, "", &siteID, 0)
-	s.addLog(ctx, p, jobID, job.CurrentStep, "info", "workflow job paused", nil, 0)
-	s.fireEvent(ctx, EventWorkflowPaused, map[string]interface{}{
-		"job_id":  jobID.String(),
-		"site_id": siteID.String(),
-		"step":    job.CurrentStep,
-	}, siteID)
-
-	return s.getJobByID(ctx, p, siteID, jobID)
 }
 
 func (s *Service) ResumeJob(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error) {
+	return s.transitionJobStatus(ctx, siteID, jobID,
+		JobStatusPaused, ErrJobPaused,
+		"running", "workflow.resumed", EventWorkflowResumed, "resume",
+	)
+}
+
+func (s *Service) transitionJobStatus(ctx context.Context, siteID, jobID uuid.UUID, requiredStatus JobStatus, statusErr error, newStatus, action string, event kernel.EventType, verb string) (*WorkflowJob, error) {
 	p, err := s.pool()
 	if err != nil {
 		return nil, err
@@ -564,23 +541,23 @@ func (s *Service) ResumeJob(ctx context.Context, siteID, jobID uuid.UUID) (*Work
 	if err != nil {
 		return nil, err
 	}
-	if job.Status != JobStatusPaused {
-		return nil, ErrJobPaused
+	if job.Status != requiredStatus {
+		return nil, statusErr
 	}
 
 	now := time.Now()
 	_, err = p.Exec(ctx,
-		`UPDATE workflow_jobs SET status = 'running', updated_at = $1 WHERE id = $2 AND site_id = $3`,
-		now, jobID, siteID,
+		`UPDATE workflow_jobs SET status = $4, updated_at = $1 WHERE id = $2 AND site_id = $3`,
+		now, jobID, siteID, newStatus,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resume workflow job: %w", err)
+		return nil, fmt.Errorf("failed to %s workflow job: %w", verb, err)
 	}
 
-	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.resumed", "job", &jobID,
-		string(JobStatusPaused), string(JobStatusRunning), nil, "", &siteID, 0)
-	s.addLog(ctx, p, jobID, job.CurrentStep, "info", "workflow job resumed", nil, 0)
-	s.fireEvent(ctx, EventWorkflowResumed, map[string]interface{}{
+	s.addHistory(ctx, p, siteID, &jobID, nil, action, "job", &jobID,
+		string(requiredStatus), newStatus, nil, "", &siteID, 0)
+	s.addLog(ctx, p, jobID, job.CurrentStep, "info", "workflow job "+verb+"d", nil, 0)
+	s.fireEvent(ctx, event, map[string]interface{}{
 		"job_id":  jobID.String(),
 		"site_id": siteID.String(),
 		"step":    job.CurrentStep,
@@ -799,16 +776,16 @@ func (s *Service) onStepFailed(ctx context.Context, p database.Pool, jobID uuid.
 
 	if stepName == string(StepQualityCheck) {
 		s.fireEvent(ctx, EventWorkflowQualityFailed, map[string]interface{}{
-			"job_id":  jobID.String(),
-			"step":    stepName,
-			"error":   errorMsg,
+			"job_id": jobID.String(),
+			"step":   stepName,
+			"error":  errorMsg,
 		}, uuid.Nil)
 	}
 	if stepName == string(StepSEOEngine) {
 		s.fireEvent(ctx, EventWorkflowSEOFailed, map[string]interface{}{
-			"job_id":  jobID.String(),
-			"step":    stepName,
-			"error":   errorMsg,
+			"job_id": jobID.String(),
+			"step":   stepName,
+			"error":  errorMsg,
 		}, uuid.Nil)
 	}
 
@@ -1085,8 +1062,8 @@ func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, a
 
 	case "generate_pt_en":
 		return s.CreateJob(ctx, siteID, userID, CreateJobRequest{
-			Title:    coalesceStr(action.Title, "New Article"),
-			Language: "pt",
+			Title:      coalesceStr(action.Title, "New Article"),
+			Language:   "pt",
 			GeneratePT: true,
 			GenerateEN: true,
 		})
@@ -1136,8 +1113,8 @@ func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, a
 			return nil, err
 		}
 		return s.CreateJob(ctx, siteID, userID, CreateJobRequest{
-			Title:    existing.Title + " (Regenerated)",
-			Language: existing.Language,
+			Title:       existing.Title + " (Regenerated)",
+			Language:    existing.Language,
 			SourceJobID: &existing.ID,
 		})
 
@@ -1154,8 +1131,8 @@ func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, a
 			return nil, err
 		}
 		return s.CreateJob(ctx, siteID, userID, CreateJobRequest{
-			Title:     existing.Title + " (Copy)",
-			Language:  existing.Language,
+			Title:       existing.Title + " (Copy)",
+			Language:    existing.Language,
 			SourceJobID: &existing.ID,
 		})
 

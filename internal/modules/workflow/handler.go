@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,7 +11,6 @@ import (
 
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
-	"nexora/internal/modules/auth"
 	"nexora/internal/pkg/logger"
 )
 
@@ -249,35 +249,22 @@ func (h *Handler) StartJob(ctx *rest.Context) {
 }
 
 func (h *Handler) PauseJob(ctx *rest.Context) {
-	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
-	if !ok {
-		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
-		return
-	}
-
-	jobID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
-	if err != nil {
-		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid job ID")
-		return
-	}
-
-	job, err := h.svc.PauseJob(ctx.Request.Context(), siteID, jobID)
-	if err != nil {
-		if errors.Is(err, ErrJobNotFound) {
-			ctx.Error(http.StatusNotFound, "NOT_FOUND", "workflow job not found")
-		} else if errors.Is(err, ErrJobNotRunning) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "job is not running")
-		} else {
-			h.log.Error("failed to pause workflow job", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to pause workflow job")
-		}
-		return
-	}
-
-	ctx.JSON(http.StatusOK, job)
+	h.handleJobTransition(ctx, "pause",
+		h.svc.PauseJob,
+		ErrJobNotRunning, "job is not running",
+	)
 }
 
 func (h *Handler) ResumeJob(ctx *rest.Context) {
+	h.handleJobTransition(ctx, "resume",
+		h.svc.ResumeJob,
+		ErrJobPaused, "job is not paused",
+	)
+}
+
+type jobTransitionFunc func(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error)
+
+func (h *Handler) handleJobTransition(ctx *rest.Context, verb string, fn jobTransitionFunc, statusErr error, statusMsg string) {
 	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
 	if !ok {
 		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
@@ -290,15 +277,15 @@ func (h *Handler) ResumeJob(ctx *rest.Context) {
 		return
 	}
 
-	job, err := h.svc.ResumeJob(ctx.Request.Context(), siteID, jobID)
+	job, err := fn(ctx.Request.Context(), siteID, jobID)
 	if err != nil {
 		if errors.Is(err, ErrJobNotFound) {
 			ctx.Error(http.StatusNotFound, "NOT_FOUND", "workflow job not found")
-		} else if errors.Is(err, ErrJobPaused) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "job is not paused")
+		} else if errors.Is(err, statusErr) {
+			ctx.Error(http.StatusConflict, "CONFLICT", statusMsg)
 		} else {
-			h.log.Error("failed to resume workflow job", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to resume workflow job")
+			h.log.Error("failed to "+verb+" workflow job", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to "+verb+" workflow job")
 		}
 		return
 	}
@@ -410,12 +397,12 @@ func (h *Handler) AdvanceStep(ctx *rest.Context) {
 	}
 
 	var body struct {
-		StepName  string                 `json:"step_name"`
-		Status    StepStatus             `json:"status"`
-		Progress  float64                `json:"progress"`
-		Metadata  map[string]interface{} `json:"metadata"`
-		Error     string                 `json:"error"`
-		Duration  int64                  `json:"duration_ms"`
+		StepName string                 `json:"step_name"`
+		Status   StepStatus             `json:"status"`
+		Progress float64                `json:"progress"`
+		Metadata map[string]interface{} `json:"metadata"`
+		Error    string                 `json:"error"`
+		Duration int64                  `json:"duration_ms"`
 	}
 	if err := ctx.Decode(&body); err != nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
@@ -797,11 +784,4 @@ func (h *Handler) ProcessQueue(ctx *rest.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, item)
-}
-
-// --- User ID helper (from auth context) ---
-
-func getUserID(ctx *rest.Context) (uuid.UUID, bool) {
-	userID, ok := ctx.Request.Context().Value(auth.CtxUserID).(uuid.UUID)
-	return userID, ok
 }
