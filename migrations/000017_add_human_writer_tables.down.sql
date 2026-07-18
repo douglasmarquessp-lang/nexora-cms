@@ -1,0 +1,8 @@
+DROP TABLE IF EXISTS humanization_history CASCADE;
+DROP TABLE IF EXISTS sentence_templates CASCADE;
+DROP TABLE IF EXISTS style_patterns CASCADE;
+DROP TABLE IF EXISTS transition_library CASCADE;
+DROP TABLE IF EXISTS vocabulary_sets CASCADE;
+DROP TABLE IF EXISTS writing_personas CASCADE;
+DROP TABLE IF EXISTS writing_rules CASCADE;
+DROP TABLE IF EXISTS writing_profiles CASCADE;

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	aiModule "nexora/internal/ai"
+	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	"nexora/internal/api"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
@@ -21,6 +22,7 @@ import (
 	categoriesModule "nexora/internal/modules/categories"
 	generatorModule "nexora/internal/modules/contentgenerator"
 	editorialModule "nexora/internal/modules/editorial"
+	humanwriterModule "nexora/internal/modules/humanwriter"
 	editorialEngineModule "nexora/internal/modules/editorialengine"
 	mediaModule "nexora/internal/modules/media"
 	postsModule "nexora/internal/modules/posts"
@@ -112,9 +114,11 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	editorialEngineMod := editorialEngineModule.NewEditorialEngineModule(cfg, log, db, ch)
 	generatorMod := generatorModule.NewGeneratorModule(cfg, log, db, ch)
 	autocontentMod := autocontentModule.NewAutocontentModule(cfg, log, db, ch)
+	humanwriterMod := humanwriterModule.NewHumanWriterModule(cfg, log, db, ch)
+	articlepipelineMod := articlepipelineModule.NewArticlePipelineModule(cfg, log, db, ch)
 	aiMod := aiModule.NewAIModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, aiMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -166,6 +170,12 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	autocontentSvc := autocontentMod.Service()
 	autocontentMod.SetEventBus(k.EventBus())
 
+	humanwriterSvc := humanwriterMod.Service()
+	humanwriterMod.SetEventBus(k.EventBus())
+
+	articlepipelineSvc := articlepipelineMod.Service()
+	articlepipelineMod.SetEventBus(k.EventBus())
+
 	aiSvc := aiMod.Service()
 	aiMod.SetEventBus(k.EventBus())
 
@@ -214,6 +224,8 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		EditorialEngineSvc: editorialEngineSvc,
 		GeneratorSvc:       generatorSvc,
 		AutocontentSvc:     autocontentSvc,
+		HumanWriterSvc:     humanwriterSvc,
+		ArticlePipelineSvc: articlepipelineSvc,
 		AIManager:          aiSvc,
 		PluginManager:      pluginManager,
 		CasbinEnforcer:     enforcer,
