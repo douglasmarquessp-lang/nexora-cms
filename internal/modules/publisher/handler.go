@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -184,7 +185,10 @@ func (h *Handler) Unpublish(ctx *rest.Context) {
 	ctx.JSON(http.StatusOK, pub)
 }
 
-func (h *Handler) Republish(ctx *rest.Context) {
+func (h *Handler) republishOp(ctx *rest.Context, urlParam string,
+	svcMethod func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (interface{}, error),
+	notFoundErr, conflictErr error,
+	notFoundMsg, conflictMsg, logMsg string) {
 	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
 	if !ok {
 		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
@@ -197,26 +201,33 @@ func (h *Handler) Republish(ctx *rest.Context) {
 		return
 	}
 
-	pubID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	id, err := uuid.Parse(chi.URLParam(ctx.Request, urlParam))
 	if err != nil {
-		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid publication ID")
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid ID")
 		return
 	}
 
-	pub, err := h.svc.Republish(ctx.Request.Context(), siteID, userID, pubID)
+	result, err := svcMethod(ctx.Request.Context(), siteID, userID, id)
 	if err != nil {
-		if errors.Is(err, ErrPublicationNotFound) {
-			ctx.Error(http.StatusNotFound, "NOT_FOUND", "publication not found")
-		} else if errors.Is(err, ErrPublicationAlreadyPublished) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "publication is already published")
+		if errors.Is(err, notFoundErr) {
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", notFoundMsg)
+		} else if errors.Is(err, conflictErr) {
+			ctx.Error(http.StatusConflict, "CONFLICT", conflictMsg)
 		} else {
-			h.log.Error("failed to republish", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to republish")
+			h.log.Error(logMsg, "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", logMsg)
 		}
 		return
 	}
 
-	ctx.JSON(http.StatusOK, pub)
+	ctx.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) Republish(ctx *rest.Context) {
+	h.republishOp(ctx, "id",
+		func(c context.Context, s, u, id uuid.UUID) (interface{}, error) { return h.svc.Republish(c, s, u, id) },
+		ErrPublicationNotFound, ErrPublicationAlreadyPublished,
+		"publication not found", "publication is already published", "failed to republish")
 }
 
 func (h *Handler) CancelSchedule(ctx *rest.Context) {
@@ -443,7 +454,9 @@ func (h *Handler) AddToQueue(ctx *rest.Context) {
 	ctx.JSON(http.StatusCreated, item)
 }
 
-func (h *Handler) ListQueue(ctx *rest.Context) {
+func (h *Handler) listWithStatusParams(ctx *rest.Context,
+	listFn func(context.Context, uuid.UUID, string, int, int) (interface{}, error),
+	logMsg string) {
 	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
 	if !ok {
 		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
@@ -454,72 +467,35 @@ func (h *Handler) ListQueue(ctx *rest.Context) {
 	limit, _ := strconv.Atoi(ctx.Request.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(ctx.Request.URL.Query().Get("offset"))
 
-	items, err := h.svc.ListQueue(ctx.Request.Context(), siteID, status, limit, offset)
+	items, err := listFn(ctx.Request.Context(), siteID, status, limit, offset)
 	if err != nil {
-		h.log.Error("failed to list queue", "error", err)
-		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to list queue")
+		h.log.Error(logMsg, "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", logMsg)
 		return
 	}
 
 	ctx.JSON(http.StatusOK, items)
 }
 
+func (h *Handler) ListQueue(ctx *rest.Context) {
+	h.listWithStatusParams(ctx,
+		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) { return h.svc.ListQueue(c, s, st, l, o) },
+		"failed to list queue")
+}
+
 func (h *Handler) RetryQueue(ctx *rest.Context) {
-	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
-	if !ok {
-		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
-		return
-	}
-
-	userID, ok := middleware.GetUserID(ctx.Request.Context())
-	if !ok {
-		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
-		return
-	}
-
-	itemID, err := uuid.Parse(chi.URLParam(ctx.Request, "itemID"))
-	if err != nil {
-		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid queue item ID")
-		return
-	}
-
-	item, err := h.svc.RetryQueueItem(ctx.Request.Context(), siteID, userID, itemID)
-	if err != nil {
-		if errors.Is(err, ErrQueueItemNotFound) {
-			ctx.Error(http.StatusNotFound, "NOT_FOUND", "queue item not found")
-		} else if errors.Is(err, ErrMaxRetriesExceeded) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "max retries exceeded")
-		} else {
-			h.log.Error("failed to retry queue item", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to retry queue item")
-		}
-		return
-	}
-
-	ctx.JSON(http.StatusOK, item)
+	h.republishOp(ctx, "itemID",
+		func(c context.Context, s, u, id uuid.UUID) (interface{}, error) { return h.svc.RetryQueueItem(c, s, u, id) },
+		ErrQueueItemNotFound, ErrMaxRetriesExceeded,
+		"queue item not found", "max retries exceeded", "failed to retry queue item")
 }
 
 // --- Schedules ---
 
 func (h *Handler) ListSchedules(ctx *rest.Context) {
-	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
-	if !ok {
-		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
-		return
-	}
-
-	status := ctx.Request.URL.Query().Get("status")
-	limit, _ := strconv.Atoi(ctx.Request.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(ctx.Request.URL.Query().Get("offset"))
-
-	schedules, err := h.svc.ListSchedules(ctx.Request.Context(), siteID, status, limit, offset)
-	if err != nil {
-		h.log.Error("failed to list schedules", "error", err)
-		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to list schedules")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, schedules)
+	h.listWithStatusParams(ctx,
+		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) { return h.svc.ListSchedules(c, s, st, l, o) },
+		"failed to list schedules")
 }
 
 func (h *Handler) GetSchedule(ctx *rest.Context) {

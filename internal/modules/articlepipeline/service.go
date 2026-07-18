@@ -1076,32 +1076,32 @@ func (s *Service) GetPipelineStats(ctx context.Context, siteID uuid.UUID) (*Pipe
 
 	var stats PipelineStats
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM article_pipeline_jobs WHERE site_id = $1`, siteID,
 	).Scan(&stats.TotalJobs)
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM article_pipeline_jobs WHERE site_id = $1 AND status = $2`,
 		siteID, PipelineRunning,
 	).Scan(&stats.RunningJobs)
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM article_pipeline_jobs WHERE site_id = $1 AND status = $2`,
 		siteID, PipelineCompleted,
 	).Scan(&stats.CompletedJobs)
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM article_pipeline_jobs WHERE site_id = $1 AND status = $2`,
 		siteID, PipelineFailed,
 	).Scan(&stats.FailedJobs)
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM article_pipeline_jobs WHERE site_id = $1 AND status = $2`,
 		siteID, PipelineCancelled,
 	).Scan(&stats.CancelledJobs)
 
 	if stats.CompletedJobs > 0 {
-		p.QueryRow(ctx,
+		_ = p.QueryRow(ctx,
 			`SELECT COALESCE(AVG(duration_ms),0) FROM (
 			 SELECT EXTRACT(EPOCH FROM (COALESCE(completed_at, NOW()) - started_at)) * 1000 AS duration_ms
 			 FROM article_pipeline_jobs WHERE site_id = $1 AND status = $2 AND started_at IS NOT NULL
@@ -1109,18 +1109,18 @@ func (s *Service) GetPipelineStats(ctx context.Context, siteID uuid.UUID) (*Pipe
 			siteID, PipelineCompleted,
 		).Scan(&stats.AvgDurationMs)
 
-		p.QueryRow(ctx,
+		_ = p.QueryRow(ctx,
 			`SELECT COALESCE(AVG(quality_score),0) FROM publication_candidates WHERE site_id = $1`,
 			siteID,
 		).Scan(&stats.AvgQualityScore)
 
-		p.QueryRow(ctx,
+		_ = p.QueryRow(ctx,
 			`SELECT COALESCE(AVG(seo_score),0) FROM publication_candidates WHERE site_id = $1`,
 			siteID,
 		).Scan(&stats.AvgSEOScore)
 	}
 
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*) FROM publication_candidates WHERE site_id = $1`, siteID,
 	).Scan(&stats.TotalCandidates)
 
@@ -1282,7 +1282,7 @@ func (s *Service) getQualityReports(ctx context.Context, jobID uuid.UUID) ([]Qua
 
 func (s *Service) calcProgress(ctx context.Context, p database.Pool, jobID uuid.UUID) float64 {
 	var total, completed int
-	p.QueryRow(ctx,
+	_ = p.QueryRow(ctx,
 		`SELECT COUNT(*), COUNT(*) FILTER (WHERE status = $1)
 		 FROM article_pipeline_steps WHERE pipeline_job_id = $2`,
 		StepStatusCompleted, jobID,

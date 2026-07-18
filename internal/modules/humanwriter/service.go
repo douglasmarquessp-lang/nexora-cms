@@ -138,24 +138,10 @@ func (s *Service) CreateProfile(ctx context.Context, siteID uuid.UUID, req Profi
 	return s.GetProfile(ctx, siteID, profileID)
 }
 
-func (s *Service) GetProfile(ctx context.Context, siteID, profileID uuid.UUID) (*WritingProfile, error) {
-	p, err := s.pool()
-	if err != nil {
-		return nil, err
-	}
-
+func (s *Service) scanProfile(row pgx.Row) (*WritingProfile, error) {
 	var prof WritingProfile
 	var metadataStr string
-	err = p.QueryRow(ctx,
-		`SELECT id, site_id, slug, name, COALESCE(description,''), COALESCE(tone,''),
-		        COALESCE(perspective,''), COALESCE(audience,''), COALESCE(expertise_level,'general'),
-		        language, COALESCE(vocabulary_tags,'{}'), COALESCE(allowed_connectors,'{}'),
-		        COALESCE(preferred_sentence_length,'medium'), COALESCE(paragraph_size_min,3),
-		        COALESCE(paragraph_size_max,8), is_active, COALESCE(metadata::text,'{}'),
-		        created_by, created_at, updated_at
-		 FROM writing_profiles WHERE id = $1 AND site_id = $2`,
-		profileID, siteID,
-	).Scan(&prof.ID, &prof.SiteID, &prof.Slug, &prof.Name, &prof.Description, &prof.Tone,
+	err := row.Scan(&prof.ID, &prof.SiteID, &prof.Slug, &prof.Name, &prof.Description, &prof.Tone,
 		&prof.Perspective, &prof.Audience, &prof.ExpertiseLevel, &prof.Language,
 		&prof.VocabularyTags, &prof.AllowedConnectors, &prof.PreferredSentenceLength,
 		&prof.ParagraphSizeMin, &prof.ParagraphSizeMax, &prof.IsActive,
@@ -164,7 +150,7 @@ func (s *Service) GetProfile(ctx context.Context, siteID, profileID uuid.UUID) (
 		if err == pgx.ErrNoRows {
 			return nil, ErrProfileNotFound
 		}
-		return nil, fmt.Errorf("failed to get profile: %w", err)
+		return nil, fmt.Errorf("failed to scan profile: %w", err)
 	}
 	if len(metadataStr) > 0 {
 		prof.Metadata = parseJSON(metadataStr)
@@ -175,15 +161,31 @@ func (s *Service) GetProfile(ctx context.Context, siteID, profileID uuid.UUID) (
 	return &prof, nil
 }
 
+func (s *Service) GetProfile(ctx context.Context, siteID, profileID uuid.UUID) (*WritingProfile, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+
+	return s.scanProfile(p.QueryRow(ctx,
+		`SELECT id, site_id, slug, name, COALESCE(description,''), COALESCE(tone,''),
+		        COALESCE(perspective,''), COALESCE(audience,''), COALESCE(expertise_level,'general'),
+		        language, COALESCE(vocabulary_tags,'{}'), COALESCE(allowed_connectors,'{}'),
+		        COALESCE(preferred_sentence_length,'medium'), COALESCE(paragraph_size_min,3),
+		        COALESCE(paragraph_size_max,8), is_active, COALESCE(metadata::text,'{}'),
+		        created_by, created_at, updated_at
+		 FROM writing_profiles WHERE id = $1 AND site_id = $2`,
+		profileID, siteID,
+	))
+}
+
 func (s *Service) GetProfileBySlug(ctx context.Context, siteID uuid.UUID, slug string) (*WritingProfile, error) {
 	p, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
 
-	var prof WritingProfile
-	var metadataStr string
-	err = p.QueryRow(ctx,
+	return s.scanProfile(p.QueryRow(ctx,
 		`SELECT id, site_id, slug, name, COALESCE(description,''), COALESCE(tone,''),
 		        COALESCE(perspective,''), COALESCE(audience,''), COALESCE(expertise_level,'general'),
 		        language, COALESCE(vocabulary_tags,'{}'), COALESCE(allowed_connectors,'{}'),
@@ -192,24 +194,7 @@ func (s *Service) GetProfileBySlug(ctx context.Context, siteID uuid.UUID, slug s
 		        created_by, created_at, updated_at
 		 FROM writing_profiles WHERE site_id = $1 AND slug = $2`,
 		siteID, slug,
-	).Scan(&prof.ID, &prof.SiteID, &prof.Slug, &prof.Name, &prof.Description, &prof.Tone,
-		&prof.Perspective, &prof.Audience, &prof.ExpertiseLevel, &prof.Language,
-		&prof.VocabularyTags, &prof.AllowedConnectors, &prof.PreferredSentenceLength,
-		&prof.ParagraphSizeMin, &prof.ParagraphSizeMax, &prof.IsActive,
-		&metadataStr, &prof.CreatedBy, &prof.CreatedAt, &prof.UpdatedAt)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, ErrProfileNotFound
-		}
-		return nil, fmt.Errorf("failed to get profile by slug: %w", err)
-	}
-	if len(metadataStr) > 0 {
-		prof.Metadata = parseJSON(metadataStr)
-	}
-	if prof.Metadata == nil {
-		prof.Metadata = make(map[string]interface{})
-	}
-	return &prof, nil
+	))
 }
 
 func (s *Service) ListProfiles(ctx context.Context, siteID uuid.UUID, language string) ([]WritingProfile, error) {
@@ -220,11 +205,9 @@ func (s *Service) ListProfiles(ctx context.Context, siteID uuid.UUID, language s
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		where = append(where, fmt.Sprintf("language = $%d", len(args)+1))
 		args = append(args, language)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -398,11 +381,9 @@ func (s *Service) ListRules(ctx context.Context, siteID uuid.UUID, profileID *uu
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if profileID != nil {
-		where = append(where, fmt.Sprintf("(profile_id = $%d OR profile_id IS NULL)", argIdx))
+		where = append(where, fmt.Sprintf("(profile_id = $%d OR profile_id IS NULL)", len(args)+1))
 		args = append(args, *profileID)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -557,16 +538,13 @@ func (s *Service) ListPersonas(ctx context.Context, siteID uuid.UUID, profileID 
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if profileID != nil {
-		where = append(where, fmt.Sprintf("profile_id = $%d", argIdx))
+		where = append(where, fmt.Sprintf("profile_id = $%d", len(args)+1))
 		args = append(args, *profileID)
-		argIdx++
 	}
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		where = append(where, fmt.Sprintf("language = $%d", len(args)+1))
 		args = append(args, language)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -683,16 +661,13 @@ func (s *Service) ListVocabularySets(ctx context.Context, siteID uuid.UUID, cate
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if category != "" {
-		where = append(where, fmt.Sprintf("category = $%d", argIdx))
+		where = append(where, fmt.Sprintf("category = $%d", len(args)+1))
 		args = append(args, category)
-		argIdx++
 	}
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		where = append(where, fmt.Sprintf("language = $%d", len(args)+1))
 		args = append(args, language)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -732,16 +707,13 @@ func (s *Service) ListTransitions(ctx context.Context, siteID uuid.UUID, categor
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if category != "" {
-		where = append(where, fmt.Sprintf("category = $%d", argIdx))
+		where = append(where, fmt.Sprintf("category = $%d", len(args)+1))
 		args = append(args, category)
-		argIdx++
 	}
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		where = append(where, fmt.Sprintf("language = $%d", len(args)+1))
 		args = append(args, language)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -781,16 +753,13 @@ func (s *Service) ListPatterns(ctx context.Context, siteID uuid.UUID, patternTyp
 
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}
-	argIdx := 2
 	if patternType != "" {
-		where = append(where, fmt.Sprintf("pattern_type = $%d", argIdx))
+		where = append(where, fmt.Sprintf("pattern_type = $%d", len(args)+1))
 		args = append(args, patternType)
-		argIdx++
 	}
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		where = append(where, fmt.Sprintf("language = $%d", len(args)+1))
 		args = append(args, language)
-		argIdx++
 	}
 
 	query := fmt.Sprintf(
@@ -830,27 +799,22 @@ func (s *Service) ListTemplates(ctx context.Context, siteID uuid.UUID, category,
 		return nil, err
 	}
 
-	where := []string{"site_id = $1"}
+	baseClause := `FROM sentence_templates WHERE site_id = $1`
 	args := []interface{}{siteID}
-	argIdx := 2
 	if category != "" {
-		where = append(where, fmt.Sprintf("category = $%d", argIdx))
+		baseClause += fmt.Sprintf(" AND category = $%d", len(args)+1)
 		args = append(args, category)
-		argIdx++
 	}
 	if language != "" {
-		where = append(where, fmt.Sprintf("language = $%d", argIdx))
+		baseClause += fmt.Sprintf(" AND language = $%d", len(args)+1)
 		args = append(args, language)
-		argIdx++
 	}
 
-	query := fmt.Sprintf(
-		`SELECT id, site_id, profile_id, name, template, COALESCE(category,'general'),
-		        COALESCE(variables,'{}'), language, COALESCE(formality,'neutral'),
-		        COALESCE(usage_count,0), is_active, created_at, updated_at
-		 FROM sentence_templates WHERE %s ORDER BY category ASC, name ASC`,
-		strings.Join(where, " AND "),
-	)
+	query := `SELECT id, site_id, profile_id, name, template, COALESCE(category,'general'),
+	        COALESCE(variables,'{}'), language, COALESCE(formality,'neutral'),
+	        COALESCE(usage_count,0), is_active, created_at, updated_at ` +
+		baseClause + ` ORDER BY category ASC, name ASC`
+
 	rows, err := p.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list templates: %w", err)
@@ -872,6 +836,8 @@ func (s *Service) ListTemplates(ctx context.Context, siteID uuid.UUID, category,
 	}
 	return templates, nil
 }
+
+
 
 // --- Humanization History ---
 
@@ -1163,7 +1129,7 @@ func (s *Service) GetMetrics(ctx context.Context, siteID uuid.UUID) (*HumanWrite
 	}
 
 	if metrics.TotalRequests > 0 {
-		p.QueryRow(ctx,
+		_ = p.QueryRow(ctx,
 			`SELECT COALESCE(AVG(burstiness_score),0), COALESCE(AVG(perplexity_score),0),
 			        COALESCE(AVG(repetition_score),0), COALESCE(AVG(passive_voice_score),0),
 			        COALESCE(AVG(rhythm_score),0), COALESCE(AVG(flow_score),0)
@@ -1172,13 +1138,13 @@ func (s *Service) GetMetrics(ctx context.Context, siteID uuid.UUID) (*HumanWrite
 			&metrics.AvgPassiveVoice, &metrics.AvgRhythm, &metrics.AvgFlow)
 	}
 
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_profiles WHERE site_id = $1`, siteID).Scan(&metrics.ProfileCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_rules WHERE site_id = $1`, siteID).Scan(&metrics.RuleCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_personas WHERE site_id = $1`, siteID).Scan(&metrics.PersonaCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM vocabulary_sets WHERE site_id = $1`, siteID).Scan(&metrics.VocabularyCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM transition_library WHERE site_id = $1`, siteID).Scan(&metrics.TransitionCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM sentence_templates WHERE site_id = $1`, siteID).Scan(&metrics.TemplateCount)
-	p.QueryRow(ctx, `SELECT COUNT(*) FROM style_patterns WHERE site_id = $1`, siteID).Scan(&metrics.PatternCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_profiles WHERE site_id = $1`, siteID).Scan(&metrics.ProfileCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_rules WHERE site_id = $1`, siteID).Scan(&metrics.RuleCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM writing_personas WHERE site_id = $1`, siteID).Scan(&metrics.PersonaCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM vocabulary_sets WHERE site_id = $1`, siteID).Scan(&metrics.VocabularyCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM transition_library WHERE site_id = $1`, siteID).Scan(&metrics.TransitionCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM sentence_templates WHERE site_id = $1`, siteID).Scan(&metrics.TemplateCount)
+	_ = p.QueryRow(ctx, `SELECT COUNT(*) FROM style_patterns WHERE site_id = $1`, siteID).Scan(&metrics.PatternCount)
 
 	return &metrics, nil
 }
@@ -1199,7 +1165,7 @@ func (s *Service) saveHistory(ctx context.Context, siteID uuid.UUID, profile *Wr
 		transJSON = toJSON(result.Transformations)
 	}
 
-	p.Exec(ctx,
+	_, _ = p.Exec(ctx,
 		`INSERT INTO humanization_history (id, site_id, profile_id, source_text, humanized_text,
 		 burstiness_score, perplexity_score, repetition_score, passive_voice_score,
 		 rhythm_score, flow_score, rules_applied, transformations, language,
@@ -1350,7 +1316,7 @@ func (s *Service) applyVocabularyDiversity(text string, lang string, profile *Wr
 		"ruim":   {"ruim", "deficiente", "insatisfatório", "problemático", "precário"},
 		"grande": {"grande", "enorme", "vasto", "amplo", "significativo"},
 		"novo":   {"novo", "recente", "inovador", "moderno", "contemporâneo"},
-		"importante": {"importante", "fundamental", "essencial", "crucial", "vital"},
+		"importante": {"importante", "fundamental", "essencial", "crucial", "vital"}, //nolint:misspell
 		"muito": {"muito", "bastante", "consideravelmente", "extremamente", "altamente"},
 		"interessante": {"interessante", "cativante", "fascinante", "envolvente", "intrigante"},
 	}
@@ -1418,7 +1384,7 @@ func (s *Service) removeAICliches(text string, lang string) string {
 
 var openingVariations = map[string][]string{
 	"pt": {
-		"Você já parou para pensar", "Imagine", "Considere por um momento",
+		"Você já parou para pensar", "Imagine", "Considere por um momento", //nolint:misspell
 		"Um fato interessante", "Vamos refletir", "É notável como",
 		"Vale a pena observar", "Pense nisto",
 	},

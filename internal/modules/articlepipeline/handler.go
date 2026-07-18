@@ -1,6 +1,7 @@
 package articlepipeline
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -204,7 +205,7 @@ func (h *Handler) StartPipeline(ctx *rest.Context) {
 	ctx.JSON(http.StatusOK, job)
 }
 
-func (h *Handler) PausePipeline(ctx *rest.Context) {
+func (h *Handler) setPipelineStatus(ctx *rest.Context, action func(context.Context, uuid.UUID, uuid.UUID) (*PipelineJob, error), conflictErr error, conflictMsg, logMsg string) {
 	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
 	if !ok {
 		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
@@ -217,15 +218,15 @@ func (h *Handler) PausePipeline(ctx *rest.Context) {
 		return
 	}
 
-	job, err := h.svc.PausePipeline(ctx.Request.Context(), siteID, jobID)
+	job, err := action(ctx.Request.Context(), siteID, jobID)
 	if err != nil {
 		if errors.Is(err, ErrJobNotFound) {
 			ctx.Error(http.StatusNotFound, "NOT_FOUND", "pipeline job not found")
-		} else if errors.Is(err, ErrJobNotRunning) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "pipeline is not running")
+		} else if errors.Is(err, conflictErr) {
+			ctx.Error(http.StatusConflict, "CONFLICT", conflictMsg)
 		} else {
-			h.log.Error("failed to pause pipeline", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to pause pipeline")
+			h.log.Error(logMsg, "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", logMsg)
 		}
 		return
 	}
@@ -233,33 +234,16 @@ func (h *Handler) PausePipeline(ctx *rest.Context) {
 	ctx.JSON(http.StatusOK, job)
 }
 
+func (h *Handler) PausePipeline(ctx *rest.Context) {
+	h.setPipelineStatus(ctx,
+		h.svc.PausePipeline,
+		ErrJobNotRunning, "pipeline is not running", "failed to pause pipeline")
+}
+
 func (h *Handler) ResumePipeline(ctx *rest.Context) {
-	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
-	if !ok {
-		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
-		return
-	}
-
-	jobID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
-	if err != nil {
-		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid pipeline job ID")
-		return
-	}
-
-	job, err := h.svc.ResumePipeline(ctx.Request.Context(), siteID, jobID)
-	if err != nil {
-		if errors.Is(err, ErrJobNotFound) {
-			ctx.Error(http.StatusNotFound, "NOT_FOUND", "pipeline job not found")
-		} else if errors.Is(err, ErrJobNotPaused) {
-			ctx.Error(http.StatusConflict, "CONFLICT", "pipeline is not paused")
-		} else {
-			h.log.Error("failed to resume pipeline", "error", err)
-			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to resume pipeline")
-		}
-		return
-	}
-
-	ctx.JSON(http.StatusOK, job)
+	h.setPipelineStatus(ctx,
+		h.svc.ResumePipeline,
+		ErrJobNotPaused, "pipeline is not paused", "failed to resume pipeline")
 }
 
 func (h *Handler) CancelPipeline(ctx *rest.Context) {

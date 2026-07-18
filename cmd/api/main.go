@@ -39,6 +39,7 @@ import (
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
 	publisherModule "nexora/internal/modules/publisher"
+	seoengineModule "nexora/internal/modules/seoengine"
 )
 
 type eventBusAdapter struct {
@@ -119,8 +120,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	articlepipelineMod := articlepipelineModule.NewArticlePipelineModule(cfg, log, db, ch)
 	aiMod := aiModule.NewAIModule(cfg, log, db, ch)
 	publisherMod := publisherModule.NewPublisherModule(cfg, log, db, ch)
+	seoengineMod := seoengineModule.NewSEOEngineModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -184,6 +186,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	publisherSvc := publisherMod.Service()
 	publisherMod.SetEventBus(k.EventBus())
 
+	seoengineSvc := seoengineMod.Service()
+	seoengineMod.SetEventBus(k.EventBus())
+
 	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
 		PluginsDir: "plugins",
 	}, log, &eventBusAdapter{bus: k.EventBus()})
@@ -233,6 +238,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		ArticlePipelineSvc: articlepipelineSvc,
 		AIManager:          aiSvc,
 		PublisherSvc:       publisherSvc,
+		SeoEngineSvc:       seoengineSvc,
 		PluginManager:      pluginManager,
 		CasbinEnforcer:     enforcer,
 		RateLimits:         rateLimiter,
