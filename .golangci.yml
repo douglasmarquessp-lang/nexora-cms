@@ -29,8 +29,6 @@ linters-settings:
       - unusedwrite
   errcheck:
     check-type-assertions: true
-  staticcheck:
-    checks: ["all", "-S1005", "-S1009", "-S1039"]
 
 issues:
   exclude-dirs:
@@ -67,6 +65,22 @@ issues:
     - linters:
         - staticcheck
       text: "SA4023"
+    - path: internal/modules/seo/service\.go
+      linters:
+        - staticcheck
+      text: "S1005|S1009"
+    - path: internal/modules/editorial/service\.go
+      linters:
+        - staticcheck
+      text: "S1039"
+    - path: internal/modules/posts/service\.go
+      linters:
+        - staticcheck
+      text: "S1039"
+    - path: internal/modules/site/service\.go
+      linters:
+        - staticcheck
+      text: "S1039"
     - path: internal/ai/
       linters:
         - misspell
