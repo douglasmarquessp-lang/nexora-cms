@@ -25,6 +25,7 @@ import (
 	aiModule "nexora/internal/ai"
 	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	humanwriterModule "nexora/internal/modules/humanwriter"
+	publisherModule "nexora/internal/modules/publisher"
 	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
 	casbinPkg "nexora/internal/pkg/casbin"
@@ -57,6 +58,7 @@ type Dependencies struct {
 	AutocontentSvc        *autocontentModule.Service
 	HumanWriterSvc        *humanwriterModule.Service
 	ArticlePipelineSvc    *articlepipelineModule.Service
+	PublisherSvc          *publisherModule.Service
 	AIManager             *aiModule.Manager
 	PluginManager      *pluginsModule.Manager
 	CasbinEnforcer   *casbinPkg.Enforcer
@@ -170,6 +172,7 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	registerAutocontentRoutes(r, deps)
 	registerHumanWriterRoutes(r, deps)
 	registerArticlePipelineRoutes(r, deps)
+	registerPublisherRoutes(r, deps)
 	registerAIRoutes(r, deps)
 }
 
@@ -337,6 +340,13 @@ func registerArticlePipelineRoutes(r chi.Router, deps *Dependencies) {
 		return
 	}
 	articlepipelineModule.RegisterRoutes(r, deps.ArticlePipelineSvc, deps.Log)
+}
+
+func registerPublisherRoutes(r chi.Router, deps *Dependencies) {
+	if deps.PublisherSvc == nil {
+		return
+	}
+	publisherModule.RegisterRoutes(r, deps.PublisherSvc, deps.Log)
 }
 
 func wrapMiddleware(mw func(http.Handler) http.Handler, handler http.Handler) http.HandlerFunc {

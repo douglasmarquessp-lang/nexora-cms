@@ -38,6 +38,7 @@ import (
 	"nexora/internal/pkg/ratelimit"
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
+	publisherModule "nexora/internal/modules/publisher"
 )
 
 type eventBusAdapter struct {
@@ -117,8 +118,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	humanwriterMod := humanwriterModule.NewHumanWriterModule(cfg, log, db, ch)
 	articlepipelineMod := articlepipelineModule.NewArticlePipelineModule(cfg, log, db, ch)
 	aiMod := aiModule.NewAIModule(cfg, log, db, ch)
+	publisherMod := publisherModule.NewPublisherModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -179,6 +181,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	aiSvc := aiMod.Service()
 	aiMod.SetEventBus(k.EventBus())
 
+	publisherSvc := publisherMod.Service()
+	publisherMod.SetEventBus(k.EventBus())
+
 	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
 		PluginsDir: "plugins",
 	}, log, &eventBusAdapter{bus: k.EventBus()})
@@ -227,6 +232,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		HumanWriterSvc:     humanwriterSvc,
 		ArticlePipelineSvc: articlepipelineSvc,
 		AIManager:          aiSvc,
+		PublisherSvc:       publisherSvc,
 		PluginManager:      pluginManager,
 		CasbinEnforcer:     enforcer,
 		RateLimits:         rateLimiter,
