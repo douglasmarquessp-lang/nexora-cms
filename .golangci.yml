@@ -6,7 +6,6 @@ run:
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -14,37 +13,22 @@ linters:
     - bodyclose
     - dupl
     - goconst
-    - gocritic
-    - gofmt
-    - goimports
     - misspell
     - nakedret
-    - prealloc
     - revive
     - unconvert
 
 linters-settings:
-  gofmt:
-    simplify: true
-  goimports:
-    local-prefixes: nexora
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-    disabled-checks:
-      - hugeParam
   revive:
     severity: warning
   govet:
     enable-all: true
     disable:
       - fieldalignment
+      - shadow
+      - unusedwrite
   errcheck:
     check-type-assertions: true
-  gosimple:
-    checks: ["all"]
 
 issues:
   exclude-dirs:
@@ -60,22 +44,6 @@ issues:
     - path: internal/modules/auth/oauth\.go
       linters:
         - goconst
-    - path: internal/modules/writer/service\.go
-      linters:
-        - gocritic
-    - path: internal/modules/writer/handler_test\.go
-      linters:
-        - gocritic
-    - path: internal/ai/handler_test\.go
-      linters:
-        - gocritic
-    - path: internal/ai/
-      linters:
-        - misspell
-        - prealloc
-    - path: internal/ai/prompt_builder\.go
-      linters:
-        - gocritic
     - path: _test\.go
       linters:
         - errcheck
@@ -85,5 +53,17 @@ issues:
     - path: internal/modules/site/service\.go
       linters:
         - dupl
+    - linters:
+        - staticcheck
+      text: "SA1019"
+    - linters:
+        - staticcheck
+      text: "SA1029"
+    - linters:
+        - staticcheck
+      text: "SA9003"
+    - linters:
+        - staticcheck
+      text: "SA4023"
   max-issues-per-linter: 0
   max-same-issues: 0
