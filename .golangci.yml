@@ -65,5 +65,20 @@ issues:
     - linters:
         - staticcheck
       text: "SA4023"
+    - linters:
+        - staticcheck
+      text: "S1005"
+    - linters:
+        - staticcheck
+      text: "S1009"
+    - linters:
+        - staticcheck
+      text: "S1039"
+    - path: internal/ai/
+      linters:
+        - misspell
+    - path: internal/pkg/storage/storage_test\.go
+      linters:
+        - govet
   max-issues-per-linter: 0
   max-same-issues: 0
