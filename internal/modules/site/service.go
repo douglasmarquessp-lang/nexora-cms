@@ -51,11 +51,11 @@ var validSettingTypes = map[string]bool{
 }
 
 type Service struct {
-	log       *logger.Logger
-	db        *database.Database
-	cache     *cache.Cache
-	eventBus  *kernel.EventBus
-	auditLog  *audit.Logger
+	log      *logger.Logger
+	db       *database.Database
+	cache    *cache.Cache
+	eventBus *kernel.EventBus
+	auditLog *audit.Logger
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -537,10 +537,10 @@ func (s *Service) ListSites(ctx context.Context, userID uuid.UUID, page, perPage
 	totalPages := int(math.Ceil(float64(total) / float64(perPage)))
 
 	return &SiteListResponse{
-		Sites:   sites,
-		Total:   total,
-		Page:    page,
-		PerPage: perPage,
+		Sites:      sites,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
 		TotalPages: totalPages,
 	}, nil
 }
@@ -669,7 +669,7 @@ func (s *Service) DeleteSite(ctx context.Context, siteID uuid.UUID, userID uuid.
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	cleanup := []string{
 		`DELETE FROM publication_queue WHERE site_id = $1`,
@@ -1201,5 +1201,3 @@ func (s *Service) inferType(val interface{}) string {
 		return "json"
 	}
 }
-
-

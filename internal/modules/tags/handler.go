@@ -152,7 +152,7 @@ func (h *Handler) Update(ctx *rest.Context) {
 	}
 
 	var req UpdateTagRequest
-	if err := ctx.Decode(&req); err != nil {
+	if decodeErr := ctx.Decode(&req); decodeErr != nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}

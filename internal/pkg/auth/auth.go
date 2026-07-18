@@ -97,9 +97,9 @@ func VerifyPassword(password, encoded string) (bool, error) {
 }
 
 type TokenManager struct {
-	secret      []byte
-	accessTTL   time.Duration
-	refreshTTL  time.Duration
+	secret     []byte
+	accessTTL  time.Duration
+	refreshTTL time.Duration
 }
 
 func NewTokenManager(secret string, accessTTL, refreshTTL time.Duration) *TokenManager {
@@ -132,7 +132,7 @@ func (tm *TokenManager) generateToken(userID string, ttl time.Duration, purpose 
 	return fmt.Sprintf("%s.%s", payload, sig), nil
 }
 
-func (tm *TokenManager) ValidateToken(token string, expectedPurpose string) (userID string, err error) {
+func (tm *TokenManager) ValidateToken(token, expectedPurpose string) (string, error) {
 	parts := splitToken(token)
 	if len(parts) != 2 {
 		return "", fmt.Errorf("invalid token format")

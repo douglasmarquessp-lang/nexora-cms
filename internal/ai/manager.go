@@ -90,17 +90,13 @@ func (cb *circuitBreaker) failure() {
 	}
 }
 
-func (cb *circuitBreaker) stateLocked() cbState {
-	return cb.state
-}
-
 type providerStats struct {
-	requests    int64
-	failed      int64
+	requests     int64
+	failed       int64
 	totalLatency time.Duration
-	tokensUsed  int64
+	tokensUsed   int64
 	circuitOpens int64
-	mu          sync.Mutex
+	mu           sync.Mutex
 }
 
 type Manager struct {
@@ -167,7 +163,7 @@ func (m *Manager) ListProviders() []ProviderInfo {
 
 func (m *Manager) Generate(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	m.fireEvent(ctx, EventAIStarted, map[string]interface{}{
-		"model": req.Model,
+		"model":  req.Model,
 		"stream": false,
 	})
 
@@ -408,7 +404,7 @@ func (m *Manager) executeWithRetry(ctx context.Context, req CompletionRequest, i
 
 			if m.shouldFailover(provider) {
 				m.fireEvent(ctx, EventAIProviderChanged, map[string]interface{}{
-					"from": provider.Name(),
+					"from":   provider.Name(),
 					"reason": "failover",
 				})
 			}
@@ -444,15 +440,15 @@ func (m *Manager) executeStreamWithRetry(ctx context.Context, req CompletionRequ
 		var fullContent string
 		for chunk := range chunkCh {
 			if chunk.Error != nil {
-				handler.OnError(chunk.Error)
+				_ = handler.OnError(chunk.Error)
 				continue
 			}
 			fullContent += chunk.Content
 
 			m.fireEvent(ctx, EventAIStreaming, map[string]interface{}{
-				"chunk":  chunk.Content,
-				"index":  chunk.Index,
-				"done":   chunk.Done,
+				"chunk": chunk.Content,
+				"index": chunk.Index,
+				"done":  chunk.Done,
 			})
 
 			if err := handler.HandleChunk(chunk); err != nil {
@@ -465,7 +461,7 @@ func (m *Manager) executeStreamWithRetry(ctx context.Context, req CompletionRequ
 					ProviderName: provider.Name(),
 					FinishReason: chunk.FinishReason,
 				}
-				handler.OnComplete(&result)
+				_ = handler.OnComplete(&result)
 				return nil
 			}
 		}

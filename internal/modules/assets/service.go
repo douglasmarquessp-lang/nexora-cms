@@ -318,12 +318,11 @@ func (s *Service) List(ctx context.Context, req AssetListRequest) (*AssetListRes
 	}
 
 	if req.Type != "" {
-		typePrefix := string(req.Type)
-		if typePrefix == "image" || typePrefix == "video" || typePrefix == "audio" {
+		if req.Type == AssetTypeImage || req.Type == AssetTypeVideo || req.Type == AssetTypeAudio {
 			whereClauses = append(whereClauses, fmt.Sprintf("a.mime_type LIKE $%d", argIdx))
-			args = append(args, typePrefix+"/%")
+			args = append(args, string(req.Type)+"/%")
 			argIdx++
-		} else if typePrefix == "document" {
+		} else if string(req.Type) == "document" {
 			whereClauses = append(whereClauses, fmt.Sprintf("(a.mime_type LIKE 'application/%%' OR a.mime_type LIKE 'text/%%')"))
 		}
 	}

@@ -4,18 +4,16 @@ import (
 	"context"
 	"math/rand"
 	"strings"
-	"sync"
 )
 
 type qualityChecker struct {
-	mu sync.RWMutex
 }
 
 func NewQualityChecker() *qualityChecker {
 	return &qualityChecker{}
 }
 
-func (qc *qualityChecker) ScoreGrammar(ctx context.Context, text string, language string) (*ScoreResult, error) {
+func (qc *qualityChecker) ScoreGrammar(ctx context.Context, text, language string) (*ScoreResult, error) {
 	wordCount := len(strings.Fields(text))
 	if wordCount == 0 {
 		return &ScoreResult{Score: 100, MaxScore: 100, Passed: true, Details: "empty text"}, nil
@@ -64,7 +62,7 @@ func (qc *qualityChecker) ScoreSEO(ctx context.Context, text string, keywords []
 	}, nil
 }
 
-func (qc *qualityChecker) ScoreReadability(ctx context.Context, text string, language string) (*ScoreResult, error) {
+func (qc *qualityChecker) ScoreReadability(ctx context.Context, text, language string) (*ScoreResult, error) {
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return &ScoreResult{Score: 0, MaxScore: 100, Passed: false, Details: "empty text"}, nil

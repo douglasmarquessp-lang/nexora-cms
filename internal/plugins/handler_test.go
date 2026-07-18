@@ -30,7 +30,7 @@ func TestNewHandler(t *testing.T) {
 func TestHandler_List_Empty(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins", http.NoBody)
 	rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
@@ -54,7 +54,7 @@ func TestHandler_List_WithPlugins(t *testing.T) {
 	m.registry.Register(instance)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins", http.NoBody)
 	rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
@@ -76,7 +76,7 @@ func TestHandler_Get_Found(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins/test-p", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins/test-p", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "test-p")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -94,7 +94,7 @@ func TestHandler_Get_NotFound(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -253,7 +253,7 @@ func TestHandler_Update_NotFound(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/plugins/nonexistent/update", nil)
+	req := httptest.NewRequest(http.MethodPost, "/plugins/nonexistent/update", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -267,7 +267,7 @@ func TestHandler_Delete_NotFound(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/plugins/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/plugins/nonexistent", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -281,7 +281,7 @@ func TestHandler_Update_NoID(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/plugins//update", nil)
+	req := httptest.NewRequest(http.MethodPost, "/plugins//update", http.NoBody)
 	rest.AdaptHandler(h.Update).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
@@ -292,7 +292,7 @@ func TestHandler_Delete_NoID(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/plugins/", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/plugins/", http.NoBody)
 	rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
@@ -322,7 +322,7 @@ func TestHandler_Update(t *testing.T) {
 	m.Init(context.Background())
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/plugins/test-p/update", nil)
+	req := httptest.NewRequest(http.MethodPost, "/plugins/test-p/update", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "test-p")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -340,7 +340,7 @@ func TestHandler_Delete(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/plugins/test-p", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/plugins/test-p", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "test-p")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -358,7 +358,7 @@ func TestHandler_GetSettings(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins/test-p/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins/test-p/settings", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "test-p")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -372,7 +372,7 @@ func TestHandler_GetSettings_NotFound(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent/settings", http.NoBody)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

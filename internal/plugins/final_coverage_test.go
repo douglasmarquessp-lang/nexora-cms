@@ -12,7 +12,7 @@ func TestManagerInstall_LifecycleError(t *testing.T) {
 	createTestPlugin(t, dir, "dep-p", "1.0.0")
 
 	pluginDir := filepath.Join(dir, "main-p")
-	os.MkdirAll(pluginDir, 0755)
+	os.MkdirAll(pluginDir, 0o755)
 	manifest := `{
 		"id": "main-p",
 		"name": "Main",
@@ -23,7 +23,7 @@ func TestManagerInstall_LifecycleError(t *testing.T) {
 		"routes": [],
 		"admin_pages": []
 	}`
-	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0644)
+	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0o644)
 
 	m := NewManager(&ManagerConfig{PluginsDir: dir}, testLogger(t), &mockEmitter{})
 	m.Init(context.Background())
@@ -37,8 +37,8 @@ func TestManagerInstall_LifecycleError(t *testing.T) {
 func TestLoader_Load_BadJSON(t *testing.T) {
 	dir := t.TempDir()
 	pDir := filepath.Join(dir, "badjson")
-	os.MkdirAll(pDir, 0755)
-	os.WriteFile(filepath.Join(pDir, "plugin.json"), []byte("{invalid}"), 0644)
+	os.MkdirAll(pDir, 0o755)
+	os.WriteFile(filepath.Join(pDir, "plugin.json"), []byte("{invalid}"), 0o644)
 
 	r := NewRegistry()
 	l := NewLoader(dir, r)

@@ -24,7 +24,7 @@ func TestLoadManifest(t *testing.T) {
 		"routes": [],
 		"admin_pages": []
 	}`
-	os.WriteFile(path, []byte(content), 0644)
+	os.WriteFile(path, []byte(content), 0o644)
 
 	m, err := LoadManifest(path)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestLoadManifest_NotFound(t *testing.T) {
 func TestLoadManifest_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plugin.json")
-	os.WriteFile(path, []byte("not json"), 0644)
+	os.WriteFile(path, []byte("not json"), 0o644)
 
 	_, err := LoadManifest(path)
 	if err == nil {

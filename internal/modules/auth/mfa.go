@@ -83,7 +83,7 @@ func (s *MFAService) ValidateCode(secret, code string) bool {
 	return false
 }
 
-func (s *MFAService) ValidateBackupCode(hashedCodes []string, code string) (bool, string) {
+func (s *MFAService) ValidateBackupCode(hashedCodes []string, code string) (ok bool, usedCode string) {
 	if len(hashedCodes) == 0 || code == "" {
 		return false, ""
 	}

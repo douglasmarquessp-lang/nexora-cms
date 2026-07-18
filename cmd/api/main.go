@@ -11,24 +11,23 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	aiModule "nexora/internal/ai"
 	"nexora/internal/api"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
-	editorialModule "nexora/internal/modules/editorial"
-	categoriesModule "nexora/internal/modules/categories"
-	mediaModule "nexora/internal/modules/media"
-	pluginsModule "nexora/internal/plugins"
-	researchModule "nexora/internal/modules/research"
-	postsModule "nexora/internal/modules/posts"
-	siteModule "nexora/internal/modules/site"
-	writerModule "nexora/internal/modules/writer"
-	editorialEngineModule "nexora/internal/modules/editorialengine"
-	generatorModule "nexora/internal/modules/contentgenerator"
 	autocontentModule "nexora/internal/modules/autocontent"
-	aiModule "nexora/internal/ai"
+	categoriesModule "nexora/internal/modules/categories"
+	generatorModule "nexora/internal/modules/contentgenerator"
+	editorialModule "nexora/internal/modules/editorial"
+	editorialEngineModule "nexora/internal/modules/editorialengine"
+	mediaModule "nexora/internal/modules/media"
+	postsModule "nexora/internal/modules/posts"
+	researchModule "nexora/internal/modules/research"
+	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
+	writerModule "nexora/internal/modules/writer"
 	"nexora/internal/pkg/cache"
 	casbinPkg "nexora/internal/pkg/casbin"
 	"nexora/internal/pkg/config"
@@ -36,6 +35,7 @@ import (
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/ratelimit"
 	"nexora/internal/pkg/storage"
+	pluginsModule "nexora/internal/plugins"
 )
 
 type eventBusAdapter struct {
@@ -64,10 +64,14 @@ func main() {
 		log.Warn("database not available, running in degraded mode", "error", err)
 	}
 
+	code := runServer(cfg, log, ctx, db)
 	if db != nil {
-		defer db.Close()
+		db.Close()
 	}
+	os.Exit(code)
+}
 
+func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *database.Database) int {
 	ch := cache.New(cfg.Redis.Host == "")
 
 	var enforcer *casbinPkg.Enforcer
@@ -113,13 +117,13 @@ func main() {
 	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, aiMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
 	if err := k.Init(ctx); err != nil {
 		log.Error("kernel initialization failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	authSvc := authMod.Service()
@@ -174,14 +178,14 @@ func main() {
 
 	if err := k.Start(ctx); err != nil {
 		log.Error("kernel start failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	rateLimitStore := ratelimit.NewMemoryStore()
 	rateLimiter := ratelimit.NewLimiter(rateLimitStore, ratelimit.Config{
-		Enabled:      true,
+		Enabled:     true,
 		MaxRequests: 100,
-		Window:       time.Minute,
+		Window:      time.Minute,
 	})
 
 	router := rest.NewRouter(log)
@@ -194,26 +198,26 @@ func main() {
 	}
 
 	deps := &api.Dependencies{
-		Log:            log,
-		DBPing:         dbPing,
-		DBExec:         db.Pool,
-		AuthSvc:        authSvc,
-		SiteSvc:        siteSvc,
-		PostsSvc:       postsSvc,
-		CategoriesSvc:  categoriesSvc,
-		TagsSvc:        tagsSvc,
-		AssetsSvc:      assetsSvc,
-		MediaSvc:       mediaSvc,
-		EditorialSvc:   editorialSvc,
-		ResearchSvc:    researchSvc,
+		Log:                log,
+		DBPing:             dbPing,
+		DBExec:             db.Pool,
+		AuthSvc:            authSvc,
+		SiteSvc:            siteSvc,
+		PostsSvc:           postsSvc,
+		CategoriesSvc:      categoriesSvc,
+		TagsSvc:            tagsSvc,
+		AssetsSvc:          assetsSvc,
+		MediaSvc:           mediaSvc,
+		EditorialSvc:       editorialSvc,
+		ResearchSvc:        researchSvc,
 		WriterSvc:          writerSvc,
 		EditorialEngineSvc: editorialEngineSvc,
-		GeneratorSvc:          generatorSvc,
-		AutocontentSvc:        autocontentSvc,
-		AIManager:             aiSvc,
+		GeneratorSvc:       generatorSvc,
+		AutocontentSvc:     autocontentSvc,
+		AIManager:          aiSvc,
 		PluginManager:      pluginManager,
-		CasbinEnforcer: enforcer,
-		RateLimits:     rateLimiter,
+		CasbinEnforcer:     enforcer,
+		RateLimits:         rateLimiter,
 	}
 
 	api.SetupRoutes(router, deps)
@@ -232,7 +236,6 @@ func main() {
 		log.Info("api server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("server error", "error", err)
-			os.Exit(1)
 		}
 	}()
 
@@ -254,4 +257,5 @@ func main() {
 	}
 
 	log.Info("server stopped")
+	return 0
 }

@@ -283,7 +283,8 @@ func (s *Service) Update(ctx context.Context, siteID, tagID uuid.UUID, req Updat
 
 		newSlug := generateSlug(*req.Name)
 		if newSlug != existing.Slug {
-			uniqueSlug, err := s.ensureUniqueSlug(ctx, siteID, newSlug, &tagID)
+			var uniqueSlug string
+			uniqueSlug, err = s.ensureUniqueSlug(ctx, siteID, newSlug, &tagID)
 			if err != nil {
 				return nil, err
 			}

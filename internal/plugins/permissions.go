@@ -6,9 +6,9 @@ import (
 )
 
 type PermissionDef struct {
-	PluginID    string   `json:"plugin_id"`
-	Permission  string   `json:"permission"`
-	Description string   `json:"description"`
+	PluginID     string   `json:"plugin_id"`
+	Permission   string   `json:"permission"`
+	Description  string   `json:"description"`
 	DefaultRoles []string `json:"default_roles"`
 }
 

@@ -14,12 +14,10 @@ const (
 )
 
 type PluginInstance struct {
-	Manifest   *PluginManifest
-	Status     PluginStatus
-	Dir        string
-	DBID       string
-	routes     []RegisteredRoute
-	adminPages []AdminPage
+	Manifest *PluginManifest
+	Status   PluginStatus
+	Dir      string
+	DBID     string
 }
 
 type RegisteredRoute struct {

@@ -101,7 +101,7 @@ func (s *Service) ensureUniqueSlug(ctx context.Context, siteID uuid.UUID, slug s
 	}
 }
 
-func (s *Service) Create(ctx context.Context, siteID uuid.UUID, req CreateCategoryRequest) (*Category, error) {
+func (s *Service) Create(ctx context.Context, siteID uuid.UUID, req *CreateCategoryRequest) (*Category, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
@@ -118,8 +118,8 @@ func (s *Service) Create(ctx context.Context, siteID uuid.UUID, req CreateCatego
 	}
 
 	if req.ParentID != nil {
-		parent, err := s.GetByID(ctx, siteID, *req.ParentID)
-		if err != nil {
+		parent, parentErr := s.GetByID(ctx, siteID, *req.ParentID)
+		if parentErr != nil {
 			return nil, ErrInvalidParentCategory
 		}
 		if parent == nil {
@@ -346,7 +346,8 @@ func (s *Service) Update(ctx context.Context, siteID, catID uuid.UUID, req Updat
 
 		newSlug := generateSlug(*req.Name)
 		if newSlug != existing.Slug {
-			uniqueSlug, err := s.ensureUniqueSlug(ctx, siteID, newSlug, &catID)
+			var uniqueSlug string
+			uniqueSlug, err = s.ensureUniqueSlug(ctx, siteID, newSlug, &catID)
 			if err != nil {
 				return nil, err
 			}
@@ -361,7 +362,8 @@ func (s *Service) Update(ctx context.Context, siteID, catID uuid.UUID, req Updat
 			if parentID == catID {
 				return nil, ErrCircularParent
 			}
-			parent, err := s.GetByID(ctx, siteID, parentID)
+			var parent *Category
+			parent, err = s.GetByID(ctx, siteID, parentID)
 			if err != nil {
 				return nil, ErrInvalidParentCategory
 			}

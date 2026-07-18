@@ -39,7 +39,7 @@ func (h *Handler) Create(ctx *rest.Context) {
 		return
 	}
 
-	cat, err := h.svc.Create(ctx.Request.Context(), siteID, req)
+	cat, err := h.svc.Create(ctx.Request.Context(), siteID, &req)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrCategorySlugExists):
@@ -146,7 +146,7 @@ func (h *Handler) Update(ctx *rest.Context) {
 	}
 
 	var req UpdateCategoryRequest
-	if err := ctx.Decode(&req); err != nil {
+	if decodeErr := ctx.Decode(&req); decodeErr != nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}

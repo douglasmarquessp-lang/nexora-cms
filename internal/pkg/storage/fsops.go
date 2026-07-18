@@ -3,7 +3,6 @@ package storage
 import (
 	"io/ioutil"
 	"os"
-	"path/filepath"
 )
 
 func mkdirAll(dir string, perm os.FileMode) error {
@@ -24,14 +23,4 @@ func removeFile(path string) error {
 
 func statFile(path string) (os.FileInfo, error) {
 	return os.Stat(path)
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func ensureDir(path string) error {
-	dir := filepath.Dir(path)
-	return os.MkdirAll(dir, 0755)
 }

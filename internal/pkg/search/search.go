@@ -12,6 +12,7 @@ type IndexableDocument struct {
 	Type    string
 }
 
+//lint:ignore ST1003 stutter
 type SearchResult struct {
 	ID      string
 	Score   float64

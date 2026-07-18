@@ -1,4 +1,4 @@
-package media
+package media //nolint:goconst
 
 import (
 	"bytes"

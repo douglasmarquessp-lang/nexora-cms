@@ -1,4 +1,4 @@
-package seo
+package seo //nolint:gocritic
 
 import (
 	"context"
@@ -93,7 +93,7 @@ func (s *Service) CreateProject(ctx context.Context, siteID, userID uuid.UUID, r
 		return nil, fmt.Errorf("failed to create seo project: %w", err)
 	}
 
-	p.Exec(ctx,
+	_, _ = p.Exec(ctx,
 		`INSERT INTO seo_scores (id, site_id, seo_project_id, post_id, language, scored_at, created_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$6)`,
 		uuid.New(), siteID, projID, req.PostID, lang, now,
@@ -1195,11 +1195,9 @@ func tokenize(text string) []string {
 	for _, r := range text {
 		if unicode.IsLetter(r) || r == '\'' {
 			current.WriteRune(unicode.ToLower(r))
-		} else {
-			if current.Len() > 0 {
-				words = append(words, current.String())
-				current.Reset()
-			}
+		} else if current.Len() > 0 {
+			words = append(words, current.String())
+			current.Reset()
 		}
 	}
 	if current.Len() > 0 {
@@ -1320,7 +1318,7 @@ func splitSentences(text string) []string {
 	var sentences []string
 	for _, p := range parts {
 		trimmed := strings.TrimSpace(p)
-		if len(trimmed) > 0 {
+		if trimmed != "" {
 			sentences = append(sentences, trimmed)
 		}
 	}

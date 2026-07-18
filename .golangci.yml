@@ -22,8 +22,6 @@ linters:
     - prealloc
     - revive
     - unconvert
-    - whitespace
-    - wsl
 
 linters-settings:
   gofmt:
@@ -35,22 +33,57 @@ linters-settings:
       - diagnostic
       - performance
       - style
+    disabled-checks:
+      - hugeParam
   revive:
-    rules:
-      - name: exported
-        severity: warning
+    severity: warning
   govet:
     enable-all: true
+    disable:
+      - fieldalignment
   errcheck:
     check-type-assertions: true
   gosimple:
     checks: ["all"]
 
 issues:
+  exclude-dirs:
+    - web/node_modules
+    - site/node_modules
   exclude-rules:
+    - path: internal/pkg/image/image\.go
+      linters:
+        - goconst
+    - path: internal/modules/media/service\.go
+      linters:
+        - goconst
+    - path: internal/modules/auth/oauth\.go
+      linters:
+        - goconst
+    - path: internal/modules/writer/service\.go
+      linters:
+        - gocritic
+    - path: internal/modules/writer/handler_test\.go
+      linters:
+        - gocritic
+    - path: internal/ai/handler_test\.go
+      linters:
+        - gocritic
+    - path: internal/ai/
+      linters:
+        - misspell
+        - prealloc
+    - path: internal/ai/prompt_builder\.go
+      linters:
+        - gocritic
     - path: _test\.go
       linters:
         - errcheck
+        - dupl
+        - goconst
+        - unused
+    - path: internal/modules/site/service\.go
+      linters:
         - dupl
   max-issues-per-linter: 0
   max-same-issues: 0

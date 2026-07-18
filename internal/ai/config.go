@@ -3,12 +3,12 @@ package ai
 import "time"
 
 type AIConfig struct {
-	DefaultProvider string         `json:"default_provider"`
-	Providers       []ProviderCfg  `json:"providers"`
-	Retry           RetryConfig    `json:"retry"`
-	CircuitBreaker  CBConfig       `json:"circuit_breaker"`
-	GlobalTimeout   time.Duration  `json:"global_timeout"`
-	Enabled         bool           `json:"enabled"`
+	DefaultProvider string        `json:"default_provider"`
+	Providers       []ProviderCfg `json:"providers"`
+	Retry           RetryConfig   `json:"retry"`
+	CircuitBreaker  CBConfig      `json:"circuit_breaker"`
+	GlobalTimeout   time.Duration `json:"global_timeout"`
+	Enabled         bool          `json:"enabled"`
 }
 
 type ProviderCfg struct {
@@ -30,10 +30,10 @@ type RetryConfig struct {
 }
 
 type CBConfig struct {
-	Enabled            bool          `json:"enabled"`
-	FailureThreshold   int           `json:"failure_threshold"`
-	RecoveryTimeout    time.Duration `json:"recovery_timeout"`
-	HalfOpenMaxReqs    int           `json:"half_open_max_requests"`
+	Enabled          bool          `json:"enabled"`
+	FailureThreshold int           `json:"failure_threshold"`
+	RecoveryTimeout  time.Duration `json:"recovery_timeout"`
+	HalfOpenMaxReqs  int           `json:"half_open_max_requests"`
 }
 
 func DefaultConfig() AIConfig {

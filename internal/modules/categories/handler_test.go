@@ -107,7 +107,7 @@ func TestHandler_Get(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories/"+uuid.New().String(), nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories/"+uuid.New().String(), http.NoBody)
 		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -117,7 +117,7 @@ func TestHandler_Get(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories/invalid", nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories/invalid", http.NoBody)
 		req = withChiParams(req, map[string]string{"id": "invalid"})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
@@ -129,7 +129,7 @@ func TestHandler_Get(t *testing.T) {
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		catID := uuid.New().String()
-		req := httptest.NewRequest(http.MethodGet, "/categories/"+catID, nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories/"+catID, http.NoBody)
 		req = withChiParams(req, map[string]string{"id": catID})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
@@ -144,7 +144,7 @@ func TestHandler_List(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories", nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories", http.NoBody)
 		rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
@@ -153,7 +153,7 @@ func TestHandler_List(t *testing.T) {
 
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories", nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories", http.NoBody)
 		req = withSiteID(req)
 		rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -167,7 +167,7 @@ func TestHandler_Tree(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories/tree", nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories/tree", http.NoBody)
 		rest.AdaptHandler(h.Tree).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
@@ -176,7 +176,7 @@ func TestHandler_Tree(t *testing.T) {
 
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/categories/tree", nil)
+		req := httptest.NewRequest(http.MethodGet, "/categories/tree", http.NoBody)
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Tree).ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -243,7 +243,7 @@ func TestHandler_Delete(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/categories/"+uuid.New().String(), nil)
+		req := httptest.NewRequest(http.MethodDelete, "/categories/"+uuid.New().String(), http.NoBody)
 		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -253,7 +253,7 @@ func TestHandler_Delete(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/categories/invalid", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/categories/invalid", http.NoBody)
 		req = withChiParams(req, map[string]string{"id": "invalid"})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
@@ -265,7 +265,7 @@ func TestHandler_Delete(t *testing.T) {
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		catID := uuid.New().String()
-		req := httptest.NewRequest(http.MethodDelete, "/categories/"+catID, nil)
+		req := httptest.NewRequest(http.MethodDelete, "/categories/"+catID, http.NoBody)
 		req = withChiParams(req, map[string]string{"id": catID})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
@@ -279,7 +279,7 @@ func TestHandler_ResponseFormat(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/categories/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/categories/invalid", http.NoBody)
 	req = withChiParams(req, map[string]string{"id": "invalid"})
 	req = withSiteID(req)
 	rest.AdaptHandler(h.Get).ServeHTTP(rec, req)

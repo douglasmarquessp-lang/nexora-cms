@@ -17,6 +17,8 @@ import (
 	"nexora/internal/pkg/logger"
 )
 
+const providerGoogle = "google"
+
 type OAuthUserInfo struct {
 	Email      string
 	Name       string
@@ -125,12 +127,16 @@ func (s *OAuthService) ExchangeCodeAndGetUserInfo(ctx context.Context, provider,
 
 	name, _ := rawInfo["name"].(string)
 	if name == "" {
-		name = email[:strings.Index(email, "@")]
+		if at := strings.Index(email, "@"); at > 0 {
+			name = email[:at]
+		} else {
+			name = email
+		}
 	}
 
 	avatar, _ := rawInfo["avatar"].(string)
 	if avatar == "" {
-		if provider == "google" {
+		if provider == providerGoogle {
 			if picture, ok := rawInfo["picture"].(string); ok {
 				avatar = picture
 			}
@@ -143,7 +149,7 @@ func (s *OAuthService) ExchangeCodeAndGetUserInfo(ctx context.Context, provider,
 
 	providerID, _ := rawInfo["id"].(string)
 	if providerID == "" {
-		if provider == "google" {
+		if provider == providerGoogle {
 			if sub, ok := rawInfo["sub"].(string); ok {
 				providerID = sub
 			}
@@ -220,7 +226,7 @@ func (s *OAuthService) exchangeCode(p *OAuthProviderConfig, code string) (string
 }
 
 func (s *OAuthService) getUserInfo(p *OAuthProviderConfig, accessToken, provider string) (map[string]interface{}, error) {
-	req, err := http.NewRequest("GET", p.UserInfoURL, nil)
+	req, err := http.NewRequest("GET", p.UserInfoURL, http.NoBody)
 	if err != nil {
 		return nil, err
 	}

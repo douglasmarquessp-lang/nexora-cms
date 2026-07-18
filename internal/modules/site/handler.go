@@ -409,5 +409,3 @@ func (h *Handler) ListSiteSettings(ctx *rest.Context) {
 
 	ctx.JSON(http.StatusOK, map[string]interface{}{"settings": settings})
 }
-
-

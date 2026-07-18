@@ -92,7 +92,7 @@ func TestService_Create_NoDB(t *testing.T) {
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
 
-	_, err := svc.Create(context.Background(), uuid.New(), CreateCategoryRequest{
+	_, err := svc.Create(context.Background(), uuid.New(), &CreateCategoryRequest{
 		Name: "Test Category",
 	})
 	if err != ErrDatabaseNotAvail {
@@ -105,9 +105,9 @@ func TestService_Create_EmptyName(t *testing.T) {
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
 
-	_, err := svc.Create(context.Background(), uuid.New(), CreateCategoryRequest{
-		Name: "",
-	})
+	_, err := svc.Create(context.Background(), uuid.New(), &CreateCategoryRequest{
+
+		})
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
@@ -285,7 +285,7 @@ func TestService_Create_WithMockDB(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), siteID, pgxmock.AnyArg(), "Test Category", "test-category", "Description", "icon-star", "#ff0000", 1, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
-	cat, err := svc.Create(context.Background(), siteID, CreateCategoryRequest{
+	cat, err := svc.Create(context.Background(), siteID, &CreateCategoryRequest{
 		Name:        "Test Category",
 		Description: "Description",
 		Icon:        "icon-star",
@@ -333,7 +333,7 @@ func TestService_Create_WithParent(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), siteID, &parentID, "Child", "child", "", "", "", 0, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
-	cat, err := svc.Create(context.Background(), siteID, CreateCategoryRequest{
+	cat, err := svc.Create(context.Background(), siteID, &CreateCategoryRequest{
 		Name:     "Child",
 		ParentID: &parentID,
 	})
@@ -364,7 +364,7 @@ func TestService_Create_InvalidParent(t *testing.T) {
 		WithArgs(parentID, siteID).
 		WillReturnRows(pgxmock.NewRows(nil))
 
-	_, err := svc.Create(context.Background(), siteID, CreateCategoryRequest{
+	_, err := svc.Create(context.Background(), siteID, &CreateCategoryRequest{
 		Name:     "Child",
 		ParentID: &parentID,
 	})
@@ -395,7 +395,7 @@ func TestService_Create_SlugCollision(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), siteID, pgxmock.AnyArg(), "Test Category", "test-category-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), 0, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
-	cat, err := svc.Create(context.Background(), siteID, CreateCategoryRequest{
+	cat, err := svc.Create(context.Background(), siteID, &CreateCategoryRequest{
 		Name: "Test Category",
 	})
 	if err != nil {

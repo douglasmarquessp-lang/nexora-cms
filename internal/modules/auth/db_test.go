@@ -1022,7 +1022,7 @@ func TestMFAService_GenerateSecret_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSecret failed: %v", err)
 	}
-	if len(secret) == 0 {
+	if secret == "" {
 		t.Error("expected non-empty secret")
 	}
 }
@@ -1093,7 +1093,7 @@ func TestHandler_EnrollMFA_Success(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	defer mock.Close()
 
-	req := httptest.NewRequest("POST", "/api/auth/mfa/enroll", nil)
+	req := httptest.NewRequest("POST", "/api/auth/mfa/enroll", http.NoBody)
 	req = req.WithContext(authContext(uid))
 	w := httptest.NewRecorder()
 

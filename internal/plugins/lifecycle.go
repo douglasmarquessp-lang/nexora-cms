@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type Lifecycle struct {
-	db       *pgx.Conn
 	registry *Registry
 	hooks    *Hooks
 	events   EventEmitter
@@ -181,18 +178,16 @@ func (lc *Lifecycle) Uninstall(ctx context.Context, instance *PluginInstance) er
 }
 
 type PluginRecord struct {
-	ID              string    `json:"id"`
-	PluginID        string    `json:"plugin_id"`
-	Name            string    `json:"name"`
-	Version         string    `json:"version"`
-	Author          string    `json:"author"`
-	Description     string    `json:"description"`
-	License         string    `json:"license"`
-	Homepage        string    `json:"homepage"`
-	MinCoreVersion  string    `json:"min_core_version"`
-	Status          string    `json:"status"`
-	InstalledAt     time.Time `json:"installed_at"`
-	ActivatedAt     *time.Time `json:"activated_at,omitempty"`
+	ID             string     `json:"id"`
+	PluginID       string     `json:"plugin_id"`
+	Name           string     `json:"name"`
+	Version        string     `json:"version"`
+	Author         string     `json:"author"`
+	Description    string     `json:"description"`
+	License        string     `json:"license"`
+	Homepage       string     `json:"homepage"`
+	MinCoreVersion string     `json:"min_core_version"`
+	Status         string     `json:"status"`
+	InstalledAt    time.Time  `json:"installed_at"`
+	ActivatedAt    *time.Time `json:"activated_at,omitempty"`
 }
-
-

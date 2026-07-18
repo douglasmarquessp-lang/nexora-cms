@@ -157,8 +157,8 @@ func (h *Handler) GetCapabilities(ctx *rest.Context) {
 	providers := h.manager.ListProviders()
 
 	resp := map[string]interface{}{
-		"capabilities": caps,
-		"providers":    providers,
+		"capabilities":    caps,
+		"providers":       providers,
 		"total_providers": len(providers),
 	}
 	_ = siteID

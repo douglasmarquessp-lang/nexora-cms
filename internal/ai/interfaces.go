@@ -15,9 +15,9 @@ type AIProvider interface {
 }
 
 type QualityChecker interface {
-	ScoreGrammar(ctx context.Context, text string, language string) (*ScoreResult, error)
+	ScoreGrammar(ctx context.Context, text, language string) (*ScoreResult, error)
 	ScoreSEO(ctx context.Context, text string, keywords []string) (*ScoreResult, error)
-	ScoreReadability(ctx context.Context, text string, language string) (*ScoreResult, error)
+	ScoreReadability(ctx context.Context, text, language string) (*ScoreResult, error)
 	ScoreEntityCoverage(ctx context.Context, text string, entities []string) (*ScoreResult, error)
 	CheckStructure(ctx context.Context, text string, spec StructureSpec) (*ScoreResult, error)
 	CheckDuplicates(ctx context.Context, text string) ([]DuplicateResult, error)

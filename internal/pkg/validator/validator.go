@@ -26,20 +26,20 @@ func (v *Validator) Required(field, value, message string) {
 	}
 }
 
-func (v *Validator) MinLength(field, value string, min int) {
-	if utf8.RuneCountInString(value) < min {
+func (v *Validator) MinLength(field, value string, minLen int) {
+	if utf8.RuneCountInString(value) < minLen {
 		v.errors = append(v.errors, ValidationError{
 			Field:   field,
-			Message: fmt.Sprintf("mínimo de %d caracteres", min),
+			Message: fmt.Sprintf("mínimo de %d caracteres", minLen),
 		})
 	}
 }
 
-func (v *Validator) MaxLength(field, value string, max int) {
-	if utf8.RuneCountInString(value) > max {
+func (v *Validator) MaxLength(field, value string, maxLen int) {
+	if utf8.RuneCountInString(value) > maxLen {
 		v.errors = append(v.errors, ValidationError{
 			Field:   field,
-			Message: fmt.Sprintf("máximo de %d caracteres", max),
+			Message: fmt.Sprintf("máximo de %d caracteres", maxLen),
 		})
 	}
 }

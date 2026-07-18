@@ -8,7 +8,7 @@ import (
 type PipelineStage int
 
 const (
-	StageResearchGen   PipelineStage = iota
+	StageResearchGen PipelineStage = iota
 	StageBriefingGen
 	StageOutlineGen
 	StageDraftGen
@@ -46,10 +46,10 @@ type PipelineInput struct {
 }
 
 type PipelineResult struct {
-	Stage       PipelineStage `json:"stage"`
-	Content     string        `json:"content"`
-	Error       error         `json:"error,omitempty"`
-	Duration    string        `json:"duration,omitempty"`
+	Stage    PipelineStage `json:"stage"`
+	Content  string        `json:"content"`
+	Error    error         `json:"error,omitempty"`
+	Duration string        `json:"duration,omitempty"`
 }
 
 type PipelineExecutor struct {
@@ -61,11 +61,6 @@ func NewPipelineExecutor(manager *Manager) *PipelineExecutor {
 }
 
 func (pe *PipelineExecutor) ExecuteStage(ctx context.Context, stage PipelineStage, input PipelineInput) (*PipelineResult, error) {
-	lang := input.Language
-	if lang == "" {
-		lang = "en"
-	}
-
 	switch stage {
 	case StageResearchGen:
 		return pe.runResearch(ctx, input)
@@ -163,9 +158,9 @@ func (pe *PipelineExecutor) runOutline(ctx context.Context, input PipelineInput)
 	}
 
 	req, err := pe.manager.Prompts().Build(ctx, promptID, map[string]string{
-		"title":   input.Title,
-		"briefing": input.Briefing,
-		"keywords": joinStrings(input.Keywords, ", "),
+		"title":      input.Title,
+		"briefing":   input.Briefing,
+		"keywords":   joinStrings(input.Keywords, ", "),
 		"word_count": fmt.Sprintf("%d", input.WordCount),
 	})
 	if err != nil {
@@ -250,7 +245,7 @@ func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput)
 	entities, _ := pe.manager.Quality().ScoreEntityCoverage(ctx, text, input.Entities)
 	duplicates, _ := pe.manager.Quality().CheckDuplicates(ctx, text)
 
-	result := fmt.Sprintf("Quality Check Results:\n")
+	result := "Quality Check Results:\n"
 	result += fmt.Sprintf("- Grammar: %.1f/100 (passed: %v)\n", grammar.Score, grammar.Passed)
 	result += fmt.Sprintf("- SEO: %.1f/100 (passed: %v)\n", seoScore.Score, seoScore.Passed)
 	result += fmt.Sprintf("- Readability: %.1f/100 (passed: %v)\n", readability.Score, readability.Passed)

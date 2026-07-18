@@ -76,8 +76,8 @@ func TestEventConstants(t *testing.T) {
 		{"quality.checked", string(EventQualityChecked)},
 	}
 	for _, tt := range tests {
-		if string(tt.value) != tt.name {
-			t.Errorf("expected %q, got %q", tt.name, string(tt.value))
+		if tt.value != tt.name {
+			t.Errorf("expected %q, got %q", tt.name, tt.value)
 		}
 	}
 }

@@ -17,14 +17,14 @@ type Store interface {
 }
 
 type MemoryStore struct {
-	mu    sync.Mutex
-	data  map[string]*windowEntry
+	mu   sync.Mutex
+	data map[string]*windowEntry
 }
 
 type windowEntry struct {
-	count    int
+	count       int
 	windowStart time.Time
-	duration time.Duration
+	duration    time.Duration
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -59,9 +59,9 @@ func (s *MemoryStore) Reset(ctx context.Context, key string) error {
 }
 
 type Config struct {
-	Enabled  bool
+	Enabled     bool
 	MaxRequests int
-	Window   time.Duration
+	Window      time.Duration
 }
 
 type Limiter struct {

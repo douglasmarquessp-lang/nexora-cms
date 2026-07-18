@@ -49,7 +49,7 @@ func TestPipelineExecutor_BriefingStage(t *testing.T) {
 	ctx := context.Background()
 
 	result, err := pe.ExecuteStage(ctx, StageBriefingGen, PipelineInput{
-		Topic:   "Climate",
+		Topic:    "Climate",
 		Briefing: "Source data",
 	})
 	if err != nil {
@@ -164,7 +164,7 @@ func TestPipelineExecutor_TranslationStage(t *testing.T) {
 	ctx := context.Background()
 
 	result, err := pe.ExecuteStage(ctx, StageTranslationGen, PipelineInput{
-		Briefing:  "Content to translate",
+		Briefing: "Content to translate",
 	})
 	if err != nil {
 		t.Fatalf("ExecuteStage translation failed: %v", err)

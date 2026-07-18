@@ -48,8 +48,8 @@ func TestLocalDriver_Download(t *testing.T) {
 
 	// Create a test file
 	testDir := filepath.Join(dir, "test")
-	os.MkdirAll(testDir, 0755)
-	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test content"), 0644)
+	os.MkdirAll(testDir, 0o755)
+	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test content"), 0o644)
 
 	reader, err := d.Download(context.Background(), "test/file.txt")
 	if err != nil {
@@ -86,8 +86,8 @@ func TestLocalDriver_Delete(t *testing.T) {
 
 	// Create a test file
 	testDir := filepath.Join(dir, "test")
-	os.MkdirAll(testDir, 0755)
-	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test"), 0644)
+	os.MkdirAll(testDir, 0o755)
+	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test"), 0o644)
 
 	err := d.Delete(context.Background(), "test/file.txt")
 	if err != nil {
@@ -123,8 +123,8 @@ func TestLocalDriver_Exists(t *testing.T) {
 
 	// Create and check
 	testDir := filepath.Join(dir, "test")
-	os.MkdirAll(testDir, 0755)
-	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test"), 0644)
+	os.MkdirAll(testDir, 0o755)
+	os.WriteFile(filepath.Join(testDir, "file.txt"), []byte("test"), 0o644)
 
 	exists, err = d.Exists(context.Background(), "test/file.txt")
 	if err != nil {

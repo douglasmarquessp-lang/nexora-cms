@@ -44,22 +44,22 @@ type SiteDomain struct {
 }
 
 type GlobalSetting struct {
-	ID          uuid.UUID              `json:"id"`
-	Key         string                 `json:"key"`
-	Value       interface{}            `json:"value"`
-	Type        string                 `json:"type"`
-	Description string                 `json:"description,omitempty"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ID          uuid.UUID   `json:"id"`
+	Key         string      `json:"key"`
+	Value       interface{} `json:"value"`
+	Type        string      `json:"type"`
+	Description string      `json:"description,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 type SiteSetting struct {
-	ID        uuid.UUID              `json:"id"`
-	SiteID    uuid.UUID              `json:"site_id"`
-	Key       string                 `json:"key"`
-	Value     interface{}            `json:"value"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	ID        uuid.UUID   `json:"id"`
+	SiteID    uuid.UUID   `json:"site_id"`
+	Key       string      `json:"key"`
+	Value     interface{} `json:"value"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 type CreateSiteRequest struct {
@@ -74,12 +74,12 @@ type CreateSiteRequest struct {
 }
 
 type UpdateSiteRequest struct {
-	Name         *string                `json:"name,omitempty"`
-	Description  *string                `json:"description,omitempty"`
-	Status       *SiteStatus            `json:"status,omitempty"`
-	Theme        *string                `json:"theme,omitempty"`
-	Locale       *string                `json:"locale,omitempty"`
-	Timezone     *string                `json:"timezone,omitempty"`
+	Name         *string                 `json:"name,omitempty"`
+	Description  *string                 `json:"description,omitempty"`
+	Status       *SiteStatus             `json:"status,omitempty"`
+	Theme        *string                 `json:"theme,omitempty"`
+	Locale       *string                 `json:"locale,omitempty"`
+	Timezone     *string                 `json:"timezone,omitempty"`
 	Settings     *map[string]interface{} `json:"settings,omitempty"`
 	FeatureFlags *map[string]interface{} `json:"feature_flags,omitempty"`
 }

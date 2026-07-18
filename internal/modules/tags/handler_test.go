@@ -107,7 +107,7 @@ func TestHandler_Get(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags/"+uuid.New().String(), nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/"+uuid.New().String(), http.NoBody)
 		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -117,7 +117,7 @@ func TestHandler_Get(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags/invalid", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/invalid", http.NoBody)
 		req = withChiParams(req, map[string]string{"id": "invalid"})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
@@ -129,7 +129,7 @@ func TestHandler_Get(t *testing.T) {
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		tagID := uuid.New().String()
-		req := httptest.NewRequest(http.MethodGet, "/tags/"+tagID, nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/"+tagID, http.NoBody)
 		req = withChiParams(req, map[string]string{"id": tagID})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Get).ServeHTTP(rec, req)
@@ -144,7 +144,7 @@ func TestHandler_GetBySlug(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug?slug=test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug?slug=test", http.NoBody)
 		rest.AdaptHandler(h.GetBySlug).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
@@ -153,7 +153,7 @@ func TestHandler_GetBySlug(t *testing.T) {
 
 	t.Run("missing slug param", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug", http.NoBody)
 		req = withSiteID(req)
 		rest.AdaptHandler(h.GetBySlug).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -163,7 +163,7 @@ func TestHandler_GetBySlug(t *testing.T) {
 
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug?slug=test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags/by-slug?slug=test", http.NoBody)
 		req = withSiteID(req)
 		rest.AdaptHandler(h.GetBySlug).ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -177,7 +177,7 @@ func TestHandler_List(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags", http.NoBody)
 		rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
@@ -186,7 +186,7 @@ func TestHandler_List(t *testing.T) {
 
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/tags", nil)
+		req := httptest.NewRequest(http.MethodGet, "/tags", http.NoBody)
 		req = withSiteID(req)
 		rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -253,7 +253,7 @@ func TestHandler_Delete(t *testing.T) {
 
 	t.Run("missing site", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/tags/"+uuid.New().String(), nil)
+		req := httptest.NewRequest(http.MethodDelete, "/tags/"+uuid.New().String(), http.NoBody)
 		req = withChiParams(req, map[string]string{"id": uuid.New().String()})
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -263,7 +263,7 @@ func TestHandler_Delete(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/tags/invalid", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/tags/invalid", http.NoBody)
 		req = withChiParams(req, map[string]string{"id": "invalid"})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
@@ -275,7 +275,7 @@ func TestHandler_Delete(t *testing.T) {
 	t.Run("db error", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		tagID := uuid.New().String()
-		req := httptest.NewRequest(http.MethodDelete, "/tags/"+tagID, nil)
+		req := httptest.NewRequest(http.MethodDelete, "/tags/"+tagID, http.NoBody)
 		req = withChiParams(req, map[string]string{"id": tagID})
 		req = withSiteID(req)
 		rest.AdaptHandler(h.Delete).ServeHTTP(rec, req)
@@ -289,7 +289,7 @@ func TestHandler_ResponseFormat(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/tags/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tags/invalid", http.NoBody)
 	req = withChiParams(req, map[string]string{"id": "invalid"})
 	req = withSiteID(req)
 	rest.AdaptHandler(h.Get).ServeHTTP(rec, req)

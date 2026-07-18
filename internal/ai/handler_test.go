@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"nexora/internal/api/middleware"
@@ -19,15 +18,6 @@ import (
 func withSiteID(r *http.Request) *http.Request {
 	ctx := r.Context()
 	ctx = context.WithValue(ctx, middleware.CtxSiteID, uuid.New())
-	return r.WithContext(ctx)
-}
-
-func withChiParams(r *http.Request, params map[string]string) *http.Request {
-	rctx := chi.NewRouteContext()
-	for k, v := range params {
-		rctx.URLParams.Add(k, v)
-	}
-	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
 	return r.WithContext(ctx)
 }
 

@@ -7,7 +7,6 @@ import (
 )
 
 type StreamProcessor struct {
-	mu         sync.Mutex
 	chunkFn    func(StreamChunk) error
 	completeFn func(*CompletionResult) error
 	errorFn    func(error) error
@@ -94,10 +93,10 @@ func ProcessStream(ctx context.Context, provider AIProvider, req CompletionReque
 	go func() {
 		defer close(out)
 		for chunk := range ch {
-			handler.HandleChunk(chunk)
+			_ = handler.HandleChunk(chunk)
 			out <- chunk
 			if chunk.Done {
-				handler.OnComplete(&CompletionResult{
+				_ = handler.OnComplete(&CompletionResult{
 					Content:      "",
 					ProviderName: provider.Name(),
 					FinishReason: chunk.FinishReason,
@@ -127,7 +126,7 @@ func CollectStream(ctx context.Context, provider AIProvider, req CompletionReque
 		if chunk.Error != nil {
 			return fullContent, chunk.Error
 		}
-		handler.HandleChunk(chunk)
+		_ = handler.HandleChunk(chunk)
 		if chunk.Done {
 			break
 		}

@@ -86,7 +86,7 @@ func (m *PluginManifest) Validate() error {
 	}
 	if m.Version == "" {
 		errs = append(errs, "version is required")
-	} else if !semver.IsValid("v"+strings.TrimPrefix(m.Version, "v")) {
+	} else if !semver.IsValid("v" + strings.TrimPrefix(m.Version, "v")) {
 		errs = append(errs, fmt.Sprintf("version %q is not valid semver", m.Version))
 	}
 	if m.MinCoreVersion != "" {

@@ -333,5 +333,3 @@ func (m *mockEmitterWithCheck) Emit(ctx context.Context, eventType string, paylo
 	m.fn(eventType)
 	return nil
 }
-
-

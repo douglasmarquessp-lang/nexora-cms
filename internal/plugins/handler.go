@@ -70,20 +70,20 @@ func (h *Handler) Get(ctx *rest.Context) {
 	registrations := h.manager.Hooks().GetRegistrations(id)
 
 	ctx.JSON(http.StatusOK, map[string]interface{}{
-		"id":                plugin.Manifest.ID,
-		"name":              plugin.Manifest.Name,
-		"version":           plugin.Manifest.Version,
-		"author":            plugin.Manifest.Author,
-		"description":       plugin.Manifest.Description,
-		"license":           plugin.Manifest.License,
-		"homepage":          plugin.Manifest.Homepage,
-		"min_core_version":  plugin.Manifest.MinCoreVersion,
-		"status":            plugin.Status,
-		"dependencies":      plugin.Manifest.Dependencies,
-		"permissions":       plugin.Manifest.Permissions,
-		"hooks":             plugin.Manifest.Hooks,
-		"routes":            plugin.Manifest.Routes,
-		"admin_pages":       plugin.Manifest.AdminPages,
+		"id":                 plugin.Manifest.ID,
+		"name":               plugin.Manifest.Name,
+		"version":            plugin.Manifest.Version,
+		"author":             plugin.Manifest.Author,
+		"description":        plugin.Manifest.Description,
+		"license":            plugin.Manifest.License,
+		"homepage":           plugin.Manifest.Homepage,
+		"min_core_version":   plugin.Manifest.MinCoreVersion,
+		"status":             plugin.Status,
+		"dependencies":       plugin.Manifest.Dependencies,
+		"permissions":        plugin.Manifest.Permissions,
+		"hooks":              plugin.Manifest.Hooks,
+		"routes":             plugin.Manifest.Routes,
+		"admin_pages":        plugin.Manifest.AdminPages,
 		"hook_registrations": registrations,
 	})
 }
@@ -226,7 +226,7 @@ func (h *Handler) UpdateSettings(ctx *rest.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, map[string]interface{}{
-		"message":  "settings updated",
+		"message":   "settings updated",
 		"plugin_id": id,
 	})
 }

@@ -216,9 +216,9 @@ func (p *MockProvider) shouldFail() bool {
 	return rand.Float64() < p.failRate
 }
 
-func (p *MockProvider) hasCapability(cap Capability) bool {
+func (p *MockProvider) hasCapability(capability Capability) bool {
 	for _, c := range p.capabilities {
-		if c == cap {
+		if c == capability {
 			return true
 		}
 	}

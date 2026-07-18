@@ -16,9 +16,9 @@ const (
 type ProviderState string
 
 const (
-	ProviderHealthy   ProviderState = "healthy"
-	ProviderDegraded  ProviderState = "degraded"
-	ProviderUnhealthy ProviderState = "unhealthy"
+	ProviderHealthy     ProviderState = "healthy"
+	ProviderDegraded    ProviderState = "degraded"
+	ProviderUnhealthy   ProviderState = "unhealthy"
 	ProviderCircuitOpen ProviderState = "circuit_open"
 )
 
@@ -44,10 +44,10 @@ type CompletionResult struct {
 }
 
 type StreamChunk struct {
-	Content    string `json:"content"`
-	Done       bool   `json:"done"`
-	Error      error  `json:"error,omitempty"`
-	Index      int    `json:"index"`
+	Content      string `json:"content"`
+	Done         bool   `json:"done"`
+	Error        error  `json:"error,omitempty"`
+	Index        int    `json:"index"`
 	FinishReason string `json:"finish_reason,omitempty"`
 }
 
@@ -60,9 +60,9 @@ type HealthStatus struct {
 }
 
 type EmbeddingResult struct {
-	Vector     []float64 `json:"vector"`
-	Model      string    `json:"model"`
-	Dimensions int       `json:"dimensions"`
+	Vector     []float64     `json:"vector"`
+	Model      string        `json:"model"`
+	Dimensions int           `json:"dimensions"`
 	Duration   time.Duration `json:"duration"`
 }
 
@@ -85,28 +85,28 @@ type ClassifyRequest struct {
 }
 
 type ClassifyResult struct {
-	Category    string    `json:"category"`
-	Confidence  float64   `json:"confidence"`
-	Scores      map[string]float64 `json:"scores,omitempty"`
+	Category   string             `json:"category"`
+	Confidence float64            `json:"confidence"`
+	Scores     map[string]float64 `json:"scores,omitempty"`
 }
 
 type ScoreResult struct {
-	Score     float64 `json:"score"`
-	MaxScore  float64 `json:"max_score"`
-	Passed    bool    `json:"passed"`
-	Details   string  `json:"details,omitempty"`
+	Score    float64 `json:"score"`
+	MaxScore float64 `json:"max_score"`
+	Passed   bool    `json:"passed"`
+	Details  string  `json:"details,omitempty"`
 }
 
 type DuplicateResult struct {
-	Text     string  `json:"text"`
+	Text       string  `json:"text"`
 	Similarity float64 `json:"similarity"`
-	Passed   bool    `json:"passed"`
+	Passed     bool    `json:"passed"`
 }
 
 type HallucinationResult struct {
-	Passed       bool     `json:"passed"`
-	Issues       []string `json:"issues,omitempty"`
-	Confidence   float64  `json:"confidence"`
+	Passed     bool     `json:"passed"`
+	Issues     []string `json:"issues,omitempty"`
+	Confidence float64  `json:"confidence"`
 }
 
 type StructureSpec struct {
@@ -131,29 +131,29 @@ type PromptTemplate struct {
 }
 
 type ProviderInfo struct {
-	Name         string       `json:"name"`
-	Model        string       `json:"model"`
-	Capabilities []Capability `json:"capabilities"`
+	Name         string        `json:"name"`
+	Model        string        `json:"model"`
+	Capabilities []Capability  `json:"capabilities"`
 	State        ProviderState `json:"state"`
-	Priority     int          `json:"priority"`
-	Weight       int          `json:"weight"`
-	Enabled      bool         `json:"enabled"`
+	Priority     int           `json:"priority"`
+	Weight       int           `json:"weight"`
+	Enabled      bool          `json:"enabled"`
 }
 
 type AIMetrics struct {
-	TotalRequests   int64         `json:"total_requests"`
-	FailedRequests  int64         `json:"failed_requests"`
-	TotalTokens     int64         `json:"total_tokens"`
-	AvgLatency      time.Duration `json:"avg_latency"`
-	ProviderStats   map[string]ProviderMetrics `json:"provider_stats"`
+	TotalRequests  int64                      `json:"total_requests"`
+	FailedRequests int64                      `json:"failed_requests"`
+	TotalTokens    int64                      `json:"total_tokens"`
+	AvgLatency     time.Duration              `json:"avg_latency"`
+	ProviderStats  map[string]ProviderMetrics `json:"provider_stats"`
 }
 
 type ProviderMetrics struct {
-	Requests      int64         `json:"requests"`
-	Failed        int64         `json:"failed"`
-	AvgLatency    time.Duration `json:"avg_latency"`
-	TokensUsed    int64         `json:"tokens_used"`
-	CircuitOpens  int64         `json:"circuit_opens"`
+	Requests     int64         `json:"requests"`
+	Failed       int64         `json:"failed"`
+	AvgLatency   time.Duration `json:"avg_latency"`
+	TokensUsed   int64         `json:"tokens_used"`
+	CircuitOpens int64         `json:"circuit_opens"`
 }
 
 type ProviderHealthReport struct {
@@ -162,32 +162,32 @@ type ProviderHealthReport struct {
 }
 
 type AITestResult struct {
-	Provider    string `json:"provider"`
-	Model       string `json:"model"`
-	Generate    bool   `json:"generate"`
-	Stream      bool   `json:"stream,omitempty"`
-	Embeddings  bool   `json:"embeddings,omitempty"`
-	Summarize   bool   `json:"summarize,omitempty"`
-	Rewrite     bool   `json:"rewrite,omitempty"`
-	Classify    bool   `json:"classify,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	Generate   bool   `json:"generate"`
+	Stream     bool   `json:"stream,omitempty"`
+	Embeddings bool   `json:"embeddings,omitempty"`
+	Summarize  bool   `json:"summarize,omitempty"`
+	Rewrite    bool   `json:"rewrite,omitempty"`
+	Classify   bool   `json:"classify,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type AIModuleConfig struct {
-	Config        AIConfig
-	EventBus      interface{ SetEventBus(bus interface{}) }
+	Config   AIConfig
+	EventBus interface{ SetEventBus(bus interface{}) }
 }
 
 // prompt type constants
 const (
-	PromptTypeArticle       = "article"
-	PromptTypeOutline       = "outline"
-	PromptTypeSection       = "section"
-	PromptTypeRevision      = "revision"
-	PromptTypeFactCheck     = "fact_check"
-	PromptTypeSEO           = "seo"
-	PromptTypeTranslation   = "translation"
-	PromptTypeSummary       = "summary"
-	PromptTypeResearch      = "research"
-	PromptTypeBriefing      = "briefing"
+	PromptTypeArticle     = "article"
+	PromptTypeOutline     = "outline"
+	PromptTypeSection     = "section"
+	PromptTypeRevision    = "revision"
+	PromptTypeFactCheck   = "fact_check"
+	PromptTypeSEO         = "seo"
+	PromptTypeTranslation = "translation"
+	PromptTypeSummary     = "summary"
+	PromptTypeResearch    = "research"
+	PromptTypeBriefing    = "briefing"
 )

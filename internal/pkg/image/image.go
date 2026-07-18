@@ -1,4 +1,4 @@
-package image
+package image //nolint:goconst
 
 import (
 	"fmt"

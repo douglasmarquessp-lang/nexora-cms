@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/database"
+	"nexora/internal/pkg/logger"
 )
 
 type Action string

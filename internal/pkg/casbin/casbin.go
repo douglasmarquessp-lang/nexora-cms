@@ -126,7 +126,7 @@ func (a *pgxAdapter) SavePolicy(m model.Model) error {
 }
 
 type ruleEntry struct {
-	ptype    string
+	ptype                  string
 	v0, v1, v2, v3, v4, v5 string
 }
 
@@ -160,16 +160,16 @@ func (a *pgxAdapter) insertRules(rules []ruleEntry) error {
 	return nil
 }
 
-func (a *pgxAdapter) AddPolicy(_ string, ptype string, rule []string) error {
+func (a *pgxAdapter) AddPolicy(_, ptype string, rule []string) error {
 	return a.insertRule(ptype, rule)
 }
 
-func (a *pgxAdapter) RemovePolicy(_ string, ptype string, rule []string) error {
+func (a *pgxAdapter) RemovePolicy(_, ptype string, rule []string) error {
 	return a.deleteRule(ptype, rule)
 }
 
-func (a *pgxAdapter) RemoveFilteredPolicy(_ string, ptype string, fieldIndex int, fieldValues ...string) error {
-	where := fmt.Sprintf("ptype = $1")
+func (a *pgxAdapter) RemoveFilteredPolicy(_, ptype string, fieldIndex int, fieldValues ...string) error {
+	where := "ptype = $1"
 	args := []interface{}{ptype}
 	argIdx := 2
 

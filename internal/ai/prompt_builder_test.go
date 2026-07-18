@@ -114,7 +114,7 @@ func TestPromptBuilder_BuildOutline(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := pb.Build(ctx, PromptTypeOutline, map[string]string{
-		"title":   "Test",
+		"title":    "Test",
 		"briefing": "Briefing text",
 		"keywords": "kw1, kw2",
 	})
@@ -131,9 +131,9 @@ func TestPromptBuilder_BuildSection(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := pb.Build(ctx, PromptTypeSection, map[string]string{
-		"section_title":  "Introduction",
+		"section_title":   "Introduction",
 		"article_context": "Full article context",
-		"style_guide":    "Professional tone",
+		"style_guide":     "Professional tone",
 	})
 	if err != nil {
 		t.Fatalf("Build section failed: %v", err)
@@ -259,13 +259,13 @@ func TestPromptBuilder_BuildBriefing(t *testing.T) {
 func TestPromptBuilder_RegisterCustom(t *testing.T) {
 	pb := NewPromptBuilder()
 	err := pb.RegisterTemplate(PromptTemplate{
-		ID:       "custom",
-		Name:     "Custom Template",
-		Template: "Write about {{.topic}}",
-		System:   "You are a writer.",
+		ID:        "custom",
+		Name:      "Custom Template",
+		Template:  "Write about {{.topic}}",
+		System:    "You are a writer.",
 		Variables: []string{"topic"},
-		Language: "en",
-		Version:  "1.0",
+		Language:  "en",
+		Version:   "1.0",
 	})
 	if err != nil {
 		t.Fatalf("RegisterTemplate failed: %v", err)

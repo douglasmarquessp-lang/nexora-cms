@@ -24,19 +24,19 @@ var (
 )
 
 type Category struct {
-	ID          uuid.UUID    `json:"id"`
-	SiteID      uuid.UUID    `json:"site_id"`
-	ParentID    *uuid.UUID   `json:"parent_id,omitempty"`
-	Name        string       `json:"name"`
-	Slug        string       `json:"slug"`
-	Description string       `json:"description,omitempty"`
-	Icon        string       `json:"icon,omitempty"`
-	Color       string       `json:"color,omitempty"`
-	SortOrder   int          `json:"sort_order"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	DeletedAt   *time.Time   `json:"deleted_at,omitempty"`
-	Children    []Category   `json:"children,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	SiteID      uuid.UUID  `json:"site_id"`
+	ParentID    *uuid.UUID `json:"parent_id,omitempty"`
+	Name        string     `json:"name"`
+	Slug        string     `json:"slug"`
+	Description string     `json:"description,omitempty"`
+	Icon        string     `json:"icon,omitempty"`
+	Color       string     `json:"color,omitempty"`
+	SortOrder   int        `json:"sort_order"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	Children    []Category `json:"children,omitempty"`
 }
 
 type CreateCategoryRequest struct {

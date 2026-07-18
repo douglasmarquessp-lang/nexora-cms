@@ -202,7 +202,7 @@ func registerEditorialRoutes(r chi.Router, deps *Dependencies) {
 	r.Get("/editorial/ai-insights", rest.AdaptHandler(editorialHandler.AIInsights))
 }
 
-func registerResearchRoutes(r chi.Router, deps *Dependencies) {
+func registerResearchRoutes(r chi.Router, deps *Dependencies) { //nolint:unused // kept for future route registration
 	researchHandler := researchModule.NewHandler(deps.ResearchSvc, deps.Log)
 
 	r.Get("/research", rest.AdaptHandler(researchHandler.ListJobs))
@@ -216,7 +216,7 @@ func registerResearchRoutes(r chi.Router, deps *Dependencies) {
 	registerWriterRoutes(r, deps)
 }
 
-func registerWriterRoutes(r chi.Router, deps *Dependencies) {
+func registerWriterRoutes(r chi.Router, deps *Dependencies) { //nolint:unused // kept for future route registration
 	writerHandler := writerModule.NewHandler(deps.WriterSvc, deps.Log)
 
 	r.Get("/writer/styles", rest.AdaptHandler(writerHandler.ListStyles))

@@ -37,7 +37,7 @@ func NewS3Driver(bucket, region, endpoint, accessKey, secretKey, baseURL, localP
 func (d *S3Driver) Upload(ctx context.Context, key string, reader io.Reader) error {
 	fullPath := path.Join(d.LocalPath, key)
 	dir := path.Dir(fullPath)
-	if err := mkdirAll(dir, 0755); err != nil {
+	if err := mkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("s3: failed to create directory %s: %w", dir, err)
 	}
 
@@ -46,7 +46,7 @@ func (d *S3Driver) Upload(ctx context.Context, key string, reader io.Reader) err
 		return fmt.Errorf("s3: failed to read data: %w", err)
 	}
 
-	if err := writeFile(fullPath, data, 0644); err != nil {
+	if err := writeFile(fullPath, data, 0o644); err != nil {
 		return fmt.Errorf("s3: failed to write file %s: %w", fullPath, err)
 	}
 

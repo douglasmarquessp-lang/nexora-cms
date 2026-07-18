@@ -2,7 +2,7 @@ import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-export default [
+export default tseslint.config(
   { ignores: ["dist/"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -18,4 +18,4 @@ export default [
       "@typescript-eslint/no-explicit-any": "warn",
     },
   },
-];
+);

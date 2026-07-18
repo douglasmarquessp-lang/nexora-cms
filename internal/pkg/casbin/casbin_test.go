@@ -61,9 +61,7 @@ func TestNew_NilPool(t *testing.T) {
 	log := logger.New(cfg)
 
 	defer func() {
-		if r := recover(); r != nil {
-			// Expected: New with nil pool panics when adapter tries to query
-		}
+		_ = recover()
 	}()
 
 	_, err := New(nil, log)

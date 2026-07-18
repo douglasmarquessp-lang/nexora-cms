@@ -66,7 +66,7 @@ func TestLoader_Load_NotFound(t *testing.T) {
 
 func TestLoader_Load_SkipDirs(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".hidden"), 0755)
+	os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755)
 	createTestPlugin(t, dir, "visible", "1.0.0")
 
 	r := NewRegistry()
@@ -84,7 +84,7 @@ func TestLoader_Discover(t *testing.T) {
 	dir := t.TempDir()
 	createTestPlugin(t, dir, "found1", "1.0.0")
 	createTestPlugin(t, dir, "found2", "2.0.0")
-	os.MkdirAll(filepath.Join(dir, "nomanifest"), 0755)
+	os.MkdirAll(filepath.Join(dir, "nomanifest"), 0o755)
 
 	r := NewRegistry()
 	l := NewLoader(dir, r)
@@ -112,8 +112,8 @@ func TestLoader_Discover_NoDir(t *testing.T) {
 func TestLoader_Load_BadManifest(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := filepath.Join(dir, "bad")
-	os.MkdirAll(pluginDir, 0755)
-	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte("invalid json"), 0644)
+	os.MkdirAll(pluginDir, 0o755)
+	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte("invalid json"), 0o644)
 
 	r := NewRegistry()
 	l := NewLoader(dir, r)
@@ -127,8 +127,8 @@ func TestLoader_LoadAll_SkipBad(t *testing.T) {
 	dir := t.TempDir()
 	createTestPlugin(t, dir, "good", "1.0.0")
 	badDir := filepath.Join(dir, "bad")
-	os.MkdirAll(badDir, 0755)
-	os.WriteFile(filepath.Join(badDir, "plugin.json"), []byte("not json"), 0644)
+	os.MkdirAll(badDir, 0o755)
+	os.WriteFile(filepath.Join(badDir, "plugin.json"), []byte("not json"), 0o644)
 
 	r := NewRegistry()
 	l := NewLoader(dir, r)

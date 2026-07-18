@@ -29,7 +29,7 @@ func NewLocalDriver(basePath, baseURL string) *LocalDriver {
 func (d *LocalDriver) Upload(ctx context.Context, path string, reader io.Reader) error {
 	fullPath := filepath.Join(d.BasePath, path)
 	dir := filepath.Dir(fullPath)
-	if err := mkdirAll(dir, 0755); err != nil {
+	if err := mkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("storage: failed to create directory %s: %w", dir, err)
 	}
 
@@ -38,7 +38,7 @@ func (d *LocalDriver) Upload(ctx context.Context, path string, reader io.Reader)
 		return fmt.Errorf("storage: failed to read data: %w", err)
 	}
 
-	if err := writeFile(fullPath, data, 0644); err != nil {
+	if err := writeFile(fullPath, data, 0o644); err != nil {
 		return fmt.Errorf("storage: failed to write file %s: %w", fullPath, err)
 	}
 

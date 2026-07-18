@@ -3,13 +3,11 @@ package plugins
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"nexora/internal/pkg/logger"
 )
 
 type Manager struct {
-	mu          sync.RWMutex
 	cfg         *ManagerConfig
 	log         *logger.Logger
 	registry    *Registry

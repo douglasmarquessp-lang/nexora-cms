@@ -29,11 +29,7 @@ func (r *Registry) Register(provider AIProvider, cfg ProviderCfg) error {
 	defer r.mu.Unlock()
 
 	name := provider.Name()
-	if _, exists := r.entries[name]; exists {
-		r.entries[name] = providerEntry{provider: provider, config: cfg}
-	} else {
-		r.entries[name] = providerEntry{provider: provider, config: cfg}
-	}
+	r.entries[name] = providerEntry{provider: provider, config: cfg}
 
 	r.rebuildOrder()
 	if r.defaultP == "" {
@@ -118,12 +114,12 @@ func (r *Registry) Count() int {
 	return len(r.entries)
 }
 
-func (r *Registry) HasCapability(cap Capability) bool {
+func (r *Registry) HasCapability(capability Capability) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, entry := range r.entries {
 		for _, c := range entry.provider.Capabilities() {
-			if c == cap {
+			if c == capability {
 				return true
 			}
 		}
@@ -131,7 +127,7 @@ func (r *Registry) HasCapability(cap Capability) bool {
 	return false
 }
 
-func (r *Registry) FindByCapability(cap Capability) []AIProvider {
+func (r *Registry) FindByCapability(capability Capability) []AIProvider {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -142,7 +138,7 @@ func (r *Registry) FindByCapability(cap Capability) []AIProvider {
 			continue
 		}
 		for _, c := range entry.provider.Capabilities() {
-			if c == cap {
+			if c == capability {
 				providers = append(providers, entry.provider)
 				break
 			}

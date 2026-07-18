@@ -31,10 +31,10 @@ const (
 type SearchIntent string
 
 const (
-	IntentInformational Intent = "informational"
-	IntentNavigational  Intent = "navigational"
-	IntentCommercial    Intent = "commercial"
-	IntentTransactional Intent = "transactional"
+	IntentInformational SearchIntent = "informational"
+	IntentNavigational  SearchIntent = "navigational"
+	IntentCommercial    SearchIntent = "commercial"
+	IntentTransactional SearchIntent = "transactional"
 )
 
 type LinkType string

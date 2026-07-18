@@ -48,8 +48,8 @@ func TestManagerUninstall_Error(t *testing.T) {
 func TestManagerInit_WithBadPlugin(t *testing.T) {
 	dir := t.TempDir()
 	createTestPlugin(t, dir, "good-p", "1.0.0")
-	os.MkdirAll(filepath.Join(dir, "bad-p"), 0755)
-	os.WriteFile(filepath.Join(dir, "bad-p", "plugin.json"), []byte("not json"), 0644)
+	os.MkdirAll(filepath.Join(dir, "bad-p"), 0o755)
+	os.WriteFile(filepath.Join(dir, "bad-p", "plugin.json"), []byte("not json"), 0o644)
 
 	m := NewManager(&ManagerConfig{PluginsDir: dir}, testLogger(t), &mockEmitter{})
 	err := m.Init(context.Background())
@@ -76,22 +76,22 @@ func TestLoader_Load_StatError(t *testing.T) {
 	l := NewLoader(t.TempDir(), r)
 
 	pluginDir := filepath.Join(l.pluginsDir, "test")
-	os.MkdirAll(pluginDir, 0755)
+	os.MkdirAll(pluginDir, 0o755)
 	manifestPath := filepath.Join(pluginDir, "plugin.json")
-	os.WriteFile(manifestPath, []byte("{}"), 0644)
-	os.Chmod(manifestPath, 0000)
+	os.WriteFile(manifestPath, []byte("{}"), 0o644)
+	os.Chmod(manifestPath, 0o000)
 
 	p, err := l.Load("test")
 	if err == nil && p != nil {
-		os.Chmod(manifestPath, 0644)
+		os.Chmod(manifestPath, 0o644)
 		t.Fatal("expected error or nil")
 	}
-	os.Chmod(manifestPath, 0644)
+	os.Chmod(manifestPath, 0o644)
 }
 
 func TestManagerInstall_WithoutManifest(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "empty-p"), 0755)
+	os.MkdirAll(filepath.Join(dir, "empty-p"), 0o755)
 	m := NewManager(&ManagerConfig{PluginsDir: dir}, testLogger(t), &mockEmitter{})
 
 	_, err := m.Install(context.Background(), "empty-p")
@@ -148,7 +148,7 @@ func TestHandlerListWithQueryParams(t *testing.T) {
 	h, _ := setupHandlerTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/plugins?search=test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/plugins?search=test", http.NoBody)
 	rest.AdaptHandler(h.List).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)

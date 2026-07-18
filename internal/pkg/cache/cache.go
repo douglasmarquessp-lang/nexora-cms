@@ -83,7 +83,7 @@ func New(memOnly bool) *Cache {
 	}
 }
 
-func NewWithRedis(mem Driver, redis Driver) *Cache {
+func NewWithRedis(mem, redis Driver) *Cache {
 	return &Cache{
 		redis: redis,
 		mem:   mem,

@@ -73,7 +73,7 @@ func TestManagerInstall(t *testing.T) {
 
 func TestManagerInstall_MissingManifest(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "noplugin"), 0755)
+	os.MkdirAll(filepath.Join(dir, "noplugin"), 0o755)
 	m := NewManager(&ManagerConfig{PluginsDir: dir}, testLogger(t), &mockEmitter{})
 
 	_, err := m.Install(context.Background(), "noplugin")
@@ -227,7 +227,7 @@ func TestManagerLifecycle(t *testing.T) {
 func createTestPlugin(t *testing.T, dir, id, version string) {
 	t.Helper()
 	pluginDir := filepath.Join(dir, id)
-	os.MkdirAll(pluginDir, 0755)
+	os.MkdirAll(pluginDir, 0o755)
 	manifest := `{
 		"id": "` + id + `",
 		"name": "My Plugin",
@@ -243,7 +243,7 @@ func createTestPlugin(t *testing.T, dir, id, version string) {
 		"routes": [],
 		"admin_pages": []
 	}`
-	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0644)
+	os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0o644)
 }
 
 func managerWithPlugins(t *testing.T, ids ...string) *Manager {
