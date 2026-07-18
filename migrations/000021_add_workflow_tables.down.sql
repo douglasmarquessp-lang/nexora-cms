@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS workflow_dashboard CASCADE;
+DROP TABLE IF EXISTS workflow_notifications CASCADE;
+DROP TABLE IF EXISTS workflow_history CASCADE;
+DROP TABLE IF EXISTS workflow_queue CASCADE;
+DROP TABLE IF EXISTS workflow_steps CASCADE;
+DROP TABLE IF EXISTS workflow_jobs CASCADE;

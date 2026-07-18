@@ -40,6 +40,7 @@ import (
 	pluginsModule "nexora/internal/plugins"
 	publisherModule "nexora/internal/modules/publisher"
 	seoengineModule "nexora/internal/modules/seoengine"
+	workflowModule "nexora/internal/modules/workflow"
 )
 
 type eventBusAdapter struct {
@@ -121,8 +122,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	aiMod := aiModule.NewAIModule(cfg, log, db, ch)
 	publisherMod := publisherModule.NewPublisherModule(cfg, log, db, ch)
 	seoengineMod := seoengineModule.NewSEOEngineModule(cfg, log, db, ch)
+	workflowMod := workflowModule.NewWorkflowModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod} {
+	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod, workflowMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -189,6 +191,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	seoengineSvc := seoengineMod.Service()
 	seoengineMod.SetEventBus(k.EventBus())
 
+	workflowSvc := workflowMod.Service()
+	workflowMod.SetEventBus(k.EventBus())
+
 	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
 		PluginsDir: "plugins",
 	}, log, &eventBusAdapter{bus: k.EventBus()})
@@ -239,6 +244,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		AIManager:          aiSvc,
 		PublisherSvc:       publisherSvc,
 		SeoEngineSvc:       seoengineSvc,
+		WorkflowSvc:        workflowSvc,
 		PluginManager:      pluginManager,
 		CasbinEnforcer:     enforcer,
 		RateLimits:         rateLimiter,
