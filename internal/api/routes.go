@@ -12,16 +12,17 @@ import (
 	"nexora/internal/api/rest"
 	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
+	autocontentModule "nexora/internal/modules/autocontent"
 	categoriesModule "nexora/internal/modules/categories"
 	mediaModule "nexora/internal/modules/media"
 	pluginsModule "nexora/internal/plugins"
 	editorialModule "nexora/internal/modules/editorial"
 	postsModule "nexora/internal/modules/posts"
 	researchModule "nexora/internal/modules/research"
+	setupModule "nexora/internal/modules/setup"
 	writerModule "nexora/internal/modules/writer"
 	editorialEngineModule "nexora/internal/modules/editorialengine"
 	generatorModule "nexora/internal/modules/contentgenerator"
-	autocontentModule "nexora/internal/modules/autocontent"
 	aiModule "nexora/internal/ai"
 	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	humanwriterModule "nexora/internal/modules/humanwriter"
@@ -46,6 +47,7 @@ type Dependencies struct {
 	DBPing           pingFunc
 	DBExec           dbExecutor
 	AuthSvc          *authModule.Service
+	SetupSvc         *setupModule.Service
 	SiteSvc          *siteModule.Service
 	PostsSvc         *postsModule.Service
 	CategoriesSvc    *categoriesModule.Service
@@ -80,6 +82,8 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 
 	router.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", rest.AdaptHandler(healthHandler.Check))
+
+		registerSetupRoutes(r, deps)
 
 		r.Group(func(r chi.Router) {
 			if deps.RateLimits != nil {
@@ -367,6 +371,13 @@ func registerWorkflowRoutes(r chi.Router, deps *Dependencies) {
 		return
 	}
 	workflowModule.RegisterRoutes(r, deps.WorkflowSvc, deps.Log)
+}
+
+func registerSetupRoutes(r chi.Router, deps *Dependencies) {
+	if deps.SetupSvc == nil {
+		return
+	}
+	setupModule.RegisterRoutes(r, deps.SetupSvc, deps.Log)
 }
 
 func wrapMiddleware(mw func(http.Handler) http.Handler, handler http.Handler) http.HandlerFunc {

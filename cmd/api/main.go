@@ -28,6 +28,7 @@ import (
 	mediaModule "nexora/internal/modules/media"
 	postsModule "nexora/internal/modules/posts"
 	researchModule "nexora/internal/modules/research"
+	setupModule "nexora/internal/modules/setup"
 	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
 	writerModule "nexora/internal/modules/writer"
@@ -106,6 +107,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	)
 
 	authMod := authModule.NewAuthModule(cfg, log, db)
+	setupMod := setupModule.NewSetupModule(cfg, log, db)
 	siteMod := siteModule.NewSiteModule(cfg, log, db, ch)
 	postsMod := postsModule.NewPostModule(cfg, log, db, ch)
 	categoriesMod := categoriesModule.NewCategoryModule(cfg, log, db, ch)
@@ -125,7 +127,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	seoengineMod := seoengineModule.NewSEOEngineModule(cfg, log, db, ch)
 	workflowMod := workflowModule.NewWorkflowModule(cfg, log, db, ch)
 
-	for _, mod := range []kernel.Module{authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod, workflowMod} {
+	for _, mod := range []kernel.Module{setupMod, authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod, workflowMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -140,6 +142,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	authSvc := authMod.Service()
 	authSvc.SetEventBus(k.EventBus())
 	authMod.SetEventBus(k.EventBus())
+
+	setupSvc := setupMod.Service()
+	setupMod.SetEventBus(k.EventBus())
 
 	siteSvc := siteMod.Service()
 	siteSvc.SetEventBus(k.EventBus())
@@ -235,6 +240,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		DBPing:             dbPing,
 		DBExec:             dbExec,
 		AuthSvc:            authSvc,
+		SetupSvc:           setupSvc,
 		SiteSvc:            siteSvc,
 		PostsSvc:           postsSvc,
 		CategoriesSvc:      categoriesSvc,
