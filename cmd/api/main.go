@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	aiModule "nexora/internal/ai"
@@ -222,10 +223,17 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		return fmt.Errorf("database not connected")
 	}
 
+	var dbExec interface {
+		Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	}
+	if db != nil {
+		dbExec = db.Pool
+	}
+
 	deps := &api.Dependencies{
 		Log:                log,
 		DBPing:             dbPing,
-		DBExec:             db.Pool,
+		DBExec:             dbExec,
 		AuthSvc:            authSvc,
 		SiteSvc:            siteSvc,
 		PostsSvc:           postsSvc,
