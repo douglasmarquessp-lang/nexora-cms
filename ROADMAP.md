@@ -80,7 +80,7 @@ Estabelecer a base do sistema: kernel do CMS, infraestrutura de banco de dados, 
 
 ### Dependências
 
-- Go 1.23+, Node 22+, PostgreSQL 17
+- Go 1.26+, Node 22+, PostgreSQL 17
 - Docker + Docker Compose para ambiente dev
 - Nenhuma dependência externa de API
 

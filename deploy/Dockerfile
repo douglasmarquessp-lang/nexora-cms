@@ -1,5 +1,5 @@
 # ===== Stage 1: Build =====
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev
 
@@ -13,7 +13,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/nexora ./cmd/api/main.go
 
 # ===== Stage 2: Dev (hot reload) =====
-FROM golang:1.23-alpine AS dev
+FROM golang:1.26-alpine AS dev
 
 RUN go install github.com/air-verse/air@latest
 

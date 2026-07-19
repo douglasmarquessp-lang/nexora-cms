@@ -10,7 +10,7 @@
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Backend | Go 1.23 + chi + sqlc + pgx |
+| Backend | Go 1.26 + chi + sqlc + pgx |
 | Banco | PostgreSQL 17 + pgvector |
 | Cache | Redis 7 |
 | Admin UI | React 19 + Vite + shadcn/ui |
@@ -50,7 +50,7 @@ nexora/
 
 ## Pré-requisitos
 
-- Go 1.23+
+- Go 1.26+
 - Node.js 22+
 - Docker + Docker Compose
 - PostgreSQL 17 (via Docker ou local)
