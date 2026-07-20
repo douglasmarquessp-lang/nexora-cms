@@ -46,7 +46,8 @@ services:
       DATABASE_USER: nexora
       DATABASE_PASSWORD: nexora_secret
       DATABASE_NAME: nexora
-      JWT_SECRET: dev-jwt-secret-nexora-2026
+      JWT_SECRET: 
+     dev-jwt-secret-nexora-2026
       DEBUG: "true"
       LOG_LEVEL: debug
       REDIS_HOST: redis
