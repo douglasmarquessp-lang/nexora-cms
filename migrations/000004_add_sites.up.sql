@@ -5,7 +5,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============ SITES ============
 
-CREATE TABLE sites (
+-- Migration 001 already creates a sites table with a simpler schema.
+-- Use IF NOT EXISTS to avoid conflicts, then migrate existing schema forward.
+CREATE TABLE IF NOT EXISTS sites (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name         VARCHAR(255) NOT NULL,
     slug         VARCHAR(255) NOT NULL UNIQUE,
@@ -23,9 +25,22 @@ CREATE TABLE sites (
     deleted_at   TIMESTAMPTZ
 );
 
-CREATE INDEX idx_sites_slug ON sites(slug) WHERE deleted_at IS NULL;
-CREATE INDEX idx_sites_owner ON sites(owner_id);
-CREATE INDEX idx_sites_status ON sites(status);
+-- Add columns that migration 001's sites table is missing
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS feature_flags JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS theme VARCHAR(100) DEFAULT 'default';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS locale VARCHAR(10) DEFAULT 'pt-BR';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'America/Sao_Paulo';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- owner_id: add nullable first, then set NOT NULL (table is empty at migration time)
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE sites ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE sites ADD CONSTRAINT fk_sites_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_sites_slug ON sites(slug) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sites_owner ON sites(owner_id);
+CREATE INDEX IF NOT EXISTS idx_sites_status ON sites(status);
 
 -- ============ SITE DOMAINS ============
 
@@ -141,6 +156,7 @@ CREATE POLICY site_settings_isolation ON site_settings
 
 -- ============ TRIGGERS ============
 
+DROP TRIGGER IF EXISTS set_sites_updated_at ON sites;
 CREATE TRIGGER set_sites_updated_at
     BEFORE UPDATE ON sites
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

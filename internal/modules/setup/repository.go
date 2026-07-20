@@ -137,23 +137,6 @@ func (r *Repository) CreateSiteUser(ctx context.Context, userID, siteID uuid.UUI
 	return nil
 }
 
-func (r *Repository) CreateSession(ctx context.Context, userID uuid.UUID, refreshToken string, expiresAt time.Time) error {
-	p, err := r.pool()
-	if err != nil {
-		return err
-	}
-
-	_, err = p.Exec(ctx,
-		`INSERT INTO sessions (user_id, refresh_token, expires_at) VALUES ($1, $2, $3)`,
-		userID, refreshToken, expiresAt,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-
-	return nil
-}
-
 func (r *Repository) IsEmailTaken(ctx context.Context, email string) (bool, error) {
 	p, err := r.pool()
 	if err != nil {

@@ -41,13 +41,6 @@ type InstallRequest struct {
 	Locale          string `json:"locale,omitempty"`
 }
 
-type FinishResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-}
-
 type StatusResponse struct {
 	Installed   bool       `json:"installed"`
 	InstalledAt *time.Time `json:"installed_at,omitempty"`

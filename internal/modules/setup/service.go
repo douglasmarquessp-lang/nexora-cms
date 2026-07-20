@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -15,20 +14,17 @@ import (
 )
 
 type Service struct {
-	cfg          *config.Config
-	log          *logger.Logger
-	repo         *Repository
-	tokenManager *auth.TokenManager
-	eventBus     *kernel.EventBus
+	cfg      *config.Config
+	log      *logger.Logger
+	repo     *Repository
+	eventBus *kernel.EventBus
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, repo *Repository) *Service {
-	tm := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.JWTAccessTTL, cfg.Auth.JWTRefreshTTL)
 	return &Service{
-		cfg:          cfg,
-		log:          log,
-		repo:         repo,
-		tokenManager: tm,
+		cfg:  cfg,
+		log:  log,
+		repo: repo,
 	}
 }
 
@@ -134,7 +130,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*SystemInsta
 	return installation, nil
 }
 
-func (s *Service) Finish(ctx context.Context) (*FinishResponse, error) {
+func (s *Service) Finish(ctx context.Context) (map[string]string, error) {
 	inst, err := s.repo.GetInstallation(ctx)
 	if err != nil {
 		return nil, err
@@ -143,48 +139,14 @@ func (s *Service) Finish(ctx context.Context) (*FinishResponse, error) {
 		return nil, ErrNotInstalled
 	}
 
-	adminID, err := s.findAdminID(ctx, inst.AdminEmail)
-	if err != nil {
-		return nil, err
-	}
+	s.log.Info("system installation verified, redirecting to login",
+		"admin_email", inst.AdminEmail,
+		"cms_name", inst.CmsName,
+	)
 
-	return s.generateTokens(ctx, adminID)
-}
-
-func (s *Service) findAdminID(ctx context.Context, email string) (uuid.UUID, error) {
-	p, err := s.repo.pool()
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	var id uuid.UUID
-	err = p.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&id)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("admin user not found: %w", err)
-	}
-	return id, nil
-}
-
-func (s *Service) generateTokens(ctx context.Context, userID uuid.UUID) (*FinishResponse, error) {
-	accessToken, err := s.tokenManager.GenerateAccessToken(userID.String())
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate access token: %w", err)
-	}
-
-	refreshToken, err := s.tokenManager.GenerateRefreshToken(userID.String())
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
-	}
-
-	if err := s.repo.CreateSession(ctx, userID, refreshToken, time.Now().Add(s.cfg.Auth.JWTRefreshTTL)); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-
-	return &FinishResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    int64(s.cfg.Auth.JWTAccessTTL.Seconds()),
+	return map[string]string{
+		"status":  "installed",
+		"message": "System installed. Please log in.",
 	}, nil
 }
 
