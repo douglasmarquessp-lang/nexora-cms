@@ -396,7 +396,7 @@ CREATE POLICY autocontent_steps_isolation ON autocontent_steps
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM autocontent_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM autocontent_jobs aj WHERE aj.id = autocontent_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -406,10 +406,10 @@ CREATE POLICY autocontent_results_isolation ON autocontent_results
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM autocontent_jobs aj2
-            INNER JOIN autocontent_steps aas2 ON aas2.job_id = aj2.id
-            WHERE aas2.id = step_id
-            AND aj2.site_id = current_setting('app.current_site_id')::UUID
+            SELECT 1
+            FROM autocontent_jobs aj
+            WHERE aj.id = autocontent_job_id
+              AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
     );
