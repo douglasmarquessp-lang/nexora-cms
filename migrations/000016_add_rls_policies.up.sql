@@ -335,20 +335,19 @@ CREATE POLICY generation_pipeline_isolation ON generation_pipeline
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
     );
 
-CREATE POLICY generation_pipeline_logs_isolation ON generation_pipeline_logs
-    FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM generation_pipeline gp WHERE gp.id = pipeline_id
-        )
-        AND EXISTS (
-            SELECT 1 FROM generation_jobs gj
-            INNER JOIN generation_pipeline gp2 ON gp2.generation_job_id = gj.id
-            WHERE gp2.id = pipeline_id
-            AND gj.site_id = current_setting('app.current_site_id')::UUID
-        )
-        OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
-    );
+CREATE POLICY generation_pipeline_logs_isolation
+ON generation_pipeline_logs
+FOR ALL
+USING (
+    EXISTS (
+        SELECT 1
+        FROM generation_jobs gj
+        WHERE gj.id = generation_job_id
+          AND gj.site_id = current_setting('app.current_site_id')::UUID
+    )
+    OR current_setting('app.current_user_role')
+        IN ('superadmin', 'siteadmin')
+);
 
 CREATE POLICY generation_quality_gates_isolation ON generation_quality_gates
     FOR ALL
