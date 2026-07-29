@@ -112,23 +112,63 @@ CREATE TABLE IF NOT EXISTS publication_metrics (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_pub_site ON publications(site_id);
-CREATE INDEX idx_pub_slug ON publications(site_id, slug);
-CREATE INDEX idx_pub_status ON publications(status);
-CREATE INDEX idx_pub_language ON publications(language);
-CREATE INDEX idx_pub_published_at ON publications(published_at);
-CREATE INDEX idx_pub_scheduled_at ON publications(scheduled_at);
-CREATE INDEX idx_pub_author ON publications(author_id);
-CREATE INDEX idx_pub_history_publication ON publication_history(publication_id);
-CREATE INDEX idx_pub_history_site ON publication_history(site_id);
-CREATE INDEX idx_pub_history_action ON publication_history(action);
-CREATE INDEX idx_pub_queue_site ON publication_queue(site_id);
-CREATE INDEX idx_pub_queue_status ON publication_queue(status);
-CREATE INDEX idx_pub_queue_scheduled ON publication_queue(scheduled_for);
-CREATE INDEX idx_pub_schedule_site ON publication_schedule(site_id);
-CREATE INDEX idx_pub_schedule_publication ON publication_schedule(publication_id);
-CREATE INDEX idx_pub_schedule_at ON publication_schedule(scheduled_at);
-CREATE INDEX idx_pub_schedule_status ON publication_schedule(status);
-CREATE INDEX idx_pub_metrics_publication ON publication_metrics(publication_id);
-CREATE INDEX idx_pub_metrics_site ON publication_metrics(site_id);
-CREATE UNIQUE INDEX idx_pub_unique_slug ON publications(site_id, slug) WHERE status != 'deleted';
+CREATE INDEX IF NOT EXISTS idx_pub_site
+    ON publications(site_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_slug
+    ON publications(site_id, slug);
+
+CREATE INDEX IF NOT EXISTS idx_pub_status
+    ON publications(status);
+
+CREATE INDEX IF NOT EXISTS idx_pub_language
+    ON publications(language);
+
+CREATE INDEX IF NOT EXISTS idx_pub_published_at
+    ON publications(published_at);
+
+CREATE INDEX IF NOT EXISTS idx_pub_scheduled_at
+    ON publications(scheduled_at);
+
+CREATE INDEX IF NOT EXISTS idx_pub_author
+    ON publications(author_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_history_publication
+    ON publication_history(publication_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_history_site
+    ON publication_history(site_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_history_action
+    ON publication_history(action);
+
+CREATE INDEX IF NOT EXISTS idx_pub_queue_site
+    ON publication_queue(site_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_queue_status
+    ON publication_queue(status);
+
+CREATE INDEX IF NOT EXISTS idx_pub_queue_scheduled
+    ON publication_queue(scheduled_for);
+
+CREATE INDEX IF NOT EXISTS idx_pub_schedule_site
+    ON publication_schedule(site_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_schedule_publication
+    ON publication_schedule(publication_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_schedule_at
+    ON publication_schedule(scheduled_at);
+
+CREATE INDEX IF NOT EXISTS idx_pub_schedule_status
+    ON publication_schedule(status);
+
+CREATE INDEX IF NOT EXISTS idx_pub_metrics_publication
+    ON publication_metrics(publication_id);
+
+CREATE INDEX IF NOT EXISTS idx_pub_metrics_site
+    ON publication_metrics(site_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pub_unique_slug
+    ON publications(site_id, slug)
+    WHERE status <> 'deleted';
