@@ -132,7 +132,7 @@ CREATE POLICY research_sources_isolation ON research_sources
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM research_jobs rj WHERE rj.id = job_id
+            SELECT 1 FROM research_jobs rj WHERE rj.id = research_job_id
             AND rj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -142,7 +142,7 @@ CREATE POLICY research_entities_isolation ON research_entities
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM research_jobs rj WHERE rj.id = job_id
+            SELECT 1 FROM research_jobs rj WHERE rj.id = research_job_id
             AND rj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -152,7 +152,7 @@ CREATE POLICY research_briefings_isolation ON research_briefings
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM research_jobs rj WHERE rj.id = job_id
+            SELECT 1 FROM research_jobs rj WHERE rj.id = research_job_id
             AND rj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -194,7 +194,7 @@ CREATE POLICY article_outlines_isolation ON article_outlines
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -204,7 +204,7 @@ CREATE POLICY article_sections_isolation ON article_sections
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -214,7 +214,7 @@ CREATE POLICY article_versions_isolation ON article_versions
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -268,7 +268,7 @@ CREATE POLICY editorial_seo_data_isolation ON editorial_seo_data
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -278,7 +278,7 @@ CREATE POLICY editorial_quality_scores_isolation ON editorial_quality_scores
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -288,7 +288,7 @@ CREATE POLICY editorial_translations_isolation ON editorial_translations
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -298,7 +298,7 @@ CREATE POLICY editorial_prompt_data_isolation ON editorial_prompt_data
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM article_jobs aj WHERE aj.id = job_id
+            SELECT 1 FROM article_jobs aj WHERE aj.id = article_job_id
             AND aj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -329,7 +329,7 @@ CREATE POLICY generation_pipeline_isolation ON generation_pipeline
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM generation_jobs gj WHERE gj.id = job_id
+            SELECT 1 FROM generation_jobs gj WHERE gj.id = generation_job_id
             AND gj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
@@ -343,7 +343,7 @@ CREATE POLICY generation_pipeline_logs_isolation ON generation_pipeline_logs
         )
         AND EXISTS (
             SELECT 1 FROM generation_jobs gj
-            INNER JOIN generation_pipeline gp2 ON gp2.job_id = gj.id
+            INNER JOIN generation_pipeline gp2 ON gp2.generation_job_id = gj.id
             WHERE gp2.id = pipeline_id
             AND gj.site_id = current_setting('app.current_site_id')::UUID
         )
@@ -354,7 +354,7 @@ CREATE POLICY generation_quality_gates_isolation ON generation_quality_gates
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM generation_jobs gj WHERE gj.id = job_id
+            SELECT 1 FROM generation_jobs gj WHERE gj.id = generation_job_id
             AND gj.site_id = current_setting('app.current_site_id')::UUID
         )
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
