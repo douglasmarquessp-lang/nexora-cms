@@ -520,6 +520,7 @@ func (qc *qualityChecker) assessSEOTitle(text string) *SEOTitleScore {
 			Score:     score,
 			MaxScore:  100,
 			Passed:    score >= 60,
+			Message:   formatTitleMsg(title, titleLen),
 			Warnings:  warnings,
 		}
 	}
@@ -550,6 +551,7 @@ func (qc *qualityChecker) assessSEOTitle(text string) *SEOTitleScore {
 		Score:    score,
 		MaxScore: 100,
 		Passed:   score >= 60,
+		Message:  formatTitleMsg(h1Text, titleLen),
 	}
 }
 
@@ -616,6 +618,7 @@ func (qc *qualityChecker) assessSEOHeadings(text string, keywords []string) *SEO
 		Score:        score,
 		MaxScore:     100,
 		Passed:       score >= 60,
+		Message:      formatHeadingsMsg(len(h1s), len(h2s), len(h3s)),
 		Warnings:     warnings,
 	}
 }
@@ -623,9 +626,10 @@ func (qc *qualityChecker) assessSEOHeadings(text string, keywords []string) *SEO
 func (qc *qualityChecker) assessSEOKeywordUsage(text string, keywords []string) *SEOKeywordUsage {
 	if len(keywords) == 0 {
 		return &SEOKeywordUsage{
-			Score:   50,
+			Score:    50,
 			MaxScore: 100,
-			Passed:  false,
+			Passed:   false,
+			Message:  "No keywords to analyze",
 			Warnings: []string{"No keywords provided"},
 		}
 	}
@@ -634,9 +638,10 @@ func (qc *qualityChecker) assessSEOKeywordUsage(text string, keywords []string) 
 	totalWords := len(words)
 	if totalWords == 0 {
 		return &SEOKeywordUsage{
-			Score:   0,
+			Score:    0,
 			MaxScore: 100,
-			Passed:  false,
+			Passed:   false,
+			Message:  "Empty text",
 			Warnings: []string{"Empty text"},
 		}
 	}
@@ -699,6 +704,7 @@ func (qc *qualityChecker) assessSEOKeywordUsage(text string, keywords []string) 
 		Score:          score,
 		MaxScore:       100,
 		Passed:         score >= 60,
+		Message:        formatKeywordMsg(density, kwCount, kwInFirst100),
 		Warnings:       warnings,
 	}
 }
@@ -715,6 +721,7 @@ func (qc *qualityChecker) assessSEOMetaDesc(text string, keywords []string) *SEO
 			Score:       20,
 			MaxScore:    100,
 			Passed:      false,
+			Message:     "No meta description found",
 			Warnings:    warnings,
 		}
 	}
@@ -754,6 +761,7 @@ func (qc *qualityChecker) assessSEOMetaDesc(text string, keywords []string) *SEO
 		Score:           score,
 		MaxScore:        100,
 		Passed:          score >= 60,
+		Message:         formatMetaMsg(descLen, kwFound),
 		Warnings:        warnings,
 	}
 }
@@ -807,6 +815,7 @@ func (qc *qualityChecker) assessSEOContentStructure(text string) *SEOContentScor
 		Score:          score,
 		MaxScore:       100,
 		Passed:         score >= 60,
+		Message:        formatContentMsg(paraCount, len(links), len(images)),
 		Warnings:       warnings,
 	}
 }
@@ -860,6 +869,7 @@ func (qc *qualityChecker) assessSEOIntent(text string, keywords []string) *SEOIn
 		Score:          score,
 		MaxScore:       100,
 		Passed:         score >= 60,
+		Message:        formatIntentMsg(detected),
 		AIAssisted:     false,
 	}
 }
@@ -1068,7 +1078,6 @@ func (qc *qualityChecker) ValidateStructure(ctx context.Context, text string) (*
 	// Heading analysis
 	allHeadings := headingRE.FindAllStringSubmatch(text, -1)
 	h1s := h1RE.FindAllString(text, -1)
-	h2s := h2RE.FindAllString(text, -1)
 
 	if len(h1s) == 0 {
 		headingIssues = append(headingIssues, StructureIssue{
@@ -1228,7 +1237,6 @@ func (qc *qualityChecker) CheckHallucinationWithGrounding(ctx context.Context, t
 
 	// Extract claims from text (sentences with substantive content)
 	sentences := textSentences(text)
-	textLower := strings.ToLower(text)
 
 	// Build source text corpus from grounding metadata
 	sourceCorpus := ""
@@ -1559,7 +1567,7 @@ func formatSEOSummary(a *SEOAnalysis) string {
 }
 
 func formatReadabilitySummary(r *ReadabilityReport) string {
-	return fmtFREScore(r.FleschReadingEase, "")
+	return formatFREScore(r.FleschReadingEase, "")
 
 }
 
@@ -1599,6 +1607,10 @@ func formatMetaMsg(length int, kwFound bool) string {
 		msg += ", keyword not found"
 	}
 	return msg
+}
+
+func formatIntentMsg(intent string) string {
+	return "Detected intent: " + intent
 }
 
 func formatContentMsg(paras, links, images int) string {

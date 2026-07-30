@@ -215,14 +215,15 @@ type SEOAnalysis struct {
 
 // SEOTitleScore rates the title/heading for SEO.
 type SEOTitleScore struct {
-	Title          string  `json:"title"`
-	Length         int     `json:"length"`
-	LengthScore    float64 `json:"length_score"`    // ideal: 50-60 chars
-	KeywordScore   float64 `json:"keyword_score"`   // primary keyword present?
-	PositionScore  float64 `json:"position_score"`  // keyword at beginning?
-	Score          float64 `json:"score"`
-	MaxScore       float64 `json:"max_score"`
-	Passed         bool    `json:"passed"`
+	Title          string   `json:"title"`
+	Length         int      `json:"length"`
+	LengthScore    float64  `json:"length_score"`    // ideal: 50-60 chars
+	KeywordScore   float64  `json:"keyword_score"`   // primary keyword present?
+	PositionScore  float64  `json:"position_score"`  // keyword at beginning?
+	Score          float64  `json:"score"`
+	MaxScore       float64  `json:"max_score"`
+	Passed         bool     `json:"passed"`
+	Message        string   `json:"message,omitempty"`
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
@@ -237,6 +238,7 @@ type SEOHeadingsScore struct {
 	Score          float64   `json:"score"`
 	MaxScore       float64   `json:"max_score"`
 	Passed         bool      `json:"passed"`
+	Message        string    `json:"message,omitempty"`
 	Warnings       []string  `json:"warnings,omitempty"`
 }
 
@@ -250,6 +252,7 @@ type SEOKeywordUsage struct {
 	Score           float64   `json:"score"`
 	MaxScore        float64   `json:"max_score"`
 	Passed          bool      `json:"passed"`
+	Message         string    `json:"message,omitempty"`
 	Warnings        []string  `json:"warnings,omitempty"`
 }
 
@@ -262,6 +265,7 @@ type SEOMetaDescScore struct {
 	Score           float64   `json:"score"`
 	MaxScore        float64   `json:"max_score"`
 	Passed          bool      `json:"passed"`
+	Message         string    `json:"message,omitempty"`
 	Warnings        []string  `json:"warnings,omitempty"`
 }
 
@@ -278,6 +282,7 @@ type SEOContentScore struct {
 	Score           float64   `json:"score"`
 	MaxScore        float64   `json:"max_score"`
 	Passed          bool      `json:"passed"`
+	Message         string    `json:"message,omitempty"`
 	Warnings        []string  `json:"warnings,omitempty"`
 }
 
@@ -287,6 +292,7 @@ type SEOIntentScore struct {
 	Score           float64   `json:"score"`
 	MaxScore        float64   `json:"max_score"`
 	Passed          bool      `json:"passed"`
+	Message         string    `json:"message,omitempty"`
 	AIAssisted      bool      `json:"ai_assisted,omitempty"`
 }
 
