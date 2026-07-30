@@ -73,7 +73,7 @@ CREATE INDEX idx_sessions_refresh ON sessions(refresh_token);
 -- ============ AUDIT LOG ============
 
 CREATE TABLE audit_log (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id          UUID NOT NULL DEFAULT uuid_generate_v4(),
     user_id     UUID REFERENCES users(id),
     site_id     UUID REFERENCES sites(id),
     action      VARCHAR(100) NOT NULL,
@@ -81,7 +81,8 @@ CREATE TABLE audit_log (
     entity_id   UUID,
     payload     JSONB NOT NULL DEFAULT '{}',
     ip_address  VARCHAR(45),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
 CREATE INDEX idx_audit_log_user ON audit_log(user_id);

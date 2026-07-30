@@ -347,7 +347,7 @@ func (s *Service) UpdatePublication(ctx context.Context, siteID, userID uuid.UUI
 	newRevision := existing.Revision + 1
 	updates["revision"] = newRevision
 
-	if err := s.repo.UpdatePublication(ctx, pubID, updates); err != nil {
+	if err := s.repo.UpdatePublication(ctx, siteID, pubID, updates); err != nil {
 		return nil, err
 	}
 
@@ -391,7 +391,7 @@ func (s *Service) Unpublish(ctx context.Context, siteID, userID uuid.UUID, pubID
 		"status":         string(PubStatusUnpublished),
 		"unpublished_at": now,
 	}
-	if err := s.repo.UpdatePublication(ctx, pubID, updates); err != nil {
+	if err := s.repo.UpdatePublication(ctx, siteID, pubID, updates); err != nil {
 		return nil, err
 	}
 
@@ -426,7 +426,7 @@ func (s *Service) Republish(ctx context.Context, siteID, userID uuid.UUID, pubID
 		"status":       string(PubStatusPublished),
 		"published_at": now,
 	}
-	if err := s.repo.UpdatePublication(ctx, pubID, updates); err != nil {
+	if err := s.repo.UpdatePublication(ctx, siteID, pubID, updates); err != nil {
 		return nil, err
 	}
 
@@ -463,7 +463,7 @@ func (s *Service) CancelSchedule(ctx context.Context, siteID, userID uuid.UUID, 
 		"cancelled_at":  now,
 		"cancel_reason": reason,
 	}
-	if err := s.repo.UpdateSchedule(ctx, scheduleID, updates); err != nil {
+	if err := s.repo.UpdateSchedule(ctx, siteID, scheduleID, updates); err != nil {
 		return nil, err
 	}
 
@@ -555,7 +555,7 @@ func (s *Service) RetryQueueItem(ctx context.Context, siteID, userID uuid.UUID, 
 		"started_at": nil,
 		"completed_at": nil,
 	}
-	if err := s.repo.UpdateQueueItem(ctx, itemID, updates); err != nil {
+	if err := s.repo.UpdateQueueItem(ctx, siteID, itemID, updates); err != nil {
 		return nil, err
 	}
 

@@ -190,6 +190,10 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 
 	aiSvc := aiMod.Service()
 	aiMod.SetEventBus(k.EventBus())
+	autocontentMod.SetAIManager(aiSvc)
+	generatorMod.SetAIManager(aiSvc)
+	articlepipelineMod.SetAIManager(aiSvc)
+	workflowMod.SetAIManager(aiSvc)
 
 	publisherSvc := publisherMod.Service()
 	publisherMod.SetEventBus(k.EventBus())

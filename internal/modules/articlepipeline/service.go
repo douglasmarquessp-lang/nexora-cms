@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
@@ -24,6 +25,7 @@ type Service struct {
 	cache    *cache.Cache
 	eventBus *kernel.EventBus
 	auditLog *audit.Logger
+	aiManager *ai.Manager
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -41,6 +43,10 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+func (s *Service) SetAIManager(m *ai.Manager) {
+	s.aiManager = m
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -383,8 +389,8 @@ func (s *Service) StartPipeline(ctx context.Context, siteID, jobID uuid.UUID) (*
 	now := time.Now()
 	_, err = p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET status = $1, started_at = $2, current_stage = $3,
-		 progress = 0, error_message = '', updated_at = $2 WHERE id = $4`,
-		PipelineRunning, now, string(AllStages[0]), jobID,
+		 progress = 0, error_message = '', updated_at = $2 WHERE id = $4 AND site_id = $5`,
+		PipelineRunning, now, string(AllStages[0]), jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start pipeline: %w", err)
@@ -410,7 +416,142 @@ func (s *Service) StartPipeline(ctx context.Context, siteID, jobID uuid.UUID) (*
 		"site_id":    siteID.String(),
 	}, siteID)
 
+	if s.aiManager != nil {
+		go s.executePipelineAsync(context.Background(), siteID, jobID)
+	}
+
 	return s.GetPipelineDetail(ctx, siteID, jobID)
+}
+
+func articlePipelineStepToStage(stageName string) (ai.PipelineStage, bool) {
+	switch StageName(stageName) {
+	case StageResearch:
+		return ai.StageResearchGen, true
+	case StageOutline:
+		return ai.StageOutlineGen, true
+	case StageDraft:
+		return ai.StageDraftGen, true
+	case StageHumanRewrite:
+		return 0, false
+	case StageSEOOptimization:
+		return ai.StageSEOGen, true
+	case StageReadability:
+		return ai.StageQualityCheck, true
+	case StageInternalLinking:
+		return 0, false
+	case StageMetadata:
+		return ai.StageSEOGen, true
+	case StageTranslation:
+		return ai.StageTranslationGen, true
+	case StageQualityScore:
+		return ai.StageQualityCheck, true
+	case StagePubCandidate:
+		return ai.StageFinalReview, true
+	default:
+		return 0, false
+	}
+}
+
+func buildArticlePipelineInput(job *PipelineJob) ai.PipelineInput {
+	return ai.PipelineInput{
+		Title:       job.Title,
+		ContentType: job.ContentType,
+		Language:    job.Language,
+		Topic:       job.Topic,
+	}
+}
+
+func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.UUID) {
+	p, err := s.pool()
+	if err != nil {
+		s.log.Error("articlepipeline executeWorkflow: no database pool", "job_id", jobID, "error", err)
+		return
+	}
+
+	job, err := s.GetPipeline(ctx, siteID, jobID)
+	if err != nil {
+		s.log.Error("articlepipeline executeWorkflow: job not found", "job_id", jobID, "error", err)
+		return
+	}
+
+	pe := ai.NewPipelineExecutor(s.aiManager)
+	input := buildArticlePipelineInput(job)
+
+	var accumulatedContent string
+
+	for _, stage := range AllStages {
+		stageStr := string(stage)
+
+		step, err := s.getStage(ctx, jobID, stageStr)
+		if err != nil {
+			s.log.Error("articlepipeline executeWorkflow: stage not found", "job_id", jobID, "stage", stageStr, "error", err)
+			return
+		}
+
+		if step.Status != StepStatusPending && step.Status != StepStatusRunning {
+			continue
+		}
+
+		pipeStage, mapped := articlePipelineStepToStage(stageStr)
+		if !mapped {
+			_, _ = p.Exec(ctx,
+				`UPDATE article_pipeline_steps SET status = $1, updated_at = NOW()
+				 WHERE pipeline_job_id = $2 AND stage_name = $3`,
+				StepStatusSkipped, jobID, stageStr,
+			)
+			continue
+		}
+
+		_, _ = p.Exec(ctx,
+			`UPDATE article_pipeline_steps SET status = $1, started_at = NOW(), updated_at = NOW()
+			 WHERE pipeline_job_id = $2 AND stage_name = $3`,
+			StepStatusRunning, jobID, stageStr,
+		)
+
+		result, err := pe.ExecuteStage(ctx, pipeStage, input)
+		if err != nil {
+			s.log.Error("articlepipeline executeWorkflow: pipeline stage failed", "job_id", jobID, "stage", stageStr, "pipe_stage", pipeStage, "error", err)
+			_, _ = p.Exec(ctx,
+				`UPDATE article_pipeline_steps SET status = $1, error_message = $2, updated_at = NOW()
+				 WHERE pipeline_job_id = $3 AND stage_name = $4`,
+				StepStatusFailed, err.Error(), jobID, stageStr,
+			)
+			_, _ = p.Exec(ctx,
+				`UPDATE article_pipeline_jobs SET status = $1, error_message = $2, updated_at = NOW()
+				 WHERE id = $3`,
+				PipelineFailed, err.Error(), jobID,
+			)
+			return
+		}
+
+		accumulatedContent = result.Content
+		input.Content = accumulatedContent
+
+		_, _ = p.Exec(ctx,
+			`UPDATE article_pipeline_steps SET status = $1, progress = 100,
+			 completed_at = NOW(), duration_ms = $2, output = $3, updated_at = NOW()
+			 WHERE pipeline_job_id = $4 AND stage_name = $5`,
+			StepStatusCompleted, result.Duration.Milliseconds(), result.Content, jobID, stageStr,
+		)
+
+		_, _ = p.Exec(ctx,
+			`UPDATE article_pipeline_jobs SET current_stage = $1, updated_at = NOW()
+			 WHERE id = $2`,
+			stageStr, jobID,
+		)
+
+		updatedJob, _ := s.GetPipeline(ctx, siteID, jobID)
+		if updatedJob != nil {
+			input = buildArticlePipelineInput(updatedJob)
+			input.Content = accumulatedContent
+		}
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE article_pipeline_jobs SET status = $1, progress = 100, completed_at = NOW(), updated_at = NOW()
+		 WHERE id = $2 AND status = $3`,
+		PipelineCompleted, jobID, PipelineRunning,
+	)
 }
 
 func (s *Service) PausePipeline(ctx context.Context, siteID, jobID uuid.UUID) (*PipelineJob, error) {
@@ -429,8 +570,8 @@ func (s *Service) PausePipeline(ctx context.Context, siteID, jobID uuid.UUID) (*
 
 	now := time.Now()
 	_, err = p.Exec(ctx,
-		`UPDATE article_pipeline_jobs SET status = $1, updated_at = $2 WHERE id = $3`,
-		PipelinePaused, now, jobID,
+		`UPDATE article_pipeline_jobs SET status = $1, updated_at = $2 WHERE id = $3 AND site_id = $4`,
+		PipelinePaused, now, jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pause pipeline: %w", err)
@@ -471,8 +612,8 @@ func (s *Service) ResumePipeline(ctx context.Context, siteID, jobID uuid.UUID) (
 	currentStage := coalesceStr(job.CurrentStage, string(AllStages[0]))
 
 	_, err = p.Exec(ctx,
-		`UPDATE article_pipeline_jobs SET status = $1, updated_at = $2 WHERE id = $3`,
-		PipelineRunning, now, jobID,
+		`UPDATE article_pipeline_jobs SET status = $1, updated_at = $2 WHERE id = $3 AND site_id = $4`,
+		PipelineRunning, now, jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resume pipeline: %w", err)
@@ -519,8 +660,8 @@ func (s *Service) CancelPipeline(ctx context.Context, siteID, jobID uuid.UUID, r
 	now := time.Now()
 	_, err = p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET status = $1, cancelled_at = $2, error_message = $3,
-		 updated_at = $2 WHERE id = $4`,
-		PipelineCancelled, now, reason, jobID,
+		 updated_at = $2 WHERE id = $4 AND site_id = $5`,
+		PipelineCancelled, now, reason, jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to cancel pipeline: %w", err)
@@ -577,8 +718,8 @@ func (s *Service) RetryStage(ctx context.Context, siteID, jobID uuid.UUID, stage
 	now := time.Now()
 	_, err = p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET status = $1, retry_count = retry_count + 1,
-		 error_message = '', updated_at = $2 WHERE id = $3`,
-		PipelineRetrying, now, jobID,
+		 error_message = '', updated_at = $2 WHERE id = $3 AND site_id = $4`,
+		PipelineRetrying, now, jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update job for retry: %w", err)
@@ -619,8 +760,8 @@ func (s *Service) RestartPipeline(ctx context.Context, siteID, jobID uuid.UUID) 
 	_, err = p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET status = $1, progress = 0, current_stage = '',
 		 error_message = '', retry_count = 0, started_at = NULL, completed_at = NULL,
-		 cancelled_at = NULL, updated_at = $2 WHERE id = $3`,
-		PipelineDraft, now, jobID,
+		 cancelled_at = NULL, updated_at = $2 WHERE id = $3 AND site_id = $4`,
+		PipelineDraft, now, jobID, siteID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to restart pipeline: %w", err)
@@ -737,7 +878,7 @@ func (s *Service) UpdateStage(ctx context.Context, siteID, jobID uuid.UUID, stag
 
 	switch req.Status {
 	case StepStatusCompleted:
-		if err := s.onStageCompleted(ctx, p, jobID, stageName, now); err != nil {
+		if err := s.onStageCompleted(ctx, p, siteID, jobID, stageName, now); err != nil {
 			return nil, err
 		}
 		s.fireEvent(ctx, EventStageCompleted, map[string]interface{}{
@@ -745,7 +886,7 @@ func (s *Service) UpdateStage(ctx context.Context, siteID, jobID uuid.UUID, stag
 			"stage_name": stageName,
 		}, siteID)
 	case StepStatusFailed:
-		if err := s.onStageFailed(ctx, p, jobID, stageName, req.ErrorMessage, now); err != nil {
+		if err := s.onStageFailed(ctx, p, siteID, jobID, stageName, req.ErrorMessage, now); err != nil {
 			return nil, err
 		}
 		s.fireEvent(ctx, EventStageFailed, map[string]interface{}{
@@ -758,13 +899,13 @@ func (s *Service) UpdateStage(ctx context.Context, siteID, jobID uuid.UUID, stag
 	return s.GetPipelineDetail(ctx, siteID, jobID)
 }
 
-func (s *Service) onStageCompleted(ctx context.Context, p database.Pool, jobID uuid.UUID, stageName string, now time.Time) error {
+func (s *Service) onStageCompleted(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stageName string, now time.Time) error {
 	nextStage := nextStageName(stageName)
 	if nextStage == "" {
 		_, err := p.Exec(ctx,
 			`UPDATE article_pipeline_jobs SET status = $1, progress = 100,
-			 current_stage = $2, completed_at = $3, updated_at = $3 WHERE id = $4`,
-			PipelineCompleted, stageName, now, jobID,
+			 current_stage = $2, completed_at = $3, updated_at = $3 WHERE id = $4 AND site_id = $5`,
+			PipelineCompleted, stageName, now, jobID, siteID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to complete pipeline: %w", err)
@@ -804,8 +945,8 @@ func (s *Service) onStageCompleted(ctx context.Context, p database.Pool, jobID u
 	progress := s.calcProgress(ctx, p, jobID)
 	_, err = p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET current_stage = $1, progress = $2,
-		 updated_at = $3 WHERE id = $4`,
-		nextStage, progress, now, jobID,
+		 updated_at = $3 WHERE id = $4 AND site_id = $5`,
+		nextStage, progress, now, jobID, siteID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update job progress: %w", err)
@@ -820,11 +961,11 @@ func (s *Service) onStageCompleted(ctx context.Context, p database.Pool, jobID u
 	return nil
 }
 
-func (s *Service) onStageFailed(ctx context.Context, p database.Pool, jobID uuid.UUID, stageName, errorMsg string, now time.Time) error {
+func (s *Service) onStageFailed(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stageName, errorMsg string, now time.Time) error {
 	_, err := p.Exec(ctx,
 		`UPDATE article_pipeline_jobs SET status = $1, current_stage = $2,
-		 error_message = $3, updated_at = $4 WHERE id = $5`,
-		PipelineFailed, stageName, errorMsg, now, jobID,
+		 error_message = $3, updated_at = $4 WHERE id = $5 AND site_id = $6`,
+		PipelineFailed, stageName, errorMsg, now, jobID, siteID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to mark pipeline failed: %w", err)

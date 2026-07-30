@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
@@ -62,6 +63,12 @@ func (m *WorkflowModule) SetEventBus(bus *kernel.EventBus) {
 	}
 	if bus != nil {
 		m.log.Info("workflow module subscribed to event bus")
+	}
+}
+
+func (m *WorkflowModule) SetAIManager(aiManager *ai.Manager) {
+	if m.service != nil {
+		m.service.SetAIManager(aiManager)
 	}
 }
 

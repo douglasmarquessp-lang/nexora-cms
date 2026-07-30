@@ -19,6 +19,7 @@ type Config struct {
 	OAuth    OAuthConfig
 	Storage  StorageConfig
 	Cache    CacheConfig
+	AI       AIConfig
 	Debug    bool
 	LogLevel string
 	LogFormat string
@@ -85,6 +86,31 @@ type StorageConfig struct {
 type CacheConfig struct {
 	Driver string
 	TTL    time.Duration
+}
+
+type ProviderConfig struct {
+	Name       string
+	Model      string
+	APIKey     string
+	BaseURL    string
+	Timeout    time.Duration
+	MaxRetries int
+	Weight     int
+	Priority   int
+	Enabled    bool
+}
+
+type AIConfig struct {
+	Enabled          bool
+	DefaultProvider  string
+	GlobalTimeout    time.Duration
+	Providers        []ProviderConfig
+	RetryMaxAttempts int
+	RetryBaseDelay   time.Duration
+	RetryMaxDelay    time.Duration
+	CBFailureThreshold int
+	CBRecoveryTimeout  time.Duration
+	CBHalfOpenMaxReqs  int
 }
 
 var errDefaultJWTSecret = fmt.Errorf("JWT_SECRET must be changed from the default value for security")
@@ -156,6 +182,38 @@ func Load() (*Config, error) {
 	cfg.Cache = CacheConfig{
 		Driver: getEnv("CACHE_DRIVER", "memory"),
 		TTL:    getEnvDuration("CACHE_TTL", 5*time.Minute),
+	}
+
+	geminiAPIKey := getEnv("AI_GEMINI_API_KEY", "")
+	geminiModel := getEnv("AI_GEMINI_MODEL", "gemini-2.0-flash")
+	geminiBaseURL := getEnv("AI_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+
+	providers := []ProviderConfig{}
+	if geminiAPIKey != "" {
+		providers = append(providers, ProviderConfig{
+			Name:       "gemini",
+			Model:      geminiModel,
+			APIKey:     geminiAPIKey,
+			BaseURL:    geminiBaseURL,
+			Timeout:    getEnvDuration("AI_GEMINI_TIMEOUT", 60*time.Second),
+			MaxRetries: getEnvInt("AI_GEMINI_MAX_RETRIES", 3),
+			Weight:     getEnvInt("AI_GEMINI_WEIGHT", 10),
+			Priority:   getEnvInt("AI_GEMINI_PRIORITY", 1),
+			Enabled:    getEnvBool("AI_GEMINI_ENABLED", true),
+		})
+	}
+
+	cfg.AI = AIConfig{
+		Enabled:          getEnvBool("AI_ENABLED", true),
+		DefaultProvider:  getEnv("AI_DEFAULT_PROVIDER", ""),
+		GlobalTimeout:    getEnvDuration("AI_GLOBAL_TIMEOUT", 60*time.Second),
+		Providers:        providers,
+		RetryMaxAttempts: getEnvInt("AI_RETRY_MAX_ATTEMPTS", 3),
+		RetryBaseDelay:   getEnvDuration("AI_RETRY_BASE_DELAY", 100*time.Millisecond),
+		RetryMaxDelay:    getEnvDuration("AI_RETRY_MAX_DELAY", 5*time.Second),
+		CBFailureThreshold: getEnvInt("AI_CB_FAILURE_THRESHOLD", 5),
+		CBRecoveryTimeout:  getEnvDuration("AI_CB_RECOVERY_TIMEOUT", 30*time.Second),
+		CBHalfOpenMaxReqs:  getEnvInt("AI_CB_HALF_OPEN_MAX_REQS", 3),
 	}
 
 	if cfg.Auth.JWTSecret == "change-me-to-a-random-64-char-string" {

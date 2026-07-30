@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
@@ -19,11 +20,12 @@ import (
 )
 
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
+	log       *logger.Logger
+	db        *database.Database
+	cache     *cache.Cache
+	eventBus  *kernel.EventBus
+	auditLog  *audit.Logger
+	aiManager *ai.Manager
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -41,6 +43,10 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+func (s *Service) SetAIManager(m *ai.Manager) {
+	s.aiManager = m
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -412,9 +418,168 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Autoc
 		"job_id":  jobID.String(),
 		"site_id": siteID.String(),
 		"step":    firstStep,
-}, siteID)
+	}, siteID)
+
+	if s.aiManager != nil {
+		go s.executeWorkflowAsync(context.Background(), siteID, jobID)
+	}
 
 	return s.GetJob(ctx, siteID, jobID)
+}
+
+// stepToPipelineStage maps an autocontent workflow step to an AI pipeline stage.
+// Returns false for steps without a direct AI pipeline equivalent
+// (human_rewrite, internal_linking, featured_image — these require human or
+// external-system intervention and are skipped in the automated pipeline).
+func stepToPipelineStage(stepName string) (ai.PipelineStage, bool) {
+	switch WorkflowStep(stepName) {
+	case StepTopic:
+		return ai.StageTopicGen, true
+	case StepResearch:
+		return ai.StageResearchGen, true
+	case StepBriefing:
+		return ai.StageBriefingGen, true
+	case StepOutline:
+		return ai.StageOutlineGen, true
+	case StepDraft:
+		return ai.StageDraftGen, true
+	case StepSEOOptimization:
+		return ai.StageSEOGen, true
+	case StepFactCheck:
+		return ai.StageFactCheck, true
+	case StepReadability:
+		return ai.StageQualityCheck, true
+	case StepMetadata:
+		return ai.StageSEOGen, true
+	case StepTranslation:
+		return ai.StageTranslationGen, true
+	case StepReadyForPub:
+		return ai.StageFinalReview, true
+	default:
+		return 0, false
+	}
+}
+
+// buildPipelineInput constructs a PipelineInput from an AutocontentJob and accumulated results.
+func buildPipelineInput(job *AutocontentJob) ai.PipelineInput {
+	input := ai.PipelineInput{
+		Title:       job.Title,
+		ContentType: job.ContentType,
+		Language:    job.Language,
+		Topic:       job.Topic,
+		Keywords:    job.Keywords,
+		WordCount:   job.WordCount,
+		Tone:        job.Tone,
+		Audience:    job.Audience,
+	}
+	if job.TargetLanguage != "" {
+		input.Language = job.TargetLanguage
+	}
+	return input
+}
+
+// executeWorkflowAsync runs the autocontent workflow through the AI pipeline.
+// It executes each workflow step that has a corresponding pipeline stage,
+// saves the results, and marks steps completed. Unmapped steps are skipped.
+// This is designed to run in a goroutine and uses context.Background() to
+// outlive the HTTP request context.
+func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.UUID) {
+	p, err := s.pool()
+	if err != nil {
+		s.log.Error("executeWorkflow: no database pool", "job_id", jobID, "error", err)
+		return
+	}
+
+	job, err := s.GetJob(ctx, siteID, jobID)
+	if err != nil {
+		s.log.Error("executeWorkflow: job not found", "job_id", jobID, "error", err)
+		return
+	}
+
+	pe := ai.NewPipelineExecutor(s.aiManager)
+	input := buildPipelineInput(job)
+
+	// accumulateContent tracks the working draft across pipeline stages.
+	// Each mapped step's result content is passed to subsequent stages
+	// via input.Content so that SEO, quality, fact-check, etc. operate
+	// on the most recent draft.
+	var accumulatedContent string
+
+	for _, step := range AllWorkflowSteps {
+		stepStr := string(step)
+
+		stepState, err := s.getStepByName(ctx, p, jobID, stepStr)
+		if err != nil {
+			s.log.Error("executeWorkflow: step not found", "job_id", jobID, "step", stepStr, "error", err)
+			return
+		}
+
+		if stepState.Status != StepStatusPending && stepState.Status != StepStatusRunning {
+			continue
+		}
+
+		stage, mapped := stepToPipelineStage(stepStr)
+		if !mapped {
+			_, _ = p.Exec(ctx,
+				`UPDATE autocontent_steps SET status = 'skipped', updated_at = NOW()
+				 WHERE autocontent_job_id = $1 AND step_name = $2`,
+				jobID, stepStr,
+			)
+			continue
+		}
+
+		_, _ = p.Exec(ctx,
+			`UPDATE autocontent_steps SET status = 'running', started_at = NOW(), updated_at = NOW()
+			 WHERE autocontent_job_id = $1 AND step_name = $2`,
+			jobID, stepStr,
+		)
+
+		result, err := pe.ExecuteStage(ctx, stage, input)
+		if err != nil {
+			s.log.Error("executeWorkflow: pipeline stage failed", "job_id", jobID, "step", stepStr, "stage", stage, "error", err)
+			_, _ = p.Exec(ctx,
+				`UPDATE autocontent_steps SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE autocontent_job_id = $2 AND step_name = $3`,
+				err.Error(), jobID, stepStr,
+			)
+			_, _ = p.Exec(ctx,
+				`UPDATE autocontent_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE id = $2`,
+				err.Error(), jobID,
+			)
+			return
+		}
+
+		_, _ = s.SaveResult(ctx, jobID, stepStr, result.Content, "", 100, true, nil)
+
+		accumulatedContent = result.Content
+		input.Content = accumulatedContent
+
+		_, _ = p.Exec(ctx,
+			`UPDATE autocontent_steps SET status = 'completed', progress = 100,
+			 completed_at = NOW(), duration_ms = $1, updated_at = NOW()
+			 WHERE autocontent_job_id = $2 AND step_name = $3`,
+			result.Duration.Milliseconds(), jobID, stepStr,
+		)
+
+		_, _ = p.Exec(ctx,
+			`UPDATE autocontent_jobs SET current_step = $1, progress = $2, updated_at = NOW()
+			 WHERE id = $3`,
+			stepStr, s.calcProgress(ctx, p, jobID), jobID,
+		)
+
+		updatedJob, _ := s.GetJob(ctx, siteID, jobID)
+		if updatedJob != nil {
+			input = buildPipelineInput(updatedJob)
+			input.Content = accumulatedContent
+		}
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE autocontent_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'running'`,
+		jobID,
+	)
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*AutocontentJob, error) {
@@ -997,7 +1162,7 @@ func (s *Service) AddToQueue(ctx context.Context, siteID uuid.UUID, req QueueReq
 	}
 
 	_, err = p.Exec(ctx,
-		`INSERT INTO publication_queue (id, site_id, autocontent_job_id, title, content, excerpt,
+		`INSERT INTO autocontent_queue (id, site_id, autocontent_job_id, title, content, excerpt,
 		 language, status, priority, scheduled_for, meta_title, meta_description, slug,
 		 featured_image_url, tags, categories, created_at, updated_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
@@ -1064,7 +1229,7 @@ func (s *Service) ListQueue(ctx context.Context, siteID uuid.UUID, status string
 		        COALESCE(meta_description,''), COALESCE(slug,''), COALESCE(featured_image_url,''),
 		        COALESCE(tags,'{}'), COALESCE(categories,'{}'),
 		        published_at, published_by, COALESCE(error_message,''), created_at, updated_at
-		 FROM publication_queue WHERE %s ORDER BY priority ASC, created_at DESC LIMIT $%d OFFSET $%d`,
+		 FROM autocontent_queue WHERE %s ORDER BY priority ASC, created_at DESC LIMIT $%d OFFSET $%d`,
 		strings.Join(where, " AND "), argIdx, argIdx+1,
 	)
 	args = append(args, limit, offset)
@@ -1101,7 +1266,7 @@ func (s *Service) UpdateQueueItem(ctx context.Context, siteID, itemID uuid.UUID,
 
 	var exists bool
 	err = p.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM publication_queue WHERE id = $1 AND site_id = $2)`,
+		`SELECT EXISTS(SELECT 1 FROM autocontent_queue WHERE id = $1 AND site_id = $2)`,
 		itemID, siteID,
 	).Scan(&exists)
 	if err != nil || !exists {
@@ -1149,12 +1314,12 @@ func (s *Service) UpdateQueueItem(ctx context.Context, siteID, itemID uuid.UUID,
 	}
 
 	if len(setClauses) == 0 {
-		return s.getQueueItem(ctx, p, itemID)
+		return s.getQueueItem(ctx, p, siteID, itemID)
 	}
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 	query := fmt.Sprintf(
-		`UPDATE publication_queue SET %s WHERE id = $%d AND site_id = $%d`,
+		`UPDATE autocontent_queue SET %s WHERE id = $%d AND site_id = $%d`,
 		strings.Join(setClauses, ", "), argIdx, argIdx+1,
 	)
 	args = append(args, itemID, siteID)
@@ -1164,10 +1329,10 @@ func (s *Service) UpdateQueueItem(ctx context.Context, siteID, itemID uuid.UUID,
 		return nil, fmt.Errorf("failed to update queue item: %w", err)
 	}
 
-	return s.getQueueItem(ctx, p, itemID)
+	return s.getQueueItem(ctx, p, siteID, itemID)
 }
 
-func (s *Service) getQueueItem(ctx context.Context, p database.Pool, itemID uuid.UUID) (*PublicationItem, error) {
+func (s *Service) getQueueItem(ctx context.Context, p database.Pool, siteID, itemID uuid.UUID) (*PublicationItem, error) {
 	var item PublicationItem
 	err := p.QueryRow(ctx,
 		`SELECT id, site_id, autocontent_job_id, title, COALESCE(content,''), COALESCE(excerpt,''),
@@ -1175,8 +1340,8 @@ func (s *Service) getQueueItem(ctx context.Context, p database.Pool, itemID uuid
 		        COALESCE(meta_description,''), COALESCE(slug,''), COALESCE(featured_image_url,''),
 		        COALESCE(tags,'{}'), COALESCE(categories,'{}'),
 		        published_at, published_by, COALESCE(error_message,''), created_at, updated_at
-		 FROM publication_queue WHERE id = $1`,
-		itemID,
+		 FROM autocontent_queue WHERE id = $1 AND site_id = $2`,
+		itemID, siteID,
 	).Scan(&item.ID, &item.SiteID, &item.AutocontentJobID, &item.Title,
 		&item.Content, &item.Excerpt, &item.Language, &item.Status, &item.Priority,
 		&item.ScheduledFor, &item.MetaTitle, &item.MetaDescription, &item.Slug,
@@ -1295,7 +1460,7 @@ func (s *Service) GetMetrics(ctx context.Context, siteID uuid.UUID) (*Autoconten
 		        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),0),
 		        COALESCE(SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END),0),
 		        COALESCE(AVG(CASE WHEN status = 'completed' THEN EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000 ELSE NULL END),0),
-		        COALESCE((SELECT COUNT(*) FROM publication_queue WHERE site_id = $1 AND status = 'pending'),0)
+		        COALESCE((SELECT COUNT(*) FROM autocontent_queue WHERE site_id = $1 AND status = 'pending'),0)
 		 FROM autocontent_jobs WHERE site_id = $1`,
 		siteID,
 	).Scan(&m.TotalJobs, &m.RunningJobs, &m.CompletedJobs, &m.FailedJobs, &m.PausedJobs,

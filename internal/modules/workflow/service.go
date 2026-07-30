@@ -2,11 +2,13 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
@@ -21,6 +23,7 @@ type Service struct {
 	cache    *cache.Cache
 	eventBus *kernel.EventBus
 	auditLog *audit.Logger
+	aiManager *ai.Manager
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -38,6 +41,10 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+func (s *Service) SetAIManager(m *ai.Manager) {
+	s.aiManager = m
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -514,7 +521,146 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Workf
 		"step":    firstStep,
 	}, siteID)
 
+	if s.aiManager != nil {
+		go s.executeWorkflowAsync(context.Background(), siteID, jobID)
+	}
+
 	return s.getJobByID(ctx, p, siteID, jobID)
+}
+
+func workflowStepToPipelineStage(stepName string) (ai.PipelineStage, bool) {
+	switch WorkflowStep(stepName) {
+	case StepResearch:
+		return ai.StageResearchGen, true
+	case StepWriter:
+		return ai.StageDraftGen, true
+	case StepHumanWriter:
+		return 0, false
+	case StepEditorialEngine:
+		return ai.StageSEOGen, true
+	case StepSEOEngine:
+		return ai.StageSEOGen, true
+	case StepQualityCheck:
+		return ai.StageQualityCheck, true
+	case StepPublisher:
+		return 0, false
+	case StepFinished:
+		return ai.StageFinalReview, true
+	default:
+		return 0, false
+	}
+}
+
+func buildWorkflowPipelineInput(job *WorkflowJob) ai.PipelineInput {
+	return ai.PipelineInput{
+		Title:       job.Title,
+		ContentType: job.ContentType,
+		Language:    job.Language,
+		Topic:       job.Title,
+		Keywords:    job.Keywords,
+		Tone:        job.Tone,
+		Audience:    job.Audience,
+	}
+}
+
+func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.UUID) {
+	p, err := s.pool()
+	if err != nil {
+		s.log.Error("workflow executeWorkflow: no database pool", "job_id", jobID, "error", err)
+		return
+	}
+
+	job, err := s.getJobByID(ctx, p, siteID, jobID)
+	if err != nil {
+		s.log.Error("workflow executeWorkflow: job not found", "job_id", jobID, "error", err)
+		return
+	}
+
+	pe := ai.NewPipelineExecutor(s.aiManager)
+	input := buildWorkflowPipelineInput(job)
+
+	for _, step := range AllWorkflowSteps {
+		stepStr := string(step)
+
+		stepState, err := s.getStepByName(ctx, p, jobID, stepStr)
+		if err != nil {
+			s.log.Error("workflow executeWorkflow: step not found", "job_id", jobID, "step", stepStr, "error", err)
+			return
+		}
+
+		if stepState.Status != StepStatusPending && stepState.Status != StepStatusRunning {
+			continue
+		}
+
+		pipeStage, mapped := workflowStepToPipelineStage(stepStr)
+		if !mapped {
+			_, _ = p.Exec(ctx,
+				`UPDATE workflow_steps SET status = 'skipped', updated_at = NOW()
+				 WHERE workflow_job_id = $1 AND step_name = $2`,
+				jobID, stepStr,
+			)
+			continue
+		}
+
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_steps SET status = 'running', started_at = NOW(), updated_at = NOW()
+			 WHERE workflow_job_id = $1 AND step_name = $2`,
+			jobID, stepStr,
+		)
+
+		result, err := pe.ExecuteStage(ctx, pipeStage, input)
+		if err != nil {
+			s.log.Error("workflow executeWorkflow: pipeline stage failed", "job_id", jobID, "step", stepStr, "pipe_stage", pipeStage, "error", err)
+			_, _ = p.Exec(ctx,
+				`UPDATE workflow_steps SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE workflow_job_id = $2 AND step_name = $3`,
+				err.Error(), jobID, stepStr,
+			)
+			_, _ = p.Exec(ctx,
+				`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE id = $2`,
+				err.Error(), jobID,
+			)
+			return
+		}
+
+		metaData := map[string]interface{}{
+			"ai_content":  result.Content,
+			"ai_stage":    int(pipeStage),
+			"ai_duration": result.Duration,
+		}
+		metaJSON, _ := json.Marshal(metaData)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_steps SET status = 'completed', progress = 100,
+			 completed_at = NOW(), duration_ms = $1, metadata = $2::jsonb, updated_at = NOW()
+			 WHERE workflow_job_id = $3 AND step_name = $4`,
+			result.Duration.Milliseconds(), string(metaJSON), jobID, stepStr,
+		)
+
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET current_step = $1, updated_at = NOW()
+			 WHERE id = $2`,
+			stepStr, jobID,
+		)
+
+		progress := s.calcProgress(ctx, p, jobID)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET progress = $1, updated_at = NOW()
+			 WHERE id = $2`,
+			progress, jobID,
+		)
+
+		updatedJob, _ := s.getJobByID(ctx, p, siteID, jobID)
+		if updatedJob != nil {
+			input = buildWorkflowPipelineInput(updatedJob)
+		}
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'running'`,
+		jobID,
+	)
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error) {
@@ -695,7 +841,7 @@ func (s *Service) GetSteps(ctx context.Context, jobID uuid.UUID) ([]Step, error)
 	return s.listSteps(ctx, p, jobID)
 }
 
-func (s *Service) AdvanceStep(ctx context.Context, jobID uuid.UUID, stepName string, status StepStatus, progress float64, metadata map[string]interface{}, errorMsg string, durationMs int64) (*Step, error) {
+func (s *Service) AdvanceStep(ctx context.Context, siteID, jobID uuid.UUID, stepName string, status StepStatus, progress float64, metadata map[string]interface{}, errorMsg string, durationMs int64) (*Step, error) {
 	p, err := s.pool()
 	if err != nil {
 		return nil, err
@@ -707,16 +853,16 @@ func (s *Service) AdvanceStep(ctx context.Context, jobID uuid.UUID, stepName str
 	}
 
 	if status == StepStatusCompleted {
-		s.onStepCompleted(ctx, p, jobID, stepName, metadata)
+		s.onStepCompleted(ctx, p, siteID, jobID, stepName, metadata)
 	}
 	if status == StepStatusFailed {
-		s.onStepFailed(ctx, p, jobID, stepName, errorMsg)
+		s.onStepFailed(ctx, p, siteID, jobID, stepName, errorMsg)
 	}
 
 	return step, nil
 }
 
-func (s *Service) onStepCompleted(ctx context.Context, p database.Pool, jobID uuid.UUID, stepName string, metadata map[string]interface{}) {
+func (s *Service) onStepCompleted(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stepName string, metadata map[string]interface{}) {
 	now := time.Now()
 	nextStep := s.nextStep(stepName)
 
@@ -738,8 +884,8 @@ func (s *Service) onStepCompleted(ctx context.Context, p database.Pool, jobID uu
 			)
 			if err == nil {
 				_, _ = p.Exec(ctx,
-					`UPDATE workflow_jobs SET current_step = $1, updated_at = $2 WHERE id = $3`,
-					nextStep, now, jobID,
+					`UPDATE workflow_jobs SET current_step = $1, updated_at = $2 WHERE id = $3 AND site_id = $4`,
+					nextStep, now, jobID, siteID,
 				)
 				s.fireEvent(ctx, EventWorkflowProgress, map[string]interface{}{
 					"job_id":   jobID.String(),
@@ -751,8 +897,8 @@ func (s *Service) onStepCompleted(ctx context.Context, p database.Pool, jobID uu
 	} else {
 		_, _ = p.Exec(ctx,
 			`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = $1, updated_at = $1
-			 WHERE id = $2`,
-			now, jobID,
+			 WHERE id = $2 AND site_id = $3`,
+			now, jobID, siteID,
 		)
 		s.addNotification(ctx, p, &jobID, nil, "job.completed", "Job Completed",
 			"Workflow job completed successfully", "success", "")
@@ -764,11 +910,11 @@ func (s *Service) onStepCompleted(ctx context.Context, p database.Pool, jobID uu
 	s.addLog(ctx, p, jobID, stepName, "info", fmt.Sprintf("step completed: %s", StepDisplayNames[WorkflowStep(stepName)]), nil, 0)
 }
 
-func (s *Service) onStepFailed(ctx context.Context, p database.Pool, jobID uuid.UUID, stepName string, errorMsg string) {
+func (s *Service) onStepFailed(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stepName string, errorMsg string) {
 	now := time.Now()
 	_, _ = p.Exec(ctx,
-		`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = $2 WHERE id = $3`,
-		errorMsg, now, jobID,
+		`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = $2 WHERE id = $3 AND site_id = $4`,
+		errorMsg, now, jobID, siteID,
 	)
 
 	s.addNotification(ctx, p, &jobID, nil, "job.failed", "Job Failed",

@@ -617,7 +617,7 @@ func (s *Service) DeleteFolder(ctx context.Context, siteID, folderID uuid.UUID) 
 	if err := s.checkDB(); err != nil {
 		return err
 	}
-	count, err := s.repo.GetFolderChildCount(ctx, folderID)
+	count, err := s.repo.GetFolderChildCount(ctx, siteID, folderID)
 	if err != nil {
 		return err
 	}
@@ -625,7 +625,7 @@ func (s *Service) DeleteFolder(ctx context.Context, siteID, folderID uuid.UUID) 
 		return ErrFolderNotEmpty
 	}
 
-	count, err = s.repo.GetFolderSubfolderCount(ctx, folderID)
+	count, err = s.repo.GetFolderSubfolderCount(ctx, siteID, folderID)
 	if err != nil {
 		return err
 	}

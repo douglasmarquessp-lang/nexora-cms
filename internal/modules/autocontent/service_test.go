@@ -300,7 +300,7 @@ func TestListJobs_Empty(t *testing.T) {
 func TestListQueue_Empty(t *testing.T) {
 	svc, mock := setupMockDB(t)
 
-	mock.ExpectQuery(`SELECT .+ FROM publication_queue WHERE`).
+	mock.ExpectQuery(`SELECT .+ FROM autocontent_queue WHERE`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "site_id", "autocontent_job_id", "title", "content", "excerpt",

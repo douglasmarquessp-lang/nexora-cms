@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
@@ -62,6 +63,12 @@ func (m *AutocontentModule) SetEventBus(bus *kernel.EventBus) {
 	}
 	if bus != nil {
 		m.log.Info("autocontent module subscribed to event bus")
+	}
+}
+
+func (m *AutocontentModule) SetAIManager(manager *ai.Manager) {
+	if m.service != nil {
+		m.service.SetAIManager(manager)
 	}
 }
 

@@ -190,4 +190,5 @@ const (
 	PromptTypeSummary     = "summary"
 	PromptTypeResearch    = "research"
 	PromptTypeBriefing    = "briefing"
+	PromptTypeTopic       = "topic"
 )

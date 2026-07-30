@@ -3,6 +3,7 @@ package contentgenerator
 import (
 	"context"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
@@ -59,6 +60,12 @@ func (m *GeneratorModule) SetEventBus(bus *kernel.EventBus) {
 	}
 	if bus != nil {
 		m.log.Info("content generator module subscribed to event bus")
+	}
+}
+
+func (m *GeneratorModule) SetAIManager(aiManager *ai.Manager) {
+	if m.service != nil {
+		m.service.SetAIManager(aiManager)
 	}
 }
 

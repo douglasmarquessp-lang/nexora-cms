@@ -390,6 +390,12 @@ func (h *Handler) GetSteps(ctx *rest.Context) {
 }
 
 func (h *Handler) AdvanceStep(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
 	jobID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
 	if err != nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid job ID")
@@ -413,7 +419,7 @@ func (h *Handler) AdvanceStep(ctx *rest.Context) {
 		return
 	}
 
-	step, err := h.svc.AdvanceStep(ctx.Request.Context(), jobID, body.StepName, body.Status, body.Progress, body.Metadata, body.Error, body.Duration)
+	step, err := h.svc.AdvanceStep(ctx.Request.Context(), siteID, jobID, body.StepName, body.Status, body.Progress, body.Metadata, body.Error, body.Duration)
 	if err != nil {
 		h.log.Error("failed to advance step", "error", err)
 		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to advance step")

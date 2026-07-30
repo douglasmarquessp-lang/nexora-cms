@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS autocontent_results (
 CREATE INDEX idx_ac_results_job ON autocontent_results(autocontent_job_id);
 CREATE INDEX idx_ac_results_step ON autocontent_results(step_name);
 
-CREATE TABLE IF NOT EXISTS publication_queue (
+CREATE TABLE IF NOT EXISTS autocontent_queue (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     autocontent_job_id UUID REFERENCES autocontent_jobs(id) ON DELETE SET NULL,
@@ -101,11 +101,11 @@ CREATE TABLE IF NOT EXISTS publication_queue (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_pub_queue_site ON publication_queue(site_id);
-CREATE INDEX idx_pub_queue_status ON publication_queue(status);
-CREATE INDEX idx_pub_queue_priority ON publication_queue(priority);
-CREATE INDEX idx_pub_queue_scheduled ON publication_queue(scheduled_for);
-CREATE INDEX idx_pub_queue_job ON publication_queue(autocontent_job_id);
+CREATE INDEX idx_ac_queue_site ON autocontent_queue(site_id);
+CREATE INDEX idx_ac_queue_status ON autocontent_queue(status);
+CREATE INDEX idx_ac_queue_priority ON autocontent_queue(priority);
+CREATE INDEX idx_ac_queue_scheduled ON autocontent_queue(scheduled_for);
+CREATE INDEX idx_ac_queue_job ON autocontent_queue(autocontent_job_id);
 
 CREATE TABLE IF NOT EXISTS workflow_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

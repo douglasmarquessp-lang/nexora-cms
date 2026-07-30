@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
@@ -24,6 +25,7 @@ type Service struct {
 	cache    *cache.Cache
 	eventBus *kernel.EventBus
 	auditLog *audit.Logger
+	aiManager *ai.Manager
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -41,6 +43,10 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+func (s *Service) SetAIManager(m *ai.Manager) {
+	s.aiManager = m
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -365,7 +371,144 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Gener
 		"stage":   string(ValidStages[0]),
 }, siteID)
 
+	if s.aiManager != nil {
+		go s.executeWorkflowAsync(context.Background(), siteID, jobID)
+	}
+
 	return s.GetJob(ctx, siteID, jobID)
+}
+
+// stepToPipelineStage maps a contentgenerator stage to an AI pipeline stage.
+func generatorStepToPipelineStage(stage string) (ai.PipelineStage, bool) {
+	switch GenStage(stage) {
+	case GenStageResearch:
+		return ai.StageResearchGen, true
+	case GenStageBriefing:
+		return ai.StageBriefingGen, true
+	case GenStageOutline:
+		return ai.StageOutlineGen, true
+	case GenStageSectionGen:
+		return ai.StageDraftGen, true
+	case GenStageSEOOptimization:
+		return ai.StageSEOGen, true
+	case GenStageQualityReview:
+		return ai.StageQualityCheck, true
+	case GenStageTranslation:
+		return ai.StageTranslationGen, true
+	case GenStageFinalReview:
+		return ai.StageFinalReview, true
+	case GenStagePublishReady:
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+func buildGeneratorPipelineInput(job *GenerationJob) ai.PipelineInput {
+	input := ai.PipelineInput{
+		Title:       "",
+		ContentType: job.ArticleType,
+		Language:    job.Language,
+		Topic:       "",
+		Keywords:    job.Keywords,
+	}
+	if job.Category != "" {
+		input.Topic = job.Category
+	}
+	return input
+}
+
+func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.UUID) {
+	p, err := s.pool()
+	if err != nil {
+		s.log.Error("generator executeWorkflow: no database pool", "job_id", jobID, "error", err)
+		return
+	}
+
+	job, err := s.GetJob(ctx, siteID, jobID)
+	if err != nil {
+		s.log.Error("generator executeWorkflow: job not found", "job_id", jobID, "error", err)
+		return
+	}
+
+	pe := ai.NewPipelineExecutor(s.aiManager)
+	input := buildGeneratorPipelineInput(job)
+
+	for _, stage := range ValidStages {
+		stageStr := string(stage)
+
+		pStage, err := s.getStageItem(ctx, jobID, stageStr)
+		if err != nil {
+			s.log.Error("generator executeWorkflow: stage not found", "job_id", jobID, "stage", stageStr, "error", err)
+			return
+		}
+
+		if pStage.Status != StageStatusPending && pStage.Status != StageStatusRunning {
+			continue
+		}
+
+		pipeStage, mapped := generatorStepToPipelineStage(stageStr)
+		if !mapped {
+			_, _ = p.Exec(ctx,
+				`UPDATE generation_pipeline SET status = 'skipped', updated_at = NOW()
+				 WHERE generation_job_id = $1 AND stage = $2`,
+				jobID, stageStr,
+			)
+			continue
+		}
+
+		_, _ = p.Exec(ctx,
+			`UPDATE generation_pipeline SET status = 'running', started_at = NOW(), updated_at = NOW()
+			 WHERE generation_job_id = $1 AND stage = $2`,
+			jobID, stageStr,
+		)
+
+		result, err := pe.ExecuteStage(ctx, pipeStage, input)
+		if err != nil {
+			s.log.Error("generator executeWorkflow: pipeline stage failed", "job_id", jobID, "stage", stageStr, "pipe_stage", pipeStage, "error", err)
+			_, _ = p.Exec(ctx,
+				`UPDATE generation_pipeline SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE generation_job_id = $2 AND stage = $3`,
+				err.Error(), jobID, stageStr,
+			)
+			_, _ = p.Exec(ctx,
+				`UPDATE generation_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
+				 WHERE id = $2`,
+				err.Error(), jobID,
+			)
+			return
+		}
+
+		metaData := map[string]interface{}{
+			"ai_content":  result.Content,
+			"ai_stage":    int(pipeStage),
+			"ai_duration": result.Duration,
+		}
+		metaJSON, _ := json.Marshal(metaData)
+		_, _ = p.Exec(ctx,
+			`UPDATE generation_pipeline SET status = 'completed', progress = 100,
+			 completed_at = NOW(), duration_ms = $1, metadata = $2::jsonb, updated_at = NOW()
+			 WHERE generation_job_id = $3 AND stage = $4`,
+			result.Duration.Milliseconds(), string(metaJSON), jobID, stageStr,
+		)
+
+		_, _ = p.Exec(ctx,
+			`UPDATE generation_jobs SET current_stage = $1, progress = $2, updated_at = NOW()
+			 WHERE id = $3`,
+			stageStr, float64(0), jobID,
+		)
+
+		updatedJob, _ := s.GetJob(ctx, siteID, jobID)
+		if updatedJob != nil {
+			input = buildGeneratorPipelineInput(updatedJob)
+		}
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE generation_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'running'`,
+		jobID,
+	)
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*GenerationJob, error) {

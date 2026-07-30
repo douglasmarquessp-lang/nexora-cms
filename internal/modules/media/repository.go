@@ -406,10 +406,10 @@ func (r *Repository) Restore(ctx context.Context, siteID, mediaID uuid.UUID) err
 	return nil
 }
 
-func (r *Repository) PermanentlyDelete(ctx context.Context, mediaID uuid.UUID) error {
+func (r *Repository) PermanentlyDelete(ctx context.Context, siteID, mediaID uuid.UUID) error {
 	_, err := r.db.Exec(ctx,
-		`DELETE FROM media WHERE id = $1`,
-		mediaID,
+		`DELETE FROM media WHERE id = $1 AND site_id = $2`,
+		mediaID, siteID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to permanently delete media: %w", err)
@@ -644,11 +644,11 @@ func (r *Repository) DeleteFolder(ctx context.Context, siteID, folderID uuid.UUI
 	return nil
 }
 
-func (r *Repository) GetFolderChildCount(ctx context.Context, folderID uuid.UUID) (int, error) {
+func (r *Repository) GetFolderChildCount(ctx context.Context, siteID, folderID uuid.UUID) (int, error) {
 	var count int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM media WHERE folder_id = $1 AND deleted_at IS NULL`,
-		folderID,
+		`SELECT COUNT(*) FROM media WHERE folder_id = $1 AND site_id = $2 AND deleted_at IS NULL`,
+		folderID, siteID,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count folder children: %w", err)
@@ -656,11 +656,11 @@ func (r *Repository) GetFolderChildCount(ctx context.Context, folderID uuid.UUID
 	return count, nil
 }
 
-func (r *Repository) GetFolderSubfolderCount(ctx context.Context, folderID uuid.UUID) (int, error) {
+func (r *Repository) GetFolderSubfolderCount(ctx context.Context, siteID, folderID uuid.UUID) (int, error) {
 	var count int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND deleted_at IS NULL`,
-		folderID,
+		`SELECT COUNT(*) FROM folders WHERE parent_id = $1 AND site_id = $2 AND deleted_at IS NULL`,
+		folderID, siteID,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count subfolders: %w", err)

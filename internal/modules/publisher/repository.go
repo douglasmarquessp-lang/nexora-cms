@@ -260,7 +260,7 @@ func (r *Repository) ListPublications(ctx context.Context, siteID uuid.UUID, sta
 	return pubs, total, nil
 }
 
-func (r *Repository) UpdatePublication(ctx context.Context, pubID uuid.UUID, updates map[string]interface{}) error {
+func (r *Repository) UpdatePublication(ctx context.Context, siteID, pubID uuid.UUID, updates map[string]interface{}) error {
 	if err := r.checkDB(); err != nil {
 		return err
 	}
@@ -281,10 +281,10 @@ func (r *Repository) UpdatePublication(ctx context.Context, pubID uuid.UUID, upd
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 	query := fmt.Sprintf(
-		`UPDATE publications SET %s WHERE id = $%d`,
-		strings.Join(setClauses, ", "), argIdx,
+		`UPDATE publications SET %s WHERE id = $%d AND site_id = $%d`,
+		strings.Join(setClauses, ", "), argIdx, argIdx+1,
 	)
-	args = append(args, pubID)
+	args = append(args, pubID, siteID)
 
 	_, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
@@ -526,7 +526,7 @@ func (r *Repository) ListQueue(ctx context.Context, siteID uuid.UUID, status str
 	return items, nil
 }
 
-func (r *Repository) UpdateQueueItem(ctx context.Context, itemID uuid.UUID, updates map[string]interface{}) error {
+func (r *Repository) UpdateQueueItem(ctx context.Context, siteID, itemID uuid.UUID, updates map[string]interface{}) error {
 	if err := r.checkDB(); err != nil {
 		return err
 	}
@@ -547,10 +547,10 @@ func (r *Repository) UpdateQueueItem(ctx context.Context, itemID uuid.UUID, upda
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 	query := fmt.Sprintf(
-		`UPDATE publication_queue SET %s WHERE id = $%d`,
-		strings.Join(setClauses, ", "), argIdx,
+		`UPDATE publication_queue SET %s WHERE id = $%d AND site_id = $%d`,
+		strings.Join(setClauses, ", "), argIdx, argIdx+1,
 	)
-	args = append(args, itemID)
+	args = append(args, itemID, siteID)
 
 	_, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
@@ -673,7 +673,7 @@ func (r *Repository) ListSchedules(ctx context.Context, siteID uuid.UUID, status
 	return schedules, nil
 }
 
-func (r *Repository) UpdateSchedule(ctx context.Context, scheduleID uuid.UUID, updates map[string]interface{}) error {
+func (r *Repository) UpdateSchedule(ctx context.Context, siteID, scheduleID uuid.UUID, updates map[string]interface{}) error {
 	if err := r.checkDB(); err != nil {
 		return err
 	}
@@ -694,10 +694,10 @@ func (r *Repository) UpdateSchedule(ctx context.Context, scheduleID uuid.UUID, u
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 	query := fmt.Sprintf(
-		`UPDATE publication_schedule SET %s WHERE id = $%d`,
-		strings.Join(setClauses, ", "), argIdx,
+		`UPDATE publication_schedule SET %s WHERE id = $%d AND site_id = $%d`,
+		strings.Join(setClauses, ", "), argIdx, argIdx+1,
 	)
-	args = append(args, scheduleID)
+	args = append(args, scheduleID, siteID)
 
 	_, err := r.db.Exec(ctx, query, args...)
 	if err != nil {

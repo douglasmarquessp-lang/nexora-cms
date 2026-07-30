@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 type PipelineStage int
@@ -16,6 +17,8 @@ const (
 	StageQualityCheck
 	StageTranslationGen
 	StageFinalReview
+	StageTopicGen
+	StageFactCheck
 )
 
 var stageNames = map[PipelineStage]string{
@@ -27,6 +30,8 @@ var stageNames = map[PipelineStage]string{
 	StageQualityCheck:   "quality",
 	StageTranslationGen: "translation",
 	StageFinalReview:    "final_review",
+	StageTopicGen:       "topic",
+	StageFactCheck:      "fact_check",
 }
 
 type PipelineInput struct {
@@ -36,6 +41,7 @@ type PipelineInput struct {
 	Topic       string            `json:"topic,omitempty"`
 	Briefing    string            `json:"briefing,omitempty"`
 	Outline     string            `json:"outline,omitempty"`
+	Content     string            `json:"content,omitempty"`
 	Style       map[string]string `json:"style,omitempty"`
 	Keywords    []string          `json:"keywords,omitempty"`
 	WordCount   int               `json:"word_count,omitempty"`
@@ -49,7 +55,7 @@ type PipelineResult struct {
 	Stage    PipelineStage `json:"stage"`
 	Content  string        `json:"content"`
 	Error    error         `json:"error,omitempty"`
-	Duration string        `json:"duration,omitempty"`
+	Duration time.Duration `json:"duration,omitempty"`
 }
 
 type PipelineExecutor struct {
@@ -78,6 +84,10 @@ func (pe *PipelineExecutor) ExecuteStage(ctx context.Context, stage PipelineStag
 		return pe.runTranslation(ctx, input)
 	case StageFinalReview:
 		return pe.runReview(ctx, input)
+	case StageTopicGen:
+		return pe.runTopic(ctx, input)
+	case StageFactCheck:
+		return pe.runFactCheck(ctx, input)
 	default:
 		return nil, fmt.Errorf("unknown pipeline stage: %d", stage)
 	}
@@ -94,6 +104,8 @@ func (pe *PipelineExecutor) ExecuteFull(ctx context.Context, input PipelineInput
 		StageQualityCheck,
 		StageTranslationGen,
 		StageFinalReview,
+		StageTopicGen,
+		StageFactCheck,
 	}
 
 	for _, stage := range stages {
@@ -216,9 +228,16 @@ func (pe *PipelineExecutor) runDraft(ctx context.Context, input PipelineInput) (
 	}, nil
 }
 
+func sourceText(input PipelineInput) string {
+	if input.Content != "" {
+		return input.Content
+	}
+	return input.Briefing
+}
+
 func (pe *PipelineExecutor) runSEO(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeSEO, map[string]string{
-		"content":  input.Briefing,
+		"content":  sourceText(input),
 		"keywords": joinStrings(input.Keywords, ", "),
 	})
 	if err != nil {
@@ -237,7 +256,7 @@ func (pe *PipelineExecutor) runSEO(ctx context.Context, input PipelineInput) (*P
 }
 
 func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
-	text := input.Briefing
+	text := sourceText(input)
 
 	grammar, _ := pe.manager.Quality().ScoreGrammar(ctx, text, input.Language)
 	seoScore, _ := pe.manager.Quality().ScoreSEO(ctx, text, input.Keywords)
@@ -269,7 +288,7 @@ func (pe *PipelineExecutor) runTranslation(ctx context.Context, input PipelineIn
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeTranslation, map[string]string{
 		"source_language": "en",
 		"target_language": "pt",
-		"content":         input.Briefing,
+		"content":         sourceText(input),
 	})
 	if err != nil {
 		return nil, err
@@ -288,7 +307,7 @@ func (pe *PipelineExecutor) runTranslation(ctx context.Context, input PipelineIn
 
 func (pe *PipelineExecutor) runReview(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeRevision, map[string]string{
-		"content":      input.Briefing,
+		"content":      sourceText(input),
 		"feedback":     "Review the content for quality, accuracy, and completeness.",
 		"instructions": "Provide a final review report.",
 	})
@@ -303,6 +322,48 @@ func (pe *PipelineExecutor) runReview(ctx context.Context, input PipelineInput) 
 
 	return &PipelineResult{
 		Stage:   StageFinalReview,
+		Content: result.Content,
+	}, nil
+}
+
+func (pe *PipelineExecutor) runTopic(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
+	req, err := pe.manager.Prompts().Build(ctx, PromptTypeTopic, map[string]string{
+		"topic":       input.Topic,
+		"content":     sourceText(input),
+		"content_type": input.ContentType,
+		"language":    input.Language,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := pe.manager.Generate(ctx, *req)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PipelineResult{
+		Stage:   StageTopicGen,
+		Content: result.Content,
+	}, nil
+}
+
+func (pe *PipelineExecutor) runFactCheck(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
+	req, err := pe.manager.Prompts().Build(ctx, PromptTypeFactCheck, map[string]string{
+		"content":    sourceText(input),
+		"references": joinStrings(input.References, "\n"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := pe.manager.Generate(ctx, *req)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PipelineResult{
+		Stage:   StageFactCheck,
 		Content: result.Content,
 	}, nil
 }

@@ -232,6 +232,26 @@ func (pb *promptBuilder) registerDefaults() {
 			Variables:   []string{"topic", "sources"},
 			Version:     "1.0",
 		},
+		{
+			ID:          PromptTypeTopic,
+			Name:        "Topic Generation",
+			Description: "Generate topic suggestions from initial context",
+			Language:    "en",
+			System:      "You are a content strategist. Suggest relevant topics based on the provided context.",
+			Template:    "Content Type: {{.content_type}}\n\nExisting Context:\n{{.content}}\n\nTarget Language: {{.language}}\n\nPrimary Topic: {{.topic}}\n\nSuggest specific, engaging topic ideas with angles and target audiences.",
+			Variables:   []string{"content_type", "content", "language", "topic"},
+			Version:     "1.0",
+		},
+		{
+			ID:          PromptTypeTopic + "_pt",
+			Name:        "Geração de Tópicos",
+			Description: "Suggest topic ideas in Portuguese",
+			Language:    "pt",
+			System:      "Você é um estrategista de conteúdo. Sugira tópicos relevantes com base no contexto fornecido.",
+			Template:    "Tipo de Conteúdo: {{.content_type}}\n\nContexto Existente:\n{{.content}}\n\nIdioma Alvo: {{.language}}\n\nTópico Principal: {{.topic}}\n\nSugira ideias de tópicos específicas e envolventes com abordagens e públicos-alvo.",
+			Variables:   []string{"content_type", "content", "language", "topic"},
+			Version:     "1.0",
+		},
 	}
 
 	for _, tmpl := range defaults {
