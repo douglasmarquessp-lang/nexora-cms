@@ -12,6 +12,8 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	publisherModule "nexora/internal/modules/publisher"
+	researchModule "nexora/internal/modules/research"
 )
 
 type AutocontentModule struct {
@@ -69,6 +71,18 @@ func (m *AutocontentModule) SetEventBus(bus *kernel.EventBus) {
 func (m *AutocontentModule) SetAIManager(manager *ai.Manager) {
 	if m.service != nil {
 		m.service.SetAIManager(manager)
+	}
+}
+
+func (m *AutocontentModule) SetPublisherSvc(svc *publisherModule.Service) {
+	if m.service != nil {
+		m.service.SetPublisherSvc(svc)
+	}
+}
+
+func (m *AutocontentModule) SetResearchSvc(svc *researchModule.Service) {
+	if m.service != nil {
+		m.service.SetResearchSvc(svc)
 	}
 }
 

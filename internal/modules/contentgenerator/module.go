@@ -9,6 +9,8 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	publisherModule "nexora/internal/modules/publisher"
+	researchModule "nexora/internal/modules/research"
 )
 
 type GeneratorModule struct {
@@ -66,6 +68,18 @@ func (m *GeneratorModule) SetEventBus(bus *kernel.EventBus) {
 func (m *GeneratorModule) SetAIManager(aiManager *ai.Manager) {
 	if m.service != nil {
 		m.service.SetAIManager(aiManager)
+	}
+}
+
+func (m *GeneratorModule) SetPublisherSvc(svc *publisherModule.Service) {
+	if m.service != nil {
+		m.service.SetPublisherSvc(svc)
+	}
+}
+
+func (m *GeneratorModule) SetResearchSvc(svc *researchModule.Service) {
+	if m.service != nil {
+		m.service.SetResearchSvc(svc)
 	}
 }
 

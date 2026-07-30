@@ -809,3 +809,40 @@ func (s *Service) CompleteJob(ctx context.Context, siteID, jobID uuid.UUID) erro
 }
 
 func jobStatusPtr(s JobStatus) *JobStatus { return &s }
+
+func ArticleSourcesFromGrounding(siteID, articleID, pipelineJobID, workflowJobID, autocontentJobID uuid.UUID, gm *ai.GroundingMetadata) []ArticleSource {
+	if gm == nil {
+		return nil
+	}
+	now := time.Now()
+	var sources []ArticleSource
+	for _, gs := range gm.Sources {
+		src := ArticleSource{
+			SiteID:        siteID,
+			ArticleID:     &articleID,
+			SourceURL:     gs.URI,
+			Title:         gs.Title,
+			Snippet:       gs.Snippet,
+			PublishedAt:   gs.PublishedAt,
+			RetrievedAt:   now,
+			FreshnessScore: gs.FreshnessScore,
+			IsVerified:    gs.IsVerified,
+			DomainRank:    gs.DomainRank,
+			RelevanceScore: int(gs.FreshnessScore * 100),
+		}
+		if pipelineJobID != uuid.Nil {
+			src.PipelineJobID = &pipelineJobID
+		}
+		if workflowJobID != uuid.Nil {
+			src.WorkflowJobID = &workflowJobID
+		}
+		if autocontentJobID != uuid.Nil {
+			src.AutocontentJobID = &autocontentJobID
+		}
+		if gs.PublishedAt != nil {
+			src.PublishedAt = gs.PublishedAt
+		}
+		sources = append(sources, src)
+	}
+	return sources
+}

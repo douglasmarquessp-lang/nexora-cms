@@ -183,6 +183,45 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	return &PublishResponse{Publication: pub}, nil
 }
 
+func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGeneratedRequest) (*Publication, error) {
+	pubReq := PublishRequest{
+		Title:            req.Title,
+		Content:          req.Content,
+		Excerpt:          req.Excerpt,
+		Slug:             req.Slug,
+		Language:         req.Language,
+		MetaTitle:        req.MetaTitle,
+		MetaDescription:  req.MetaDescription,
+		FeaturedImageURL: req.FeaturedImageURL,
+		Tags:             req.Tags,
+		Categories:       req.Categories,
+		Source:           coalesceStr(req.Source, "generated"),
+	}
+	if req.Language == "" {
+		pubReq.Language = "pt"
+	}
+	resp, err := s.PublishArticle(ctx, req.SiteID, uuid.Nil, pubReq)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Publication, nil
+}
+
+func ComputeFreshnessScore(publishedAt *time.Time) float64 {
+	if publishedAt == nil {
+		return 0.0
+	}
+	days := time.Since(*publishedAt).Hours() / 24
+	if days < 0 {
+		return 1.0
+	}
+	score := 1.0 - (days / 365.0)
+	if score < 0 {
+		return 0.0
+	}
+	return score
+}
+
 // --- Schedule ---
 
 func (s *Service) SchedulePublication(ctx context.Context, siteID, userID uuid.UUID, req ScheduleRequest) (*PublishResponse, error) {

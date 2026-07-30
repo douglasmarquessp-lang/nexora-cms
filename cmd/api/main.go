@@ -199,6 +199,16 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	publisherSvc := publisherMod.Service()
 	publisherMod.SetEventBus(k.EventBus())
 
+	autocontentMod.SetPublisherSvc(publisherSvc)
+	generatorMod.SetPublisherSvc(publisherSvc)
+	articlepipelineMod.SetPublisherSvc(publisherSvc)
+	workflowMod.SetPublisherSvc(publisherSvc)
+
+	autocontentMod.SetResearchSvc(researchSvc)
+	generatorMod.SetResearchSvc(researchSvc)
+	articlepipelineMod.SetResearchSvc(researchSvc)
+	workflowMod.SetResearchSvc(researchSvc)
+
 	seoengineSvc := seoengineMod.Service()
 	seoengineMod.SetEventBus(k.EventBus())
 

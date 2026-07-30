@@ -102,6 +102,14 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 			r.Post("/auth/mfa/disable", wrapMiddleware(authMiddleware, rest.AdaptHandler(authHandler.DisableMFA)))
 		})
 
+		publicArticleH := newPublicArticleHandler(deps)
+
+		r.Group(func(r chi.Router) {
+			r.Use(siteIdentify)
+
+			r.Get("/articles/{slug}", rest.AdaptHandler(publicArticleH.GetBySlug))
+		})
+
 		r.Group(func(r chi.Router) {
 			r.Use(siteIdentify)
 			r.Use(authMiddleware)

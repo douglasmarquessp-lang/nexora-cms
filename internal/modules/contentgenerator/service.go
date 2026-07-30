@@ -17,15 +17,19 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/modules/publisher"
+	"nexora/internal/modules/research"
 )
 
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
-	aiManager *ai.Manager
+	log         *logger.Logger
+	db          *database.Database
+	cache       *cache.Cache
+	eventBus    *kernel.EventBus
+	auditLog    *audit.Logger
+	aiManager   *ai.Manager
+	publisherSvc *publisher.Service
+	researchSvc  *research.Service
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -47,6 +51,14 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 
 func (s *Service) SetAIManager(m *ai.Manager) {
 	s.aiManager = m
+}
+
+func (s *Service) SetPublisherSvc(svc *publisher.Service) {
+	s.publisherSvc = svc
+}
+
+func (s *Service) SetResearchSvc(svc *research.Service) {
+	s.researchSvc = svc
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -434,6 +446,9 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 	pe := ai.NewPipelineExecutor(s.aiManager)
 	input := buildGeneratorPipelineInput(job)
 
+	var accumulatedContent string
+	var groundingMeta *ai.GroundingMetadata
+
 	for _, stage := range ValidStages {
 		stageStr := string(stage)
 
@@ -479,6 +494,12 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			return
 		}
 
+		if pipeStage == ai.StageResearchGen && result.GroundingMetadata != nil {
+			groundingMeta = result.GroundingMetadata
+		}
+
+		accumulatedContent = result.Content
+
 		metaData := map[string]interface{}{
 			"ai_content":  result.Content,
 			"ai_stage":    int(pipeStage),
@@ -509,6 +530,34 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		 WHERE id = $1 AND status = 'running'`,
 		jobID,
 	)
+
+	finalJob, _ := s.GetJob(ctx, siteID, jobID)
+	if finalJob != nil && s.publisherSvc != nil && accumulatedContent != "" {
+		title := finalJob.Category
+		if title == "" {
+			title = "Untitled"
+		}
+		pubReq := publisher.PublishGeneratedRequest{
+			SiteID:   siteID,
+			Title:    title,
+			Content:  accumulatedContent,
+			Language: finalJob.Language,
+			Source:   "contentgenerator",
+		}
+		if len(finalJob.Keywords) > 0 {
+			pubReq.Tags = finalJob.Keywords
+		}
+		pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, pubReq)
+		if pubErr == nil && pub != nil && groundingMeta != nil && s.researchSvc != nil {
+			sources := research.ArticleSourcesFromGrounding(siteID, pub.ID, uuid.Nil, uuid.Nil, uuid.Nil, groundingMeta)
+			if len(sources) > 0 {
+				_, _ = s.researchSvc.SaveArticleSources(ctx, sources)
+			}
+		}
+		if pubErr != nil {
+			s.log.Error("auto-publish failed", "job_id", jobID, "error", pubErr)
+		}
+	}
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*GenerationJob, error) {

@@ -273,6 +273,22 @@ type PublicationListResponse struct {
 	Total        int           `json:"total"`
 }
 
+type PublishGeneratedRequest struct {
+	SiteID           uuid.UUID `json:"site_id"`
+	Title            string    `json:"title"`
+	Content          string    `json:"content"`
+	Excerpt          string    `json:"excerpt,omitempty"`
+	Slug             string    `json:"slug,omitempty"`
+	Language         string    `json:"language,omitempty"`
+	MetaTitle        string    `json:"meta_title,omitempty"`
+	MetaDescription  string    `json:"meta_description,omitempty"`
+	FeaturedImageURL string    `json:"featured_image_url,omitempty"`
+	Tags             []string  `json:"tags,omitempty"`
+	Categories       []string  `json:"categories,omitempty"`
+	Source           string    `json:"source,omitempty"`
+	SourceJobID      uuid.UUID `json:"source_job_id,omitempty"`
+}
+
 // --- Events ---
 
 const (

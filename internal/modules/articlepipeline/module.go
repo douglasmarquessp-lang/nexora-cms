@@ -6,12 +6,13 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"nexora/internal/ai"
-	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	publisherModule "nexora/internal/modules/publisher"
+	researchModule "nexora/internal/modules/research"
 )
 
 type ArticlePipelineModule struct {
@@ -69,6 +70,18 @@ func (m *ArticlePipelineModule) SetEventBus(bus *kernel.EventBus) {
 func (m *ArticlePipelineModule) SetAIManager(aiManager *ai.Manager) {
 	if m.service != nil {
 		m.service.SetAIManager(aiManager)
+	}
+}
+
+func (m *ArticlePipelineModule) SetPublisherSvc(svc *publisherModule.Service) {
+	if m.service != nil {
+		m.service.SetPublisherSvc(svc)
+	}
+}
+
+func (m *ArticlePipelineModule) SetResearchSvc(svc *researchModule.Service) {
+	if m.service != nil {
+		m.service.SetResearchSvc(svc)
 	}
 }
 
