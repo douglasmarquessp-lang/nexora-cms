@@ -498,7 +498,12 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			groundingMeta = result.GroundingMetadata
 		}
 
+		if groundingMeta != nil {
+			input.GroundingMetadata = groundingMeta
+		}
+
 		accumulatedContent = result.Content
+		input.Content = accumulatedContent
 
 		metaData := map[string]interface{}{
 			"ai_content":  result.Content,
@@ -522,6 +527,9 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		updatedJob, _ := s.GetJob(ctx, siteID, jobID)
 		if updatedJob != nil {
 			input = buildGeneratorPipelineInput(updatedJob)
+			if groundingMeta != nil {
+				input.GroundingMetadata = groundingMeta
+			}
 		}
 	}
 

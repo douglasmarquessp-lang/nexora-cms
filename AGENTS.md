@@ -471,3 +471,58 @@
 - `research/sprint-3.10-down-migrations-audit.md`
 
 **Rollback posture:** All 23 migrations can now be safely rolled back in reverse order (023→001) without FK violations.
+
+### Sprint 3.10c — Research → Grounding → Quality Check Integration (2026-07-30)
+
+**Objective:** Complete the end-to-end chain from Research (with Google Search Grounding) through Quality Check (FactCheckReport), ensuring grounding evidence is never lost between pipeline stages.
+
+**Audit finding — GroundingMetadata was lost at 3 points:**
+1. `PipelineInput` had no `GroundingMetadata` field — no way to carry evidence between stages
+2. `runQuality()` always set `var gm *GroundingMetadata` to nil — fact check never received real sources
+3. All 4 module callers (autocontent, contentgenerator, articlepipeline, workflow) captured `groundingMeta` from research stage but never forwarded it to subsequent stages
+
+**Changes:**
+
+- `internal/ai/pipeline.go` — `PipelineInput` struct: added `GroundingMetadata *GroundingMetadata` field with JSON tag
+- `internal/ai/pipeline.go` — `runQuality()`: now checks `input.GroundingMetadata` (not nil) alongside `input.References` for fact checking; passes real grounding sources to `CheckHallucinationWithGrounding`
+- `internal/modules/autocontent/service.go` — `executeWorkflowAsync`: sets `input.GroundingMetadata` after capturing from research result (line 572-574); preserves on input rebuild (line 595-598)
+- `internal/modules/contentgenerator/service.go` — `executeWorkflowAsync`: same wiring pattern; also added `input.Content` accumulation (was missing)
+- `internal/modules/articlepipeline/service.go` — `executePipelineAsync`: same wiring pattern
+- `internal/modules/workflow/service.go` — `executeWorkflowAsync`: same wiring pattern; also added `input.Content` accumulation (was missing)
+
+**No model/data changes needed:**
+- `PipelineResult.GroundingMetadata` already existed ✅
+- `CompletionResult.GroundingMetadata` already existed ✅
+- `FactCheckReport.GroundingMeta` already existed ✅
+- `CheckHallucinationWithGrounding` already accepted `*GroundingMetadata` ✅
+
+**New tests (12 deterministic tests in `pipeline_test.go`):**
+- `TestPipelineQualityStageWithGroundingMetadata` — quality receives GroundingMetadata via PipelineInput, runs fact check
+- `TestPipelineQualityStageWithoutGrounding` — no fact check when no grounding provided
+- `TestPipelineQualityStageWithEmptyGroundingMetadata` — unverified metadata still triggers fact check
+- `TestPipelineResearchToQualityGroundingFlow` — research output propagated to quality input
+- `TestPipelineFullWithGroundingPropagation` — full pipeline preserves grounding metadata
+- `TestPipelineQualityFactCheckSupportedClaim` — claim supported by ground truth source
+- `TestPipelineQualityFactCheckUnsupportedClaim` — claim not found in available sources
+- `TestPipelineQualityFactCheckWithoutGrounding` — no sources → non-grounded report
+- `TestPipelineQualityFactCheckMultipleSources` — 3 sources, 2 verified, 1 unverified
+- `TestPipelineQualityFactCheckAIManagerNotRequired` — quality works independently of AI provider
+- `TestPipelineQualityFactCheckWithAIManagerNil` — AI unavailable → unverified fallback preserved
+- `TestPipelineInputGroundingMetadataField` — PipelineInput JSON round-trip preserves GroundingMetadata
+
+**Existing tests leveraged:**
+- `TestPipelineResearchStageWithoutGroundingCapability` (grounding_test.go) — provider without CapGrounding produces no GroundingMetadata
+- `TestGroundingFallbackWhenAIManagerNil` (grounding_test.go) — nil AI returns unverified result
+- `TestPipelineResearchStageWithGrounding` (grounding_test.go) — research produces GroundingMetadata
+- All quality_test.go fact check tests remain unchanged — backward compatible
+
+**Test coverage assertions:**
+- Grounded fact check outputs `"Fact Check"` in quality result string
+- Non-grounded quality omits `"Fact Check"` section
+- Supported claims produce `Supported > 0` counts
+- Unsupported claims produce `Unsupported > 0` counts
+- Multiple sources preserved in `FactCheckReport.GroundingMeta.Sources`
+- JSON round-trip preserves all GroundingMetadata fields
+- No random values or external API calls in any test
+
+**Architecture principle:** The module callers (not PipelineExecutor) are responsible for chaining GroundingMetadata between stages, because only they have access to both the PipelineResult (output) and the PipelineInput (next input). PipelineExecutor stages remain stateless by design.

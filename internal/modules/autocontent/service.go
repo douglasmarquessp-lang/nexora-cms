@@ -567,6 +567,10 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			groundingMeta = result.GroundingMetadata
 		}
 
+		if groundingMeta != nil {
+			input.GroundingMetadata = groundingMeta
+		}
+
 		_, _ = s.SaveResult(ctx, jobID, stepStr, result.Content, "", 100, true, nil)
 
 		accumulatedContent = result.Content
@@ -589,6 +593,9 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		if updatedJob != nil {
 			input = buildPipelineInput(updatedJob)
 			input.Content = accumulatedContent
+			if groundingMeta != nil {
+				input.GroundingMetadata = groundingMeta
+			}
 		}
 	}
 

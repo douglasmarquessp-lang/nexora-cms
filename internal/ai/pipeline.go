@@ -47,8 +47,9 @@ type PipelineInput struct {
 	WordCount   int               `json:"word_count,omitempty"`
 	Tone        string            `json:"tone,omitempty"`
 	Audience    string            `json:"audience,omitempty"`
-	References  []string          `json:"references,omitempty"`
-	Entities    []string          `json:"entities,omitempty"`
+	References        []string           `json:"references,omitempty"`
+	Entities          []string           `json:"entities,omitempty"`
+	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
 }
 
 type PipelineResult struct {
@@ -282,14 +283,10 @@ func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput)
 	duplicates, _ := pe.manager.Quality().CheckDuplicateBlocks(ctx, text, 10)
 	structure, _ := pe.manager.Quality().ValidateStructure(ctx, text)
 
-	// Run hallucination check if references or grounding available
+	// Run hallucination check if references or grounding metadata available
 	var factCheck *FactCheckReport
-	if len(input.References) > 0 {
-		// Check if research stage provided grounding metadata
-		var gm *GroundingMetadata
-		// Grounding metadata isn't passed between stages in PipelineInput currently,
-		// so try reference-based fact checking
-		factCheck, _ = pe.manager.Quality().CheckHallucinationWithGrounding(ctx, text, input.References, gm)
+	if len(input.References) > 0 || input.GroundingMetadata != nil {
+		factCheck, _ = pe.manager.Quality().CheckHallucinationWithGrounding(ctx, text, input.References, input.GroundingMetadata)
 	}
 
 	result := "Quality Check Results:\n"

@@ -541,6 +541,10 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 			groundingMeta = result.GroundingMetadata
 		}
 
+		if groundingMeta != nil {
+			input.GroundingMetadata = groundingMeta
+		}
+
 		accumulatedContent = result.Content
 		input.Content = accumulatedContent
 
@@ -561,6 +565,9 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 		if updatedJob != nil {
 			input = buildArticlePipelineInput(updatedJob)
 			input.Content = accumulatedContent
+			if groundingMeta != nil {
+				input.GroundingMetadata = groundingMeta
+			}
 		}
 	}
 
