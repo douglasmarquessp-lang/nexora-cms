@@ -252,8 +252,6 @@ func (pb *promptBuilder) registerDefaults() {
 			Variables:   []string{"content_type", "content", "language", "topic"},
 			Version:     "1.0",
 		},
-	}
-
 		{
 			ID:          PromptTypeQualityGrammar,
 			Name:        "Grammar Quality Analysis",
@@ -295,6 +293,7 @@ func (pb *promptBuilder) registerDefaults() {
 			Variables:   []string{"content", "keywords"},
 			Version:     "1.0",
 		},
+	}
 
 	for _, tmpl := range defaults {
 		pb.templates[tmpl.ID] = tmpl
