@@ -22,6 +22,14 @@ type QualityChecker interface {
 	CheckStructure(ctx context.Context, text string, spec StructureSpec) (*ScoreResult, error)
 	CheckDuplicates(ctx context.Context, text string) ([]DuplicateResult, error)
 	CheckHallucination(ctx context.Context, text string, references []string) (*HallucinationResult, error)
+
+	// New deterministic quality checks
+	CheckGrammarDetails(ctx context.Context, text, language string) (*GrammarReport, error)
+	AssessSEO(ctx context.Context, text string, keywords []string) (*SEOAnalysis, error)
+	ScoreReadabilityDetailed(ctx context.Context, text, language string) (*ReadabilityReport, error)
+	CheckDuplicateBlocks(ctx context.Context, text string, minLength int) ([]DuplicateBlock, error)
+	ValidateStructure(ctx context.Context, text string) (*StructureReport, error)
+	CheckHallucinationWithGrounding(ctx context.Context, text string, references []string, grounding *GroundingMetadata) (*FactCheckReport, error)
 }
 
 type PromptBuilder interface {

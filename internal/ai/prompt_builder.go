@@ -254,6 +254,48 @@ func (pb *promptBuilder) registerDefaults() {
 		},
 	}
 
+		{
+			ID:          PromptTypeQualityGrammar,
+			Name:        "Grammar Quality Analysis",
+			Description: "Analyze content for grammar and writing quality issues",
+			Language:    "en",
+			System:      "You are a grammar expert. Analyze the content for grammar, spelling, punctuation, and writing quality issues. Return a structured assessment.",
+			Template:    "Content:\n{{.content}}\n\nLanguage: {{.language}}\n\nAnalyze the text for:\n1. Grammar errors\n2. Spelling mistakes\n3. Punctuation issues\n4. Sentence structure problems\n5. Writing quality suggestions\n\nProvide a detailed report with severity levels for each issue.",
+			Variables:   []string{"content", "language"},
+			Version:     "1.0",
+		},
+		{
+			ID:          PromptTypeQualitySEO,
+			Name:        "SEO Quality Analysis",
+			Description: "Analyze content for SEO optimization opportunities",
+			Language:    "en",
+			System:      "You are an SEO specialist. Analyze the content for search engine optimization opportunities and provide actionable recommendations.",
+			Template:    "Content:\n{{.content}}\n\nTarget Keywords: {{.keywords}}\n\nAnalyze:\n1. Keyword placement and density\n2. Title and heading optimization\n3. Meta description quality\n4. Content structure for SEO\n5. Internal linking opportunities\n6. Search intent alignment\n\nProvide specific, actionable recommendations.",
+			Variables:   []string{"content", "keywords"},
+			Version:     "1.0",
+		},
+		{
+			ID:          PromptTypeQualityReadability,
+			Name:        "Readability Quality Analysis",
+			Description: "Analyze content readability and suggest improvements",
+			Language:    "en",
+			System:      "You are a readability expert. Analyze the content and suggest improvements for better readability and comprehension.",
+			Template:    "Content:\n{{.content}}\n\nTarget Audience: {{.audience}}\n\nLanguage: {{.language}}\n\nAnalyze:\n1. Sentence length and variety\n2. Paragraph structure\n3. Word choice and vocabulary level\n4. Transition and flow\n5. Overall readability for target audience\n\nProvide specific improvement suggestions.",
+			Variables:   []string{"content", "audience", "language"},
+			Defaults:    map[string]string{"audience": "general"},
+			Version:     "1.0",
+		},
+		{
+			ID:          PromptTypeQualityIntent,
+			Name:        "Search Intent Analysis",
+			Description: "Analyze search intent alignment of content with target keywords",
+			Language:    "en",
+			System:      "You are a search intent analyst. Determine whether the content aligns with the search intent implied by the target keywords.",
+			Template:    "Content:\n{{.content}}\n\nTarget Keywords: {{.keywords}}\n\nAnalyze:\n1. What search intent each keyword implies (informational, commercial, navigational, transactional)\n2. Whether the content matches that intent\n3. Gaps between intent and content\n4. Recommendations for better alignment\n\nReturn a structured analysis with intent scores.",
+			Variables:   []string{"content", "keywords"},
+			Version:     "1.0",
+		},
+
 	for _, tmpl := range defaults {
 		pb.templates[tmpl.ID] = tmpl
 	}

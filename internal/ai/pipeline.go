@@ -274,20 +274,39 @@ func (pe *PipelineExecutor) runSEO(ctx context.Context, input PipelineInput) (*P
 func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
 	text := sourceText(input)
 
-	grammar, _ := pe.manager.Quality().ScoreGrammar(ctx, text, input.Language)
-	seoScore, _ := pe.manager.Quality().ScoreSEO(ctx, text, input.Keywords)
-	readability, _ := pe.manager.Quality().ScoreReadability(ctx, text, input.Language)
+	// Use detailed deterministic quality checks
+	grammar, _ := pe.manager.Quality().CheckGrammarDetails(ctx, text, input.Language)
+	seo, _ := pe.manager.Quality().AssessSEO(ctx, text, input.Keywords)
+	readability, _ := pe.manager.Quality().ScoreReadabilityDetailed(ctx, text, input.Language)
 	entities, _ := pe.manager.Quality().ScoreEntityCoverage(ctx, text, input.Entities)
-	duplicates, _ := pe.manager.Quality().CheckDuplicates(ctx, text)
+	duplicates, _ := pe.manager.Quality().CheckDuplicateBlocks(ctx, text, 10)
+	structure, _ := pe.manager.Quality().ValidateStructure(ctx, text)
+
+	// Run hallucination check if references or grounding available
+	var factCheck *FactCheckReport
+	if len(input.References) > 0 {
+		// Check if research stage provided grounding metadata
+		var gm *GroundingMetadata
+		// Grounding metadata isn't passed between stages in PipelineInput currently,
+		// so try reference-based fact checking
+		factCheck, _ = pe.manager.Quality().CheckHallucinationWithGrounding(ctx, text, input.References, gm)
+	}
 
 	result := "Quality Check Results:\n"
-	result += fmt.Sprintf("- Grammar: %.1f/100 (passed: %v)\n", grammar.Score, grammar.Passed)
-	result += fmt.Sprintf("- SEO: %.1f/100 (passed: %v)\n", seoScore.Score, seoScore.Passed)
-	result += fmt.Sprintf("- Readability: %.1f/100 (passed: %v)\n", readability.Score, readability.Passed)
+	result += fmt.Sprintf("- Grammar: %.1f/100 (passed: %v, %d issues)\n", grammar.OverallScore, grammar.Passed, len(grammar.Issues))
+	result += fmt.Sprintf("- SEO: %.1f/100 (passed: %v)\n", seo.OverallScore, seo.Passed)
+	result += fmt.Sprintf("- Readability: %.1f/100 (FRE: %.0f, grade: %.1f)\n", readability.OverallScore, readability.FleschReadingEase, readability.FleschKincaidGrade)
 	result += fmt.Sprintf("- Entity Coverage: %.1f/100 (passed: %v)\n", entities.Score, entities.Passed)
-	result += fmt.Sprintf("- Duplicates Found: %d\n", len(duplicates))
+	result += fmt.Sprintf("- Duplicate Blocks: %d\n", len(duplicates))
+	result += fmt.Sprintf("- Structure: %.1f/100 (passed: %v)\n", structure.OverallScore, structure.Passed)
+	if factCheck != nil {
+		result += fmt.Sprintf("- Fact Check: %.1f/100 (supported: %d, unsupported: %d)\n", factCheck.OverallScore, factCheck.Supported, factCheck.Unsupported)
+	}
 
-	allPassed := grammar.Passed && seoScore.Passed && readability.Passed && entities.Passed
+	allPassed := grammar.Passed && seo.Passed && readability.Passed && entities.Passed && structure.Passed
+	if factCheck != nil {
+		allPassed = allPassed && factCheck.Passed
+	}
 	if !allPassed {
 		result += "\nSome checks failed. Review required."
 	} else {
