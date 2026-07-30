@@ -2,6 +2,48 @@ package ai
 
 import "time"
 
+// GroundingConfig controls whether to use web search/grounding for a completion request.
+type GroundingConfig struct {
+	Enabled        bool     `json:"enabled"`
+	MaxSources     int      `json:"max_sources,omitempty"`
+	ExcludeDomains []string `json:"exclude_domains,omitempty"`
+}
+
+// GroundingMetadata contains information about web sources used to support the generated content.
+type GroundingMetadata struct {
+	Sources          []GroundingSource `json:"sources,omitempty"`
+	SearchSuggested  bool              `json:"search_suggested,omitempty"`
+	SearchEntryPoint *SearchEntryPoint `json:"search_entry_point,omitempty"`
+	SupportSegments  []GroundingSupport `json:"support_segments,omitempty"`
+	Unverified       bool              `json:"unverified,omitempty"`
+}
+
+// GroundingSource represents a single web source used for grounding.
+type GroundingSource struct {
+	URI           string    `json:"uri"`
+	Title         string    `json:"title,omitempty"`
+	Snippet       string    `json:"snippet,omitempty"`
+	PublishedAt   *time.Time `json:"published_at,omitempty"`
+	FreshnessScore float64  `json:"freshness_score,omitempty"`
+	IsVerified    bool     `json:"is_verified,omitempty"`
+	DomainRank    int      `json:"domain_rank,omitempty"`
+	RetrievedAt   time.Time `json:"retrieved_at,omitempty"`
+}
+
+// SearchEntryPoint contains information about an entry point for the grounding search.
+type SearchEntryPoint struct {
+	Query  string `json:"query,omitempty"`
+	URL    string `json:"url,omitempty"`
+	RenderedHTML string `json:"rendered_html,omitempty"`
+}
+
+// GroundingSupport describes which parts of the generated content are supported by specific sources.
+type GroundingSupport struct {
+	Segment       string    `json:"segment,omitempty"`
+	SourceIndices []int     `json:"source_indices,omitempty"`
+	Confidence    float64   `json:"confidence,omitempty"`
+}
+
 type Capability string
 
 const (
@@ -11,6 +53,7 @@ const (
 	CapSummarize  Capability = "summarize"
 	CapRewrite    Capability = "rewrite"
 	CapClassify   Capability = "classify"
+	CapGrounding  Capability = "grounding"
 )
 
 type ProviderState string
@@ -31,16 +74,18 @@ type CompletionRequest struct {
 	StopWords   []string          `json:"stop_words,omitempty"`
 	Variables   map[string]string `json:"variables,omitempty"`
 	Stream      bool              `json:"stream,omitempty"`
+	Grounding   *GroundingConfig  `json:"grounding,omitempty"`
 }
 
 type CompletionResult struct {
-	Content      string        `json:"content"`
-	Model        string        `json:"model"`
-	ProviderName string        `json:"provider_name"`
-	TotalTokens  int           `json:"total_tokens"`
-	PromptTokens int           `json:"prompt_tokens"`
-	Duration     time.Duration `json:"duration"`
-	FinishReason string        `json:"finish_reason,omitempty"`
+	Content           string             `json:"content"`
+	Model             string             `json:"model"`
+	ProviderName      string             `json:"provider_name"`
+	TotalTokens       int                `json:"total_tokens"`
+	PromptTokens      int                `json:"prompt_tokens"`
+	Duration          time.Duration      `json:"duration"`
+	FinishReason      string             `json:"finish_reason,omitempty"`
+	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
 }
 
 type StreamChunk struct {

@@ -32,10 +32,17 @@ type geminiPart struct {
 	Text string `json:"text"`
 }
 
+type geminiTool struct {
+	GoogleSearch *geminiGoogleSearch `json:"googleSearch,omitempty"`
+}
+
+type geminiGoogleSearch struct{}
+
 type geminiGenerateReq struct {
 	Contents         []geminiContent    `json:"contents"`
 	SystemInstruction *geminiContent    `json:"systemInstruction,omitempty"`
 	GenerationConfig *geminiGenConfig   `json:"generationConfig,omitempty"`
+	Tools            []geminiTool       `json:"tools,omitempty"`
 }
 
 type geminiGenConfig struct {
@@ -51,9 +58,43 @@ type geminiGenerateResp struct {
 }
 
 type geminiCandidate struct {
-	Content       geminiContent `json:"content"`
-	FinishReason  string        `json:"finishReason"`
-	SafetyRatings []interface{} `json:"safetyRatings,omitempty"`
+	Content           geminiContent            `json:"content"`
+	FinishReason      string                   `json:"finishReason"`
+	SafetyRatings     []interface{}            `json:"safetyRatings,omitempty"`
+	GroundingMetadata *geminiGroundingMetadata `json:"groundingMetadata,omitempty"`
+}
+
+type geminiGroundingMetadata struct {
+	SearchEntryPoint *geminiSearchEntryPoint `json:"searchEntryPoint,omitempty"`
+	GroundingSupports []geminiGroundingSupport `json:"groundingSupports,omitempty"`
+	GroundingChunks   []geminiGroundingChunk   `json:"groundingChunks,omitempty"`
+	WebSearchQueries  []string                 `json:"webSearchQueries,omitempty"`
+}
+
+type geminiSearchEntryPoint struct {
+	RenderedContent string `json:"renderedContent,omitempty"`
+	SDKBlob         string `json:"sdkBlob,omitempty"`
+}
+
+type geminiGroundingChunk struct {
+	Web *geminiWebChunk `json:"web,omitempty"`
+}
+
+type geminiWebChunk struct {
+	URI   string `json:"uri"`
+	Title string `json:"title"`
+}
+
+type geminiGroundingSupport struct {
+	Segment       *geminiSegment `json:"segment,omitempty"`
+	GroundingChunkIndices []int  `json:"groundingChunkIndices,omitempty"`
+	ConfidenceScores      []float64 `json:"confidenceScores,omitempty"`
+}
+
+type geminiSegment struct {
+	StartIndex int    `json:"startIndex"`
+	EndIndex   int    `json:"endIndex"`
+	Text       string `json:"text,omitempty"`
 }
 
 type geminiUsageMeta struct {
@@ -102,7 +143,7 @@ func NewGeminiProvider(name, model, apiKey, baseURL string) *GeminiProvider {
 func (p *GeminiProvider) Name() string { return p.name }
 
 func (p *GeminiProvider) Capabilities() []Capability {
-	return []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify}
+	return []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify, CapGrounding}
 }
 
 func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
@@ -162,7 +203,7 @@ func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*
 	duration := time.Since(start)
 	p.setLatency(duration)
 
-	return &CompletionResult{
+	result := &CompletionResult{
 		Content:      content,
 		Model:        p.model,
 		ProviderName: p.name,
@@ -170,7 +211,13 @@ func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*
 		PromptTokens: geminiResp.UsageMeta.PromptTokenCount,
 		Duration:     duration,
 		FinishReason: strings.ToLower(geminiResp.Candidates[0].FinishReason),
-	}, nil
+	}
+
+	if gm := geminiResp.Candidates[0].GroundingMetadata; gm != nil {
+		result.GroundingMetadata = p.toGroundingMetadata(gm)
+	}
+
+	return result, nil
 }
 
 func (p *GeminiProvider) GenerateStream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error) {
@@ -453,6 +500,10 @@ func (p *GeminiProvider) buildRequest(req CompletionRequest) geminiGenerateReq {
 	}
 	gReq.GenerationConfig = genCfg
 
+	if req.Grounding != nil && req.Grounding.Enabled {
+		gReq.Tools = []geminiTool{{GoogleSearch: &geminiGoogleSearch{}}}
+	}
+
 	return gReq
 }
 
@@ -511,6 +562,56 @@ func (p *GeminiProvider) hasCapability(capability Capability) bool {
 		}
 	}
 	return false
+}
+
+func (p *GeminiProvider) toGroundingMetadata(gm *geminiGroundingMetadata) *GroundingMetadata {
+	meta := &GroundingMetadata{
+		SearchSuggested: len(gm.WebSearchQueries) > 0,
+		Unverified:      false,
+	}
+
+	if gm.SearchEntryPoint != nil {
+		meta.SearchEntryPoint = &SearchEntryPoint{
+			RenderedHTML: gm.SearchEntryPoint.RenderedContent,
+		}
+		if gm.SearchEntryPoint.SDKBlob != "" {
+			meta.SearchEntryPoint.RenderedHTML = gm.SearchEntryPoint.SDKBlob
+		}
+	}
+
+	// Convert grounding chunks to sources
+	for _, chunk := range gm.GroundingChunks {
+		if chunk.Web != nil {
+			now := time.Now()
+			source := GroundingSource{
+				URI:         chunk.Web.URI,
+				Title:       chunk.Web.Title,
+				RetrievedAt: now,
+				IsVerified:  true,
+			}
+			meta.Sources = append(meta.Sources, source)
+		}
+	}
+
+	// Convert grounding supports
+	for _, support := range gm.GroundingSupports {
+		gs := GroundingSupport{
+			SourceIndices: support.GroundingChunkIndices,
+		}
+		if support.Segment != nil {
+			gs.Segment = support.Segment.Text
+		}
+		if len(support.ConfidenceScores) > 0 {
+			gs.Confidence = support.ConfidenceScores[0]
+		}
+		meta.SupportSegments = append(meta.SupportSegments, gs)
+	}
+
+	if len(meta.Sources) == 0 {
+		meta.Unverified = true
+	}
+
+	return meta
 }
 
 func (p *GeminiProvider) langLabel(language string) string {

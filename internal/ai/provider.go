@@ -21,7 +21,7 @@ type MockProvider struct {
 
 func NewMockProvider(name, model string, caps []Capability) *MockProvider {
 	if len(caps) == 0 {
-		caps = []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify}
+		caps = []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify, CapGrounding}
 	}
 	return &MockProvider{
 		name:         name,
@@ -42,6 +42,12 @@ func (p *MockProvider) Capabilities() []Capability {
 	return p.capabilities
 }
 
+func (p *MockProvider) SetCapabilities(caps []Capability) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.capabilities = caps
+}
+
 func (p *MockProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	p.mu.Lock()
 	p.callCount++
@@ -55,7 +61,8 @@ func (p *MockProvider) Generate(ctx context.Context, req CompletionRequest) (*Co
 	}
 
 	time.Sleep(p.latency)
-	return &CompletionResult{
+
+	result := &CompletionResult{
 		Content:      "Mock response for: " + req.Prompt,
 		Model:        p.model,
 		ProviderName: p.name,
@@ -63,7 +70,42 @@ func (p *MockProvider) Generate(ctx context.Context, req CompletionRequest) (*Co
 		PromptTokens: 10,
 		Duration:     p.latency,
 		FinishReason: "stop",
-	}, nil
+	}
+
+	if req.Grounding != nil && req.Grounding.Enabled {
+		now := time.Now()
+		result.GroundingMetadata = &GroundingMetadata{
+			Sources: []GroundingSource{
+				{
+					URI:           "https://example.com/mock-source-1",
+					Title:         "Mock Source 1",
+					Snippet:       "This is a mock source snippet for testing.",
+					RetrievedAt:   now,
+					FreshnessScore: 0.95,
+					IsVerified:    true,
+				},
+				{
+					URI:           "https://example.com/mock-source-2",
+					Title:         "Mock Source 2",
+					Snippet:       "Another mock source for grounding tests.",
+					RetrievedAt:   now,
+					FreshnessScore: 0.85,
+					IsVerified:    true,
+				},
+			},
+			SearchSuggested: true,
+			SupportSegments: []GroundingSupport{
+				{
+					Segment:       "Mock grounded content segment",
+					SourceIndices: []int{0, 1},
+					Confidence:    0.92,
+				},
+			},
+			Unverified: false,
+		}
+	}
+
+	return result, nil
 }
 
 func (p *MockProvider) GenerateStream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error) {

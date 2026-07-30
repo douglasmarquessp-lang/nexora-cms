@@ -62,19 +62,23 @@ type ResearchJob struct {
 }
 
 type ResearchSource struct {
-	ID             uuid.UUID  `json:"id"`
-	ResearchJobID  uuid.UUID  `json:"research_job_id"`
-	Title          string     `json:"title"`
-	URL            string     `json:"url"`
-	Language       string     `json:"language,omitempty"`
-	Author         string     `json:"author,omitempty"`
-	PublishedAt    *time.Time `json:"published_at,omitempty"`
-	Summary        string     `json:"summary,omitempty"`
-	MainFacts      string     `json:"main_facts,omitempty"`
-	Statistics     string     `json:"statistics,omitempty"`
-	RelevanceScore int        `json:"relevance_score"`
-	Position       int        `json:"position"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID                uuid.UUID              `json:"id"`
+	ResearchJobID     uuid.UUID              `json:"research_job_id"`
+	Title             string                 `json:"title"`
+	URL               string                 `json:"url"`
+	Language          string                 `json:"language,omitempty"`
+	Author            string                 `json:"author,omitempty"`
+	PublishedAt       *time.Time             `json:"published_at,omitempty"`
+	Summary           string                 `json:"summary,omitempty"`
+	MainFacts         string                 `json:"main_facts,omitempty"`
+	Statistics        string                 `json:"statistics,omitempty"`
+	RelevanceScore    int                    `json:"relevance_score"`
+	Position          int                    `json:"position"`
+	FreshnessScore    float64                `json:"freshness_score,omitempty"`
+	IsVerified        bool                   `json:"is_verified,omitempty"`
+	RetrievedAt       *time.Time             `json:"retrieved_at,omitempty"`
+	GroundingMetadata map[string]interface{} `json:"grounding_metadata,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
 }
 
 type ResearchEntity struct {
@@ -104,6 +108,29 @@ type ResearchJobDetail struct {
 	Sources   []ResearchSource   `json:"sources,omitempty"`
 	Entities  []ResearchEntity   `json:"entities,omitempty"`
 	Briefing  *ResearchBriefing  `json:"briefing,omitempty"`
+}
+
+// ArticleSource links generated content (article/pipeline/workflow) to its supporting sources.
+type ArticleSource struct {
+	ID                uuid.UUID              `json:"id"`
+	SiteID            uuid.UUID              `json:"site_id"`
+	ArticleID         *uuid.UUID             `json:"article_id,omitempty"`
+	PipelineJobID     *uuid.UUID             `json:"pipeline_job_id,omitempty"`
+	WorkflowJobID     *uuid.UUID             `json:"workflow_job_id,omitempty"`
+	AutocontentJobID  *uuid.UUID             `json:"autocontent_job_id,omitempty"`
+	SourceURL         string                 `json:"source_url"`
+	Title             string                 `json:"title,omitempty"`
+	Snippet           string                 `json:"snippet,omitempty"`
+	Language          string                 `json:"language,omitempty"`
+	Author            string                 `json:"author,omitempty"`
+	PublishedAt       *time.Time             `json:"published_at,omitempty"`
+	RetrievedAt       time.Time              `json:"retrieved_at"`
+	FreshnessScore    float64                `json:"freshness_score,omitempty"`
+	IsVerified        bool                   `json:"is_verified,omitempty"`
+	DomainRank        int                    `json:"domain_rank,omitempty"`
+	RelevanceScore    int                    `json:"relevance_score,omitempty"`
+	GroundingMetadata map[string]interface{} `json:"grounding_metadata,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
 }
 
 type CreateResearchJobRequest struct {

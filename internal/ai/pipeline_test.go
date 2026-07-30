@@ -217,8 +217,8 @@ func TestPipelineExecutor_FullPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteFull failed: %v", err)
 	}
-	if len(results) != 8 {
-		t.Errorf("expected 8 stage results, got %d", len(results))
+	if len(results) != 10 {
+		t.Errorf("expected 10 stage results, got %d", len(results))
 	}
 }
 

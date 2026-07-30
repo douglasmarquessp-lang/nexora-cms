@@ -184,6 +184,99 @@
 | ContentGenerator | 8 mapped, 1 skipped (publish_ready) | No change |
 | Workflow | 6 mapped, 2 skipped (human_writer, publisher) | No change |
 
+### Sprint 3.8 — Research & Grounding System (2026-07-30)
+
+**Architecture Decision: Grounding is a capability flag, not a separate provider.**
+- `CapGrounding` added to `Capability` enum — providers advertise grounding support via existing `Capabilities()` method
+- `GroundingConfig` added as optional field on `CompletionRequest` (pointer, nil = no grounding, backward compatible)
+- `GroundingMetadata` added as optional field on `CompletionResult` (pointer, nil = no grounding)
+- No changes to `AIProvider` interface — grounding is an opt-in enhancement to the existing `Generate` flow
+
+**Gemini Provider Google Search Grounding:**
+- `internal/ai/gemini_provider.go` — Added `Tools` field to `geminiGenerateReq` with `geminiTool`/`geminiGoogleSearch` types; when `req.Grounding.Enabled`, includes `"tools": [{"googleSearch": {}}]` in the API request
+- Response parsing: `geminiCandidate` extended with `GroundingMetadata` pointer; `toGroundingMetadata()` helper converts Gemini's `groundingChunks` → `GroundingSource[]`, `groundingSupports` → `GroundingSupport[]`, `webSearchQueries` → `SearchSuggested`
+- When Gemini returns no grounding chunks (empty search results), metadata marked `Unverified: true`
+- `CapGrounding` added to Gemini provider capabilities (7 capabilities total)
+
+**MockProvider Grounding:**
+- `internal/ai/provider.go` — `Generate` returns 2 mock grounded sources when `req.Grounding.Enabled`
+- `CapGrounding` included in default capabilities
+- `SetCapabilities()` added for test flexibility
+
+**New Types (in `internal/ai/model.go`):**
+- `GroundingConfig` — `Enabled`, `MaxSources`, `ExcludeDomains`
+- `GroundingMetadata` — `Sources []GroundingSource`, `SearchSuggested`, `SearchEntryPoint`, `SupportSegments`, `Unverified`
+- `GroundingSource` — `URI`, `Title`, `Snippet`, `PublishedAt`, `FreshnessScore`, `IsVerified`, `DomainRank`, `RetrievedAt`
+- `SearchEntryPoint` — `Query`, `URL`, `RenderedHTML`
+- `GroundingSupport` — `Segment`, `SourceIndices`, `Confidence`
+
+**Migration `000023_add_grounding_fields.up.sql`:**
+- `ALTER TABLE research_sources` — adds `freshness_score`, `is_verified`, `retrieved_at`, `grounding_metadata` columns
+- `CREATE TABLE article_sources` — new table linking generated content to supporting sources with site_id isolation, article_id/pipeline_job_id/workflow_job_id/autocontent_job_id polymorphic FK pattern, source_url, title, snippet, language, freshness_score, is_verified, domain_rank, relevance_score, grounding_metadata + 7 indexes
+
+**Research Source Model Extension (`internal/modules/research/model.go`):**
+- `ResearchSource` — added `FreshnessScore`, `IsVerified`, `RetrievedAt`, `GroundingMetadata`
+- `ResearchSource.URL` field now used for grounding source URIs
+- New `ArticleSource` model — polymorphic source linking (article/pipeline/workflow/autocontent jobs)
+
+**Research Service (`internal/modules/research/service.go`):**
+- Added `aiManager *ai.Manager` field, `SetAIManager` setter
+- `ExecuteGroundedResearch(ctx, topic, language)` — uses AI provider with grounding when `CapGrounding` available; falls back to unverified result when AI is nil or errors
+- `SourcesFromGrounding(jobID, gm)` — converts `GroundingMetadata` → `[]ResearchSource` for persistence
+- `SaveArticleSource` / `SaveArticleSources` / `GetArticleSources` — full CRUD for `article_sources` table with site isolation and polymorphic filters
+- `AddSource` updated to persist `freshness_score`, `is_verified`, `retrieved_at`, `grounding_metadata`
+
+**Research Module (`internal/modules/research/module.go`):**
+- Added `SetAIManager` pass-through, `ai` import
+
+**cmd/api/main.go:**
+- Wired `researchMod.SetAIManager(aiSvc)` after AI module init
+
+**Pipeline Integration (`internal/ai/pipeline.go`):**
+- `PipelineResult` — added `GroundingMetadata *GroundingMetadata` field
+- `runResearch` — enables grounding when any provider has `CapGrounding`; passes `GroundingMetadata` through to result
+- Callers (autocontent, contentgenerator, articlepipeline, workflow) receive grounding metadata from research stage via `PipelineResult`
+
+**Graceful Fallback:**
+- No AI → returns unverified result with `FinishReason: "unavailable"` and `GroundingMetadata.Unverified: true`
+- AI available but no grounding capability → standard generation without grounding (backward compatible)
+- AI errors → returns unverified fallback with error info rather than failing pipeline
+- Gemini returns no web chunks → metadata marked `Unverified: true`
+
+**Tests (deterministic, no real API calls):**
+- `internal/ai/grounding_test.go` — 13 tests covering:
+  - Grounding metadata type validation
+  - GroundingConfig round-trip JSON serialization
+  - MockProvider grounding metadata (with and without grounding enabled)
+  - Gemini provider grounding capability advertisement
+  - Gemini buildRequest with/without grounding
+  - Gemini HTTP round-trip with mock server returning grounding response
+  - Gemini empty grounding response (no sources → unverified)
+  - Pipeline research stage with/without grounding capability
+  - Fallback when AI manager is nil
+  - Sources from grounding metadata conversion
+  - Full pipeline with grounding
+- `internal/ai/pipeline_test.go` — fixed `TestPipelineExecutor_FullPipeline` expected count from 8 to 10
+- `internal/ai/gemini_provider_test.go` — updated `TestGeminiProvider_Capabilities` expected count from 6 to 7
+- `internal/modules/research/service_test.go` — 5 new tests: `ExecuteGroundedResearch` fallback, `SourcesFromGrounding`, nil metadata handling, `ArticleSource` model validation; updated `AddSource` mock expectations
+
+**Files changed/created:**
+- `internal/ai/model.go` — grounding types, CapGrounding, GroundingConfig in request, GroundingMetadata in result
+- `internal/ai/gemini_provider.go` — Google Search tool in request, grounding metadata parsing, CapGrounding
+- `internal/ai/provider.go` — MockProvider grounding response, SetCapabilities
+- `internal/ai/pipeline.go` — GroundingMetadata in PipelineResult, grounded runResearch
+- `internal/ai/grounding_test.go` — 13 new tests (new file)
+- `internal/ai/gemini_provider_test.go` — updated expected cap count
+- `internal/ai/pipeline_test.go` — updated expected stage count
+- `internal/modules/research/model.go` — ResearchSource extended, ArticleSource added
+- `internal/modules/research/service.go` — aiManager, ExecuteGroundedResearch, SourcesFromGrounding, ArticleSource CRUD, updated AddSource
+- `internal/modules/research/module.go` — SetAIManager pass-through
+- `internal/modules/research/service_test.go` — 5 new tests, updated AddSource mock
+- `cmd/api/main.go` — wired researchMod.SetAIManager
+- `migrations/000023_add_grounding_fields.up.sql` — new migration (new file)
+
 ### Notes
 - Shell/bash non-functional — `go build ./...`, `go vet ./...`, `go test ./...` could not be executed
 - 27 SQL queries initially missing site_id; 6 high-priority repository methods fixed, 21 internal callbacks deferred
+- ArticleSource CRUD methods (SaveArticleSource, GetArticleSources) have site_id isolation but no dedicated REST handler — consumed internally by pipeline/workflow modules
+- `article_sources` migration uses polymorphic FK pattern (article_id, pipeline_job_id, workflow_job_id, autocontent_job_id) rather than a single foreign key, to support all generation modules without coupling

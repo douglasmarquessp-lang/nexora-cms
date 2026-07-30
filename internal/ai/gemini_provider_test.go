@@ -69,7 +69,7 @@ func TestGeminiProvider_Capabilities(t *testing.T) {
 	p := NewGeminiProvider("gemini", "gemini-2.0-flash", "test-key", "")
 	caps := p.Capabilities()
 
-	expectedCaps := []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify}
+	expectedCaps := []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify, CapGrounding}
 	if len(caps) != len(expectedCaps) {
 		t.Errorf("expected %d capabilities, got %d", len(expectedCaps), len(caps))
 	}

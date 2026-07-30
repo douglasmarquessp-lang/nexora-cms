@@ -52,10 +52,11 @@ type PipelineInput struct {
 }
 
 type PipelineResult struct {
-	Stage    PipelineStage `json:"stage"`
-	Content  string        `json:"content"`
-	Error    error         `json:"error,omitempty"`
-	Duration time.Duration `json:"duration,omitempty"`
+	Stage             PipelineStage      `json:"stage"`
+	Content           string             `json:"content"`
+	Error             error              `json:"error,omitempty"`
+	Duration          time.Duration      `json:"duration,omitempty"`
+	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
 }
 
 type PipelineExecutor struct {
@@ -127,15 +128,30 @@ func (pe *PipelineExecutor) runResearch(ctx context.Context, input PipelineInput
 		return nil, err
 	}
 
+	// Enable grounding if any registered provider supports it
+	if pe.manager.Registry().HasCapability(CapGrounding) {
+		req.Grounding = &GroundingConfig{
+			Enabled:    true,
+			MaxSources: 10,
+		}
+	}
+
 	result, err := pe.manager.Generate(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
 
-	return &PipelineResult{
+	pipelineResult := &PipelineResult{
 		Stage:   StageResearchGen,
 		Content: result.Content,
-	}, nil
+	}
+
+	// Carry grounding metadata forward so callers can persist sources
+	if result.GroundingMetadata != nil {
+		pipelineResult.GroundingMetadata = result.GroundingMetadata
+	}
+
+	return pipelineResult, nil
 }
 
 func (pe *PipelineExecutor) runBriefing(ctx context.Context, input PipelineInput) (*PipelineResult, error) {

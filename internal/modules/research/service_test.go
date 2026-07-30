@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v3"
 
+	"nexora/internal/ai"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
@@ -193,7 +194,8 @@ func TestService_AddSource(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO research_sources`).
 		WithArgs(
 			pgxmock.AnyArg(), jobID, "Source Title", "https://example.com", "en", "Author",
-			pgxmock.AnyArg(), "Summary", "Facts", "Stats", 85, 1, pgxmock.AnyArg(),
+			pgxmock.AnyArg(), "Summary", "Facts", "Stats", 85, 1,
+			float64(0), false, pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 		).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
@@ -336,5 +338,93 @@ func TestService_CompleteJob(t *testing.T) {
 	err := svc.CompleteJob(context.Background(), siteID, jobID)
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
+	}
+}
+
+func TestService_ExecuteGroundedResearch_NoAI(t *testing.T) {
+	svc, _ := setupMockDB(t)
+	ctx := context.Background()
+
+	result, err := svc.ExecuteGroundedResearch(ctx, "Test Topic", "en")
+	if err != nil {
+		t.Fatalf("ExecuteGroundedResearch failed: %v", err)
+	}
+	if result.GroundingMetadata == nil {
+		t.Fatal("expected grounding metadata in fallback")
+	}
+	if !result.GroundingMetadata.Unverified {
+		t.Error("expected unverified flag in fallback")
+	}
+	if result.Content == "" {
+		t.Error("expected non-empty fallback content")
+	}
+}
+
+func TestService_SourcesFromGrounding(t *testing.T) {
+	svc, _ := setupMockDB(t)
+
+	jobID := uuid.New()
+	now := time.Now()
+
+	gm := &ai.GroundingMetadata{
+		Sources: []ai.GroundingSource{
+			{
+				URI:           "https://example.com/src1",
+				Title:         "Source 1",
+				FreshnessScore: 0.95,
+				IsVerified:    true,
+				RetrievedAt:   now,
+			},
+		},
+		SearchSuggested: true,
+	}
+
+	sources := svc.SourcesFromGrounding(jobID, gm)
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources))
+	}
+	if sources[0].URL != "https://example.com/src1" {
+		t.Errorf("expected src1 URL, got %s", sources[0].URL)
+	}
+	if sources[0].FreshnessScore != 0.95 {
+		t.Errorf("expected freshness 0.95, got %f", sources[0].FreshnessScore)
+	}
+	if !sources[0].IsVerified {
+		t.Error("expected source to be verified")
+	}
+	if sources[0].RelevanceScore != 95 {
+		t.Errorf("expected relevance score 95, got %d", sources[0].RelevanceScore)
+	}
+}
+
+func TestService_SourcesFromGrounding_Nil(t *testing.T) {
+	svc, _ := setupMockDB(t)
+	jobID := uuid.New()
+
+	sources := svc.SourcesFromGrounding(jobID, nil)
+	if sources != nil {
+		t.Error("expected nil sources for nil grounding metadata")
+	}
+}
+
+func TestService_ArticleSourceModel(t *testing.T) {
+	siteID := uuid.New()
+	now := time.Now()
+
+	src := ArticleSource{
+		SiteID:        siteID,
+		SourceURL:     "https://example.com/test",
+		Title:         "Test Source",
+		Snippet:       "Snippet",
+		FreshnessScore: 0.9,
+		IsVerified:    true,
+		RetrievedAt:   now,
+	}
+
+	if src.SourceURL != "https://example.com/test" {
+		t.Errorf("expected URL, got %s", src.SourceURL)
+	}
+	if !src.IsVerified {
+		t.Error("expected verified")
 	}
 }

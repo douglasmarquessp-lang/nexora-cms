@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
@@ -59,6 +60,12 @@ func (m *ResearchModule) SetEventBus(bus *kernel.EventBus) {
 	}
 	if bus != nil {
 		m.log.Info("research module subscribed to event bus")
+	}
+}
+
+func (m *ResearchModule) SetAIManager(aiManager *ai.Manager) {
+	if m.service != nil {
+		m.service.SetAIManager(aiManager)
 	}
 }
 
