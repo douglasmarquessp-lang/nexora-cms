@@ -526,3 +526,57 @@
 - No random values or external API calls in any test
 
 **Architecture principle:** The module callers (not PipelineExecutor) are responsible for chaining GroundingMetadata between stages, because only they have access to both the PipelineResult (output) and the PipelineInput (next input). PipelineExecutor stages remain stateless by design.
+
+### Sprint 3.11 — Homepage Real (2026-07-30)
+
+**Objective:** Transform the public frontend from a stub into a functional, production-ready homepage.
+
+**Backend changes (`internal/api/`):**
+- `internal/api/articles.go` — Added `PublicArticleListResponse` DTO, `List` method on `publicArticleHandler` (with query params: `limit`, `offset`, `language`), `toPublicArticleResponse` shared helper (extracted from `GetBySlug`), `publicCategoriesHandler` with `List` method wrapping `categories.Service.List()`
+- `internal/api/routes.go` — Added `GET /api/v1/articles` (public article listing) and `GET /api/v1/categories` (public categories listing) in the public route group under `siteIdentify` middleware
+
+**New public API endpoints:**
+| Method | Path | Handler | Description |
+|--------|------|---------|-------------|
+| GET | `/api/v1/articles` | `publicArticleHandler.List` | List published articles (pagination) |
+| GET | `/api/v1/categories` | `publicCategoriesHandler.List` | List site categories |
+
+**Frontend structure (`site/`):**
+- `site/lib/api.ts` — Shared API client with TypeScript types (`Article`, `ArticleListResponse`, `Category`, `CategoryListResponse`), fetch-based helpers (`getArticles`, `getArticleBySlug`, `getCategories`, `formatDate`, `readingTimeLabel`), error handling with `ApiError` class, configurable `NEXT_PUBLIC_API_URL` env var
+- `site/components/Header.tsx` — Client component with sticky header, logo, nav links from categories, search bar (expandable), mobile hamburger menu with full category list, accessible labels and ARIA attributes
+- `site/components/Hero.tsx` — Server-compatible featured article section with gradient background, category badge, title, excerpt, metadata (date, reading time), CTA button, featured image with fallback and gradient overlay
+- `site/components/ArticleCard.tsx` — Reusable article card with image (including placeholder), category badge, title, excerpt (2-line clamp), date and reading time, optional featured layout mode
+- `site/components/ArticleList.tsx` — Article grid (1-3 cols responsive), elegant empty state when no articles, "Ver todos" link when more articles exist
+- `site/components/CategoriesSection.tsx` — Category cards with emoji icons based on name patterns, description, chevron indicator, empty state (returns null if no categories)
+- `site/components/Sidebar.tsx` — Desktop sidebar with recent articles (thumbnail + title + date) and category list, sticky positioning
+- `site/components/Footer.tsx` — Professional footer with logo/description, navigation links, legal links (disabled as non-functional), contact, copyright
+- `site/app/page.tsx` — Main homepage composing all sections, parallel data fetching (`Promise.all`), graceful error fallback state, empty state when no articles
+- `site/app/layout.tsx` — Updated metadata with `title.template`, Open Graph/Twitter/robots config, HTML lang and body classes
+- `site/app/globals.css` — Tailwind directives, scroll-behavior, `focus-visible` outlines, `line-clamp` utilities
+- `site/app/[slug]/page.tsx` — Refactored to import shared types/helpers from `lib/api.ts`
+- `site/.env.local.example` — Environment variable template
+
+**Multi-tenancy:**
+- Site identification is done via the existing `IdentifySite` middleware (Host header or `X-Site-ID` header)
+- Next.js rewrites proxy `/api/:path*` to backend, preserving the Host header
+- For development without a real domain, the frontend should set `X-Site-ID` header (note: current API client does not set this automatically — the middleware resolves via Host header)
+
+**Design decisions:**
+- Server Components for data fetching (page.tsx); Header uses `"use client"` only for interactivity (search toggle, mobile menu)
+- No additional npm dependencies beyond Next.js/React/Tailwind
+- No hardcoded content — all data from API, empty states for no-data scenarios
+- Error boundary: if API is unreachable, shows "Serviço temporariamente indisponível" with nav/footer
+- Categories section hidden when API returns empty list (no categories created yet)
+- Legal links are non-functional spans (no backend pages exist yet) rather than broken links
+
+**Validation:**
+- Go toolchain unavailable in environment — `go build`, `go vet`, `go test` could not be executed
+- TypeScript structure validated by reading all `.ts/.tsx` files for import correctness, path aliases (`@/site/`), and interface completeness
+
+**Remaining limitations:**
+- No author name in `PublicArticleResponse` (only `author_id`) — author display deferred to future sprint with user name join
+- Search header form submits to `/busca?q=` — no search results page exists yet
+- Category-specific pages (`/categoria/[slug]`) not created yet
+- Sitemap/robots.xml deferred to technical SEO sprint
+- `X-Site-ID` header not automatically sent by frontend API client — relies on Host header-based resolution via proxy rewrite
+- No pagination controls on homepage (limit=9, no load-more) — deferred to future sprint

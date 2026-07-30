@@ -1,58 +1,14 @@
 import type { Metadata } from "next";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-
-interface ArticleSource {
-  url: string;
-  title?: string;
-  snippet?: string;
-  published_at?: string;
-  retrieved_at: string;
-  freshness_score?: number;
-  is_verified: boolean;
-}
-
-interface ArticleResponse {
-  id: string;
-  title: string;
-  slug: string;
-  excerpt?: string;
-  content?: string;
-  featured_image_url?: string;
-  published_at?: string;
-  meta_title?: string;
-  meta_description?: string;
-  og_image?: string;
-  canonical_url?: string;
-  language: string;
-  tags?: string[];
-  categories?: string[];
-  word_count: number;
-  reading_time: number;
-  freshness_score?: number;
-  sources?: ArticleSource[];
-}
+import { getArticleBySlug, formatDate, readingTimeLabel } from "@/site/lib/api";
 
 interface Props {
   params: Promise<{ slug: string }>;
 }
 
-async function getArticle(slug: string): Promise<ArticleResponse | null> {
-  try {
-    const res = await fetch(`${API_BASE}/api/v1/articles/${slug}`, {
-      next: { revalidate: 60 },
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const article = await getArticle(slug);
-  if (!article) return { title: "Not Found" };
+  const article = await getArticleBySlug(slug);
+  if (!article) return { title: "Artigo não encontrado" };
 
   return {
     title: article.meta_title || article.title,
@@ -68,23 +24,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "";
-  return new Date(dateStr).toLocaleDateString("pt-BR", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function readingTimeLabel(minutes: number): string {
-  if (minutes <= 1) return "1 min de leitura";
-  return `${minutes} min de leitura`;
-}
-
 export default async function ArticlePage({ params }: Props) {
   const { slug } = await params;
-  const article = await getArticle(slug);
+  const article = await getArticleBySlug(slug);
 
   if (!article) {
     return (

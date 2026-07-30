@@ -103,11 +103,14 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 		})
 
 		publicArticleH := newPublicArticleHandler(deps)
+		publicCategoriesH := newPublicCategoriesHandler(deps)
 
 		r.Group(func(r chi.Router) {
 			r.Use(siteIdentify)
 
+			r.Get("/articles", rest.AdaptHandler(publicArticleH.List))
 			r.Get("/articles/{slug}", rest.AdaptHandler(publicArticleH.GetBySlug))
+			r.Get("/categories", rest.AdaptHandler(publicCategoriesH.List))
 		})
 
 		r.Group(func(r chi.Router) {
