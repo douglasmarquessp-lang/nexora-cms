@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"nexora/internal/ai"
+	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
