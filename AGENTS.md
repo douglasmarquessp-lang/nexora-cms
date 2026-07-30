@@ -407,3 +407,67 @@
 - `article_sources` migration uses polymorphic FK pattern (article_id, pipeline_job_id, workflow_job_id, autocontent_job_id) rather than a single foreign key, to support all generation modules without coupling
 - Fact check in pipeline quality stage cannot yet access grounding metadata from research stage (metadata is available on PipelineResult but not piped between stages in PipelineInput). Reference-based fact check works independently. Grounded fact check enhancement deferred to future sprint.
 - Broken link detection in ValidateStructure is reserved (requires network access) — always reports 0 broken links.
+
+### Sprint 3.10 — Gemini Provider Authentication Security (2026-07-30)
+
+**Audit finding:** API key sent as URL query parameter (`?key=`) in 4 HTTP call sites — exposed in server logs, proxies, and referrer headers.
+
+**Fix implemented:**
+- `internal/ai/gemini_provider.go` — Added `doRequest` central helper (lines 149-160):
+  - Builds URL without API key in query string
+  - Sets `X-Goog-Api-Key` header for all requests
+  - Sets `Content-Type: application/json` for POST/PUT requests with body
+  - Returns `*http.Response` for caller to read/parse
+- All 4 call sites updated to use `doRequest`:
+  - `Generate` (line 174): `doRequest(ctx, POST, "/models/{model}:generateContent", body)`
+  - `GenerateStream` (line 234): `doRequest(ctx, POST, "/models/{model}:streamGenerateContent?alt=sse", body)`
+  - `Embeddings` (line 317): `doRequest(ctx, POST, "/models/{model}:embedContent", body)`
+  - `Health` (line 422): `doRequest(ctx, GET, "/models/{model}", nil)`
+- `internal/ai/gemini_provider_test.go` — Added `TestGeminiProvider_AuthHeader` (line 286):
+  - Uses `httptest.NewServer` to intercept the actual HTTP request
+  - Asserts `X-Goog-Api-Key` header is set with correct value (`test-secret-key`)
+  - Asserts no `key=` parameter in URL query string
+  - Asserts `Content-Type: application/json` for POST requests
+- `.env.example` — Added full `# === AI / Gemini ===` section with all 17 env vars (AI_ENABLED, AI_GEMINI_*, AI_RETRY_*, AI_CB_*, AI_GLOBAL_TIMEOUT)
+
+**Files changed:**
+- `internal/ai/gemini_provider.go` — `doRequest` helper added, 4 call sites refactored
+- `internal/ai/gemini_provider_test.go` — `TestGeminiProvider_AuthHeader` added
+- `.env.example` — AI configuration section added
+
+**Security posture:** API key now transmitted exclusively via HTTP header. URL logging no longer leaks credentials.
+
+### Sprint 3.10b — Full DOWN Migrations System (2026-07-30)
+
+**Objective:** Create `.down.sql` files for all 23 migrations (000001–000023) to enable safe rollback.
+
+**Implementation:**
+- 23 new `.down.sql` files created, one per migration
+- Each down file reverses the exact operations of its `.up.sql` counterpart:
+  - `CREATE TABLE` → `DROP TABLE IF EXISTS` in correct FK order
+  - `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` → `ALTER TABLE ... DROP COLUMN IF EXISTS`
+  - `CREATE INDEX` → `DROP INDEX IF EXISTS`
+  - `CREATE TRIGGER` → `DROP TRIGGER IF EXISTS`
+  - `CREATE POLICY` → `DROP POLICY IF EXISTS`
+  - `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` → `ALTER TABLE ... DISABLE ROW LEVEL SECURITY`
+  - `INSERT` seed data → `DELETE` by key/slug
+  - `CREATE TYPE` enum → `DROP TYPE IF EXISTS`
+
+**Historical conflict handling:**
+- 000014.down drops `autocontent_queue` (the Sprint-3.7-renamed table), NOT `publication_queue` (owned by 000019)
+- 000019.down drops `publication_queue` as its own table
+
+**Shared resources preserved (never dropped):**
+- Extensions: `uuid-ossp`, `pg_trgm`, `pgcrypto` — shared by many migrations
+- Function: `update_updated_at_column()` — used by 15+ migrations
+
+**Migration requiring attention:**
+- `000003` — `audit_log` table not dropped in down (was a no-op if 000001 ran first); documented with WARNING comment
+
+**Audit report:** `research/sprint-3.10-down-migrations-audit.md` created with full breakdown, rollback order, and risk assessment.
+
+**Files created:**
+- 23 `.down.sql` files in `migrations/`
+- `research/sprint-3.10-down-migrations-audit.md`
+
+**Rollback posture:** All 23 migrations can now be safely rolled back in reverse order (023→001) without FK violations.

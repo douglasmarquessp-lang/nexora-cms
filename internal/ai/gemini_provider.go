@@ -146,6 +146,19 @@ func (p *GeminiProvider) Capabilities() []Capability {
 	return []Capability{CapGenerate, CapStream, CapEmbeddings, CapSummarize, CapRewrite, CapClassify, CapGrounding}
 }
 
+func (p *GeminiProvider) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	url := p.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-Goog-Api-Key", p.apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return p.client.Do(req)
+}
+
 func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	if err := p.checkHealth(); err != nil {
 		return nil, err
@@ -157,16 +170,8 @@ func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, p.model, p.apiKey)
-
 	start := time.Now()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(ctx, http.MethodPost, fmt.Sprintf("/models/%s:generateContent", p.model), bytes.NewReader(body))
 	if err != nil {
 		p.setUnhealthy()
 		return nil, fmt.Errorf("gemini request failed: %w", err)
@@ -231,15 +236,7 @@ func (p *GeminiProvider) GenerateStream(ctx context.Context, req CompletionReque
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", p.baseURL, p.model, p.apiKey)
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(ctx, http.MethodPost, fmt.Sprintf("/models/%s:streamGenerateContent?alt=sse", p.model), bytes.NewReader(body))
 	if err != nil {
 		p.setUnhealthy()
 		return nil, fmt.Errorf("gemini stream request failed: %w", err)
@@ -316,16 +313,8 @@ func (p *GeminiProvider) Embeddings(ctx context.Context, input string) (*Embeddi
 		return nil, fmt.Errorf("failed to marshal embedding request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:embedContent?key=%s", p.baseURL, p.model, p.apiKey)
-
 	start := time.Now()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create embedding request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(ctx, http.MethodPost, fmt.Sprintf("/models/%s:embedContent", p.model), bytes.NewReader(body))
 	if err != nil {
 		p.setUnhealthy()
 		return nil, fmt.Errorf("gemini embedding request failed: %w", err)
@@ -429,19 +418,8 @@ func (p *GeminiProvider) Health(ctx context.Context) (*HealthStatus, error) {
 		}, ErrHealthCheckFailed
 	}
 
-	url := fmt.Sprintf("%s/models/%s?key=%s", p.baseURL, p.model, p.apiKey)
-
 	start := time.Now()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return &HealthStatus{
-			Provider: p.name,
-			State:    ProviderUnhealthy,
-			Message:  err.Error(),
-		}, ErrHealthCheckFailed
-	}
-
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(ctx, http.MethodGet, fmt.Sprintf("/models/%s", p.model), nil)
 	latency := time.Since(start)
 	if err != nil {
 		p.setUnhealthy()

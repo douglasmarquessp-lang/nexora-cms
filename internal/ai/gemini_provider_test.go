@@ -2,6 +2,10 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -276,5 +280,47 @@ func TestGeminiProvider_HasCapability(t *testing.T) {
 	}
 	if p.hasCapability(Capability("nonexistent")) {
 		t.Error("unexpected capability")
+	}
+}
+
+func TestGeminiProvider_AuthHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Goog-Api-Key") != "test-secret-key" {
+			t.Errorf("expected X-Goog-Api-Key header, got '%s'", r.Header.Get("X-Goog-Api-Key"))
+		}
+		if strings.Contains(r.URL.RawQuery, "key=") {
+			t.Error("API key must not be in URL query parameters")
+		}
+		if r.Method == http.MethodPost && r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got '%s'", r.Header.Get("Content-Type"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"candidates": []map[string]interface{}{
+				{
+					"content": map[string]interface{}{
+						"parts": []map[string]interface{}{{"text": "test response"}},
+						"role":  "model",
+					},
+					"finishReason": "STOP",
+				},
+			},
+			"usageMetadata": map[string]int{
+				"promptTokenCount":     1,
+				"candidatesTokenCount": 2,
+				"totalTokenCount":      3,
+			},
+		})
+	}))
+	defer server.Close()
+
+	p := NewGeminiProvider("test", "gemini-2.0-flash", "test-secret-key", server.URL)
+	p.client = server.Client()
+
+	ctx := context.Background()
+	_, err := p.Generate(ctx, CompletionRequest{Prompt: "Hello"})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
 	}
 }
