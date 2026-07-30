@@ -1,78 +1,56 @@
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useAuthStore } from "@/stores/auth";
-import { api } from "@/api/client";
 import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Activity, Server, User } from "lucide-react";
 
 export function DashboardPage() {
-  const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading, logout, checkAuth } = useAuthStore();
-
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      navigate("/admin/login");
-    }
-  }, [isLoading, isAuthenticated, navigate]);
-
-  const { data: health } = useQuery({
+  const { data: health, isLoading } = useQuery({
     queryKey: ["health"],
     queryFn: () => api.get<{ status: string; version: string; timestamp: string }>("/health"),
-    enabled: isAuthenticated,
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-gray-500">Carregando...</div>
-      </div>
-    );
-  }
+  const cards = [
+    {
+      title: "Status do Sistema",
+      value: health?.status ?? "---",
+      icon: Server,
+      color: "text-green-600",
+    },
+    {
+      title: "Versão",
+      value: health?.version ? `v${health.version}` : "---",
+      icon: Activity,
+      color: "text-brand-600",
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-900">Nexora CMS</h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">{user?.name}</span>
-            <button
-              onClick={logout}
-              className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
-            >
-              Sair
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted-foreground">Visão geral do sistema</p>
+      </div>
 
-      <main className="mx-auto max-w-7xl px-4 py-8">
-        <h2 className="mb-6 text-2xl font-semibold text-gray-900">Dashboard</h2>
-
-        <div className="grid gap-6 md:grid-cols-3">
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Status do Sistema</h3>
-            <p className="mt-2 text-lg font-semibold text-green-600">
-              {health?.status ?? "---"}
-            </p>
-          </div>
-
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Versão</h3>
-            <p className="mt-2 text-lg font-semibold text-gray-900">
-              v{health?.version ?? "---"}
-            </p>
-          </div>
-
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500">Bem-vindo</h3>
-            <p className="mt-2 text-lg font-semibold text-gray-900">{user?.name}</p>
-          </div>
-        </div>
-      </main>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {cards.map((card) => (
+          <Card key={card.title}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {card.title}
+              </CardTitle>
+              <card.icon className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <Skeleton className="h-7 w-24" />
+              ) : (
+                <div className={`text-2xl font-bold ${card.color}`}>{card.value}</div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

@@ -580,3 +580,50 @@
 - Sitemap/robots.xml deferred to technical SEO sprint
 - `X-Site-ID` header not automatically sent by frontend API client — relies on Host header-based resolution via proxy rewrite
 - No pagination controls on homepage (limit=9, no load-more) — deferred to future sprint
+
+### Sprint 3.12 — Admin SPA Reconciliation Audit (2026-07-30)
+- Full audit report: `research/admin-spa-reconciliation-audit.md`
+- **Admin SPA location:** `web/` — Vite 6 + React 19 + TypeScript + Tailwind + Zustand + TanStack Query
+- **Backend:** Chi router, 21 modules, ~170 endpoints, full auth/MFA/OAuth/Casbin/RLS/multi-tenancy
+- **Frontend coverage:** 5 pages (Login, Dashboard, Media, Plugins, Workflow) consuming ~21 endpoints (12.3% of available)
+- **Missing from Admin SPA:** Articles CRUD, Sites CRUD, Categories, Tags, SEO, AI, Editorial, Settings, Config, Users, Research, Writer, Publisher, ContentGen, Autocontent, Editorial Engine
+- **Critical gaps:** No layout/shared components, no shadcn/ui, no route guards, no refresh token, no site selection, no `X-Site-ID` header sent, 0 shared components, 0 tests frontend
+- **Deploy:** 3 Dockerfiles (API Go, Admin Vite, Site Next.js), Nginx reverse proxy, No Vercel config, No admin production build stage
+- **Summary:** Backend COMPLETE (~170 endpoints). Admin SPA PARTIAL (only 5 pages, ~12% coverage). Login COMPLETE. Multi-tenancy BACKEND ONLY.
+
+### Sprint 3.13 — Admin SPA Foundation (2026-07-30)
+- **Objective:** Transform Admin SPA into a consistent, reusable, multi-tenancy-ready application
+- **Full documentation:** `research/sprint-3.13-admin-foundation.md`
+
+**Implemented:**
+- **shadcn/ui setup** — 11 components (Button, Input, Label, Select, DropdownMenu, Dialog, Card, Table, Skeleton, Sheet, Sonner) + `components.json`
+- **API client rewrite** (`api/client.ts`) — centralized fetch with auto Bearer token, auto `X-Site-ID` from site store, refresh token interceptor with single-refresh-request guarantee, logout on refresh failure, FormData detection
+- **Auth store enhancement** (`stores/auth.ts`) — updated User interface with all backend fields, `setUser` method
+- **SiteStore** (`stores/site.ts`) — Zustand store with `sites[]`, `currentSite`, `fetchSites()`, `setCurrentSite()`, `clearCurrentSite()`, localStorage persistence
+- **AdminLayout** (`components/AdminLayout.tsx`) — responsive sidebar (lg:fixed, mobile:Sheet), Header with SiteSwitcher + user dropdown, Outlet for child routes, Toaster, loading skeleton screen, auto fetchSites on auth
+- **Sidebar** (`components/Sidebar.tsx`) — 3 nav sections (Principal, Workflows, Sistema), route-active highlighting, mobile navigation callback
+- **Header** (`components/Header.tsx`) — SiteSwitcher + user avatar/name dropdown with logout
+- **SiteSwitcher** (`components/SiteSwitcher.tsx`) — Select component reading from SiteStore, triggers X-Site-ID on all API calls
+- **ProtectedRoute** (`components/ProtectedRoute.tsx`) — centralized auth guard with `?redirect=` parameter preservation, loading skeleton
+- **Shared components** — LoadingState (full/inline/card variants), ErrorState (with retry), EmptyState (with action slot)
+- **Tailwind config** — extended with shadcn CSS variable colors (primary/secondary/destructive/muted/accent/popover/card)
+- **CSS variables** — primary remapped to brand palette (239 84% 63%)
+
+**Migrated pages (all auth logic removed, now protected by ProtectedRoute):**
+- Login → shadcn Card + Button + Input, redirect param support
+- Dashboard → shadcn Card, Skeleton loading
+- MediaLibrary → shadcn Card + Input, shared EmptyState/LoadingState
+- Plugins → shadcn Card + Input + Button, shared EmptyState/LoadingState
+- Workflow → shadcn Card + Button
+- NotFound → shadcn Button
+
+**Tests created (26 total, not executed — shell unavailable):**
+- `auth-store.test.ts` (6) — login, logout, checkAuth, token persistence, error handling
+- `SiteStore.test.ts` (6) — fetchSites, persist/restore, setCurrentSite, clear, errors, empty list
+- `api-client.test.ts` (7) — Auth header, X-Site-ID, Content-Type, FormData, refresh+retry, 401 redirect, ApiError, query params
+- `ProtectedRoute.test.tsx` (3) — redirect unauthenticated, render authenticated, loading state
+- `SiteSwitcher.test.tsx` (4) — loading, empty, render, selection
+
+**Added dependencies:** `class-variance-authority`, `@radix-ui/*` (slot, label, dialog, dropdown-menu, select, sheet), `sonner`
+
+**Limitations:** Shell unavailable — npm install not run, no tests executed, no go build/vet/test. Site listing returns all sites (no user filter). No dark mode. No code splitting.

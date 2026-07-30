@@ -1,11 +1,16 @@
 import { create } from "zustand";
 import { api } from "@/api/client";
 
-interface User {
+export interface User {
   id: string;
   email: string;
   name: string;
   role: string;
+  avatar?: string;
+  mfa_enabled?: boolean;
+  last_login?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface AuthState {
@@ -15,6 +20,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
+  setUser: (user: User | null) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -26,6 +32,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     const response = await api.post<{
       access_token: string;
       refresh_token: string;
+      token_type: string;
+      expires_in: number;
       user: User;
     }>("/auth/login", { email, password });
 
@@ -52,12 +60,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     try {
-      const response = await api.get<{ user: User }>("/auth/me");
-      set({ user: response.user, isAuthenticated: true, isLoading: false });
+      const response = await api.get<User>("/auth/me");
+      set({ user: response, isAuthenticated: true, isLoading: false });
     } catch {
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
       set({ user: null, isAuthenticated: false, isLoading: false });
     }
+  },
+
+  setUser: (user) => {
+    set({ user, isAuthenticated: user !== null });
   },
 }));

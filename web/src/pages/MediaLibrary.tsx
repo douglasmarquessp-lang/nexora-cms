@@ -1,9 +1,12 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { useAuthStore } from "@/stores/auth";
+import { useState, useRef, useCallback } from "react";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { LoadingState } from "@/components/LoadingState";
+import { EmptyState } from "@/components/EmptyState";
 import {
   Upload,
   Image,
@@ -91,10 +94,7 @@ function getThumbnailUrl(item: MediaItem): string {
 }
 
 export function MediaLibraryPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
-
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -107,26 +107,21 @@ export function MediaLibraryPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { checkAuth(); }, [checkAuth]);
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) navigate("/admin/login");
-  }, [isLoading, isAuthenticated, navigate]);
-
   const mediaQuery = useQuery({
     queryKey: ["media", folderId, search],
-    queryFn: () => api.get<MediaListResponse>("/media?" + new URLSearchParams({
-      ...(folderId ? { folder_id: folderId } : {}),
-      ...(search ? { search } : {}),
-      page: "1",
-      per_page: "50",
-    }).toString()),
-    enabled: isAuthenticated,
+    queryFn: () => api.get<MediaListResponse>(
+      "/media?" + new URLSearchParams({
+        ...(folderId ? { folder_id: folderId } : {}),
+        ...(search ? { search } : {}),
+        page: "1",
+        per_page: "50",
+      }).toString(),
+    ),
   });
 
   const foldersQuery = useQuery({
     queryKey: ["folders", folderId],
     queryFn: () => api.get<FolderItem[]>("/media/folders"),
-    enabled: isAuthenticated,
   });
 
   const uploadMutation = useMutation({
@@ -134,7 +129,7 @@ export function MediaLibraryPage() {
       const formData = new FormData();
       Array.from(files).forEach((f) => formData.append("files", f));
       if (folderId) formData.append("folder_id", folderId);
-      return api.post("/media/upload", formData);
+      return api.post("/media/upload", formData, { formData: true });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["media"] });
@@ -199,363 +194,265 @@ export function MediaLibraryPage() {
     setEditValue(item.alt_text || item.original_name);
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-gray-500">Carregando...</div>
-      </div>
-    );
-  }
+  const breadcrumbs = (
+    <div className="mb-4 flex items-center gap-1 text-sm text-muted-foreground">
+      <button
+        onClick={() => { setFolderId(null); setFolderPath([]); }}
+        className={cn(
+          "rounded px-2 py-0.5 hover:bg-accent",
+          !folderId && "font-medium text-brand-600",
+        )}
+      >
+        Root
+      </button>
+      {folderPath.map((f) => (
+        <span key={f.id} className="flex items-center gap-1">
+          <ChevronRight className="h-3 w-3" />
+          <button
+            onClick={() => {
+              setFolderId(f.id);
+              setFolderPath(folderPath.slice(0, folderPath.indexOf(f) + 1));
+            }}
+            className="rounded px-2 py-0.5 hover:bg-accent"
+          >
+            {f.name}
+          </button>
+        </span>
+      ))}
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white shadow-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-gray-900">Media Library</h1>
-            <button
-              onClick={() => setShowNewFolder(!showNewFolder)}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50"
-            >
-              <FolderPlus className="h-4 w-4" />
-              New Folder
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search media..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-64 rounded-md border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
-            <button
-              onClick={() => setViewMode("grid")}
-              className={cn(
-                "rounded-md p-2",
-                viewMode === "grid" ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:text-gray-600",
-              )}
-            >
-              <Grid3X3 className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("list")}
-              className={cn(
-                "rounded-md p-2",
-                viewMode === "list" ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:text-gray-600",
-              )}
-            >
-              <List className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setShowUpload(true)}
-              className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-            >
-              <Upload className="h-4 w-4" />
-              Upload
-            </button>
-          </div>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Media Library</h1>
+          <p className="text-sm text-muted-foreground">Gerencie seus arquivos de mídia</p>
         </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        {selected.size > 0 && (
-          <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2">
-            <span className="text-sm font-medium text-brand-700">
-              {selected.size} selected
-            </span>
-            <button
-              onClick={() => deleteMutation.mutate(Array.from(selected))}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
-            <button
-              onClick={() => {
-                const target = window.prompt("Move to folder ID (empty for root):");
-                moveMutation.mutate({
-                  ids: Array.from(selected),
-                  target: target || null,
-                });
-              }}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-brand-600 hover:bg-brand-100"
-            >
-              <Folder className="h-3.5 w-3.5" />
-              Move
-            </button>
-            <button
-              onClick={() => setSelected(new Set())}
-              className="ml-auto text-sm text-gray-500 hover:text-gray-700"
-            >
-              Clear
-            </button>
-          </div>
-        )}
-
-        {showNewFolder && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
-            <input
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
               type="text"
-              placeholder="Folder name"
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newFolderName.trim()) {
-                  createFolderMutation.mutate(newFolderName.trim());
-                }
-                if (e.key === "Escape") setShowNewFolder(false);
-              }}
+              placeholder="Buscar mídia..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-48 pl-9 sm:w-56"
             />
-            <button
-              onClick={() => {
-                if (newFolderName.trim()) createFolderMutation.mutate(newFolderName.trim());
-              }}
-              className="rounded-md bg-brand-600 px-3 py-1.5 text-sm text-white hover:bg-brand-700"
-            >
-              <Check className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setShowNewFolder(false)}
-              className="rounded-md px-2 py-1.5 text-gray-400 hover:text-gray-600"
-            >
-              <X className="h-4 w-4" />
-            </button>
           </div>
-        )}
-
-        <div className="mb-4 flex items-center gap-1 text-sm text-gray-500">
-          <button
-            onClick={() => setFolderId(null)}
-            className={cn(
-              "rounded px-2 py-0.5 hover:bg-gray-100",
-              !folderId && "font-medium text-brand-600",
-            )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setViewMode("grid")}
+            className={cn(viewMode === "grid" && "bg-accent text-accent-foreground")}
           >
-            Root
-          </button>
-          {folderPath.map((f) => (
-            <span key={f.id} className="flex items-center gap-1">
-              <ChevronRight className="h-3 w-3" />
+            <Grid3X3 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setViewMode("list")}
+            className={cn(viewMode === "list" && "bg-accent text-accent-foreground")}
+          >
+            <List className="h-4 w-4" />
+          </Button>
+          <Button onClick={() => setShowUpload(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Upload
+          </Button>
+        </div>
+      </div>
+
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border bg-accent/50 px-4 py-2">
+          <span className="text-sm font-medium">{selected.size} selecionado(s)</span>
+          <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate(Array.from(selected))}>
+            <Trash2 className="mr-1 h-3.5 w-3.5" />
+            Excluir
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const target = window.prompt("ID da pasta de destino (vazio = raiz):");
+              moveMutation.mutate({ ids: Array.from(selected), target: target || null });
+            }}
+          >
+            <Folder className="mr-1 h-3.5 w-3.5" />
+            Mover
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} className="ml-auto">
+            Limpar
+          </Button>
+        </div>
+      )}
+
+      {showNewFolder && (
+        <div className="flex items-center gap-2 rounded-lg border bg-card p-3">
+          <Input
+            type="text"
+            placeholder="Nome da pasta"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newFolderName.trim()) {
+                createFolderMutation.mutate(newFolderName.trim());
+              }
+              if (e.key === "Escape") setShowNewFolder(false);
+            }}
+          />
+          <Button size="sm" onClick={() => { if (newFolderName.trim()) createFolderMutation.mutate(newFolderName.trim()); }}>
+            <Check className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setShowNewFolder(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      {breadcrumbs}
+
+      {foldersQuery.data && foldersQuery.data.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Pastas
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {foldersQuery.data.map((f) => (
               <button
+                key={f.id}
                 onClick={() => {
                   setFolderId(f.id);
-                  setFolderPath(folderPath.slice(0, folderPath.indexOf(f) + 1));
+                  setFolderPath([...folderPath, f]);
                 }}
-                className="rounded px-2 py-0.5 hover:bg-gray-100"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors",
+                  folderId === f.id
+                    ? "border-brand-300 bg-brand-50 text-brand-700"
+                    : "border-border bg-card text-foreground hover:bg-accent",
+                )}
               >
+                <Folder className="h-4 w-4" />
                 {f.name}
               </button>
-            </span>
-          ))}
+            ))}
+          </div>
         </div>
+      )}
 
-        {foldersQuery.data && foldersQuery.data.length > 0 && (
-          <div className="mb-6">
-            <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">
-              Folders
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              {foldersQuery.data.map((f) => (
+      {mediaQuery.isLoading ? (
+        <LoadingState text="Carregando mídia..." />
+      ) : mediaQuery.data?.media.length === 0 ? (
+        <EmptyState
+          icon={<Image className="h-10 w-10" />}
+          title="Nenhum arquivo de mídia"
+          description="Faça upload do seu primeiro arquivo para começar."
+          action={
+            <Button onClick={() => setShowUpload(true)}>
+              <Upload className="mr-2 h-4 w-4" />
+              Fazer upload
+            </Button>
+          }
+        />
+      ) : viewMode === "grid" ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {mediaQuery.data?.media.map((item) => {
+            const Icon = getMediaIcon(item.mime_type);
+            const thumb = getThumbnailUrl(item);
+            const isSelected = selected.has(item.id);
+            return (
+              <Card
+                key={item.id}
+                className={cn(
+                  "group relative overflow-hidden transition-all",
+                  isSelected && "ring-2 ring-brand-500",
+                )}
+              >
                 <button
-                  key={f.id}
                   onClick={() => {
-                    setFolderId(f.id);
-                    setFolderPath([...folderPath, f]);
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(item.id)) next.delete(item.id);
+                      else next.add(item.id);
+                      return next;
+                    });
                   }}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors",
-                    folderId === f.id
-                      ? "border-brand-300 bg-brand-50 text-brand-700"
-                      : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50",
+                    "absolute left-2 top-2 z-10 rounded-md border bg-background p-0.5 opacity-0 transition-opacity group-hover:opacity-100",
+                    isSelected && "opacity-100",
                   )}
+                  aria-label={isSelected ? "Deselecionar" : "Selecionar"}
                 >
-                  <Folder className="h-4 w-4" />
-                  {f.name}
+                  <div className={cn("h-4 w-4 rounded border-2", isSelected ? "border-brand-600 bg-brand-600" : "border-muted-foreground")}>
+                    {isSelected && <Check className="h-3 w-3 text-white" />}
+                  </div>
                 </button>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {mediaQuery.isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="text-gray-400">Loading...</div>
-          </div>
-        ) : mediaQuery.data?.media.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 py-20">
-            <Image className="mb-3 h-12 w-12 text-gray-300" />
-            <p className="text-sm text-gray-500">No media files yet</p>
-            <button
-              onClick={() => setShowUpload(true)}
-              className="mt-3 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-            >
-              Upload your first file
-            </button>
-          </div>
-        ) : viewMode === "grid" ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {mediaQuery.data?.media.map((item) => {
-              const Icon = getMediaIcon(item.mime_type);
-              const thumb = getThumbnailUrl(item);
-              const isSelected = selected.has(item.id);
-              return (
-                <div
-                  key={item.id}
-                  className={cn(
-                    "group relative overflow-hidden rounded-lg border bg-white shadow-sm transition-all hover:shadow-md",
-                    isSelected && "ring-2 ring-brand-500",
-                  )}
-                >
-                  <button
-                    onClick={() => {
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(item.id)) next.delete(item.id);
-                        else next.add(item.id);
-                        return next;
-                      });
-                    }}
-                    className={cn(
-                      "absolute left-2 top-2 z-10 rounded-md border bg-white p-0.5 opacity-0 transition-opacity group-hover:opacity-100",
-                      isSelected && "opacity-100",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "h-4 w-4 rounded border-2",
-                        isSelected
-                          ? "border-brand-600 bg-brand-600"
-                          : "border-gray-300",
-                      )}
-                    >
-                      {isSelected && (
-                        <Check className="h-3 w-3 text-white" />
-                      )}
-                    </div>
-                  </button>
-
-                  {thumb ? (
-                    <div className="aspect-square overflow-hidden bg-gray-100">
-                      <img
-                        src={thumb}
-                        alt={item.original_name}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex aspect-square items-center justify-center bg-gray-50">
-                      <Icon className="h-10 w-10 text-gray-300" />
-                    </div>
-                  )}
-
-                  <div className="p-2">
-                    {editingId === item.id ? (
-                      <input
-                        type="text"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={() => {
-                          if (editValue.trim()) {
-                            renameMutation.mutate({ id: item.id, altText: editValue.trim() });
-                          } else {
-                            setEditingId(null);
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            if (editValue.trim()) {
-                              renameMutation.mutate({ id: item.id, altText: editValue.trim() });
-                            } else {
-                              setEditingId(null);
-                            }
-                          }
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                        className="w-full rounded border border-brand-300 px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        autoFocus
-                      />
-                    ) : (
-                      <p className="truncate text-xs text-gray-700">
-                        {item.alt_text || item.original_name}
-                      </p>
-                    )}
-                    <p className="mt-0.5 text-[10px] text-gray-400">
-                      {formatFileSize(item.size)}
-                    </p>
+                {thumb ? (
+                  <div className="aspect-square overflow-hidden bg-muted">
+                    <img src={thumb} alt={item.original_name} className="h-full w-full object-cover" loading="lazy" />
                   </div>
+                ) : (
+                  <div className="flex aspect-square items-center justify-center bg-muted">
+                    <Icon className="h-10 w-10 text-muted-foreground/50" />
+                  </div>
+                )}
 
-                  <div className="absolute right-2 top-2 hidden gap-0.5 group-hover:flex">
-                    <button
-                      onClick={() => startRename(item)}
-                      className="rounded bg-white/90 p-1 text-gray-500 shadow hover:bg-white hover:text-brand-600"
-                      title="Rename"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(item.id);
+                <CardContent className="p-2">
+                  {editingId === item.id ? (
+                    <Input
+                      type="text"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => { if (editValue.trim()) renameMutation.mutate({ id: item.id, altText: editValue.trim() }); else setEditingId(null); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { if (editValue.trim()) renameMutation.mutate({ id: item.id, altText: editValue.trim() }); else setEditingId(null); }
+                        if (e.key === "Escape") setEditingId(null);
                       }}
-                      className="rounded bg-white/90 p-1 text-gray-500 shadow hover:bg-white hover:text-brand-600"
-                      title="Copy ID"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => deleteMutation.mutate([item.id])}
-                      className="rounded bg-white/90 p-1 text-gray-500 shadow hover:bg-white hover:text-red-600"
-                      title="Delete"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
+                      className="h-7 text-xs"
+                      autoFocus
+                    />
+                  ) : (
+                    <p className="truncate text-xs text-foreground">{item.alt_text || item.original_name}</p>
+                  )}
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">{formatFileSize(item.size)}</p>
+                </CardContent>
+
+                <div className="absolute right-2 top-2 hidden gap-0.5 group-hover:flex">
+                  <Button variant="ghost" size="icon" className="h-6 w-6 bg-background/90" onClick={() => startRename(item)} title="Renomear">
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 bg-background/90" onClick={() => navigator.clipboard.writeText(item.id)} title="Copiar ID">
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 bg-background/90 hover:text-destructive" onClick={() => deleteMutation.mutate([item.id])} title="Excluir">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Name
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Type
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Size
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Dimensions
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Created
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Actions
-                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nome</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tipo</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tamanho</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Dimensões</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Criado</th>
+                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y">
                 {mediaQuery.data?.media.map((item) => {
                   const Icon = getMediaIcon(item.mime_type);
                   return (
-                    <tr
-                      key={item.id}
-                      className={cn(
-                        "transition-colors hover:bg-gray-50",
-                        selected.has(item.id) && "bg-brand-50",
-                      )}
-                    >
+                    <tr key={item.id} className={cn("transition-colors hover:bg-muted/50", selected.has(item.id) && "bg-accent")}>
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex items-center gap-3">
                           <input
@@ -569,73 +466,47 @@ export function MediaLibraryPage() {
                                 return next;
                               });
                             }}
-                            className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                            className="h-4 w-4 rounded border-muted-foreground text-brand-600 focus:ring-brand-500"
                           />
-                          <Icon className="h-5 w-5 flex-shrink-0 text-gray-400" />
+                          <Icon className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
                           {editingId === item.id ? (
-                            <input
+                            <Input
                               type="text"
                               value={editValue}
                               onChange={(e) => setEditValue(e.target.value)}
-                              onBlur={() => {
-                                if (editValue.trim()) {
-                                  renameMutation.mutate({ id: item.id, altText: editValue.trim() });
-                                } else setEditingId(null);
-                              }}
+                              onBlur={() => { if (editValue.trim()) renameMutation.mutate({ id: item.id, altText: editValue.trim() }); else setEditingId(null); }}
                               onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  if (editValue.trim()) renameMutation.mutate({ id: item.id, altText: editValue.trim() });
-                                  else setEditingId(null);
-                                }
+                                if (e.key === "Enter") { if (editValue.trim()) renameMutation.mutate({ id: item.id, altText: editValue.trim() }); else setEditingId(null); }
                                 if (e.key === "Escape") setEditingId(null);
                               }}
-                              className="rounded border border-brand-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              className="h-7 w-40 text-sm"
                               autoFocus
                             />
                           ) : (
-                            <span
-                              className="cursor-pointer text-sm text-gray-700 hover:text-brand-600"
-                              onClick={() => startRename(item)}
-                            >
+                            <span className="cursor-pointer text-sm text-foreground hover:text-brand-600" onClick={() => startRename(item)}>
                               {item.alt_text || item.original_name}
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                        {item.mime_type}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                        {formatFileSize(item.size)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">{item.mime_type}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">{formatFileSize(item.size)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
                         {item.width && item.height ? `${item.width}x${item.height}` : "-"}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
                         {new Date(item.created_at).toLocaleDateString()}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right">
-                        <button
-                          onClick={() => startRename(item)}
-                          className="rounded p-1 text-gray-400 hover:text-brand-600"
-                          title="Rename"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(item.id)}
-                          className="rounded p-1 text-gray-400 hover:text-brand-600"
-                          title="Copy ID"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => deleteMutation.mutate([item.id])}
-                          className="rounded p-1 text-gray-400 hover:text-red-600"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startRename(item)} title="Renomear">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigator.clipboard.writeText(item.id)} title="Copiar ID">
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteMutation.mutate([item.id])} title="Excluir">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </td>
                     </tr>
                   );
@@ -643,52 +514,37 @@ export function MediaLibraryPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </main>
+        </Card>
+      )}
 
       {showUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div
-            className="mx-4 w-full max-w-lg rounded-lg bg-white shadow-xl"
+          <Card
+            className="mx-4 w-full max-w-lg"
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
           >
             <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold text-gray-900">Upload Media</h2>
-              <button
-                onClick={() => setShowUpload(false)}
-                className="rounded p-1 text-gray-400 hover:text-gray-600"
-              >
+              <h2 className="text-lg font-semibold">Upload Media</h2>
+              <Button variant="ghost" size="icon" onClick={() => setShowUpload(false)}>
                 <X className="h-5 w-5" />
-              </button>
+              </Button>
             </div>
             <div className="px-6 py-8">
               <div
-                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 py-12 transition-colors hover:border-brand-400 hover:bg-brand-50"
+                className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 bg-muted/50 py-12 transition-colors hover:border-brand-400 hover:bg-brand-50"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload className="mb-3 h-10 w-10 text-gray-300" />
-                <p className="text-sm font-medium text-gray-600">
-                  Drop files here or click to upload
-                </p>
-                <p className="mt-1 text-xs text-gray-400">
-                  Images, videos, audio, documents up to 100MB
-                </p>
+                <Upload className="mb-3 h-10 w-10 text-muted-foreground/50" />
+                <p className="text-sm font-medium text-foreground">Arraste arquivos ou clique para upload</p>
+                <p className="mt-1 text-xs text-muted-foreground">Imagens, vídeos, áudio, documentos até 100MB</p>
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
               {uploadMutation.isPending && (
-                <div className="mt-4 text-center text-sm text-brand-600">
-                  Uploading...
-                </div>
+                <div className="mt-4 text-center text-sm text-brand-600">Enviando...</div>
               )}
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>
