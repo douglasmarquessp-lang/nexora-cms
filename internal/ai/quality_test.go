@@ -301,6 +301,78 @@ func TestCheckGrammarDetails_RepeatedWords(t *testing.T) {
 	}
 }
 
+func TestFindRepeatedWords(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{name: "the the", text: "the the", want: 1},
+		{name: "case insensitive", text: "The THE", want: 1},
+		{name: "portuguese", text: "palavra palavra", want: 1},
+		{name: "accented words", text: "café café", want: 1},
+		{name: "triple repeat counts once", text: "the the the", want: 1},
+		{name: "multiple pairs", text: "the the of of the the", want: 3},
+		{name: "no repetition", text: "this text has no repeated words", want: 0},
+		{name: "short words ignored", text: "a a no no", want: 0},
+		{name: "different case and accent", text: "Café café", want: 1},
+		{name: "punctuation between repeats", text: "the, the", want: 1},
+		{name: "empty text", text: "", want: 0},
+		{name: "single word", text: "palavra", want: 0},
+		{name: "whitespace variants", text: "the \n\t the", want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findRepeatedWords(tt.text)
+			if len(got) != tt.want {
+				t.Errorf("findRepeatedWords(%q) returned %d repeats %v, want %d", tt.text, len(got), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindRepeatedWords_NonConsecutiveNotDetected(t *testing.T) {
+	repeats := findRepeatedWords("the rain in the city")
+	if len(repeats) != 0 {
+		t.Errorf("expected no repeats for non-consecutive words, got %v", repeats)
+	}
+}
+
+func TestCheckGrammarDetails_RepeatedAccentedWords(t *testing.T) {
+	qc := NewQualityChecker()
+	ctx := context.Background()
+
+	report, err := qc.CheckGrammarDetails(ctx, "Comprei café café na loja.", "pt")
+	if err != nil {
+		t.Fatalf("CheckGrammarDetails failed: %v", err)
+	}
+	found := false
+	for _, issue := range report.Issues {
+		if issue.Type == "repeated_word" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected repeated word issue for accented words")
+	}
+}
+
+func TestCheckGrammarDetails_NoRepeatedWords(t *testing.T) {
+	qc := NewQualityChecker()
+	ctx := context.Background()
+
+	report, err := qc.CheckGrammarDetails(ctx, "This text has no repeated words at all.", "en")
+	if err != nil {
+		t.Fatalf("CheckGrammarDetails failed: %v", err)
+	}
+	for _, issue := range report.Issues {
+		if issue.Type == "repeated_word" {
+			t.Error("did not expect repeated word issue")
+		}
+	}
+}
+
 func TestCheckGrammarDetails_Empty(t *testing.T) {
 	qc := NewQualityChecker()
 	ctx := context.Background()

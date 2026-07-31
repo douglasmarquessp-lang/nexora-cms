@@ -5,29 +5,29 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---------- static patterns ----------
 
 var (
-	repeatedWordsRE = regexp.MustCompile(`(?i)\b(\w{3,})\s+\1\b`)
-	multipleSpacesRE = regexp.MustCompile(`[ ]{2,}`)
-	leadingCapRE     = regexp.MustCompile(`^[a-z]`)
-	ellipsisRE       = regexp.MustCompile(`\.{4,}`)
-	questionMarkRE   = regexp.MustCompile(`\?{2,}`)
-	exclamationRE    = regexp.MustCompile(`!{2,}`)
-	headingRE        = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
-	h1RE             = regexp.MustCompile(`(?m)^#\s+(.+)$`)
-	h2RE             = regexp.MustCompile(`(?m)^##\s+(.+)$`)
-	h3RE             = regexp.MustCompile(`(?m)^###\s+(.+)$`)
-	linkRE           = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
-	imageRE          = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
-	listRE           = regexp.MustCompile(`(?m)^[\s]*[-*+]\s+`)
-	orderedListRE    = regexp.MustCompile(`(?m)^[\s]*\d+\.\s+`)
-	paragraphSplitRE = regexp.MustCompile(`\n\s*\n`)
-	sentenceSplitRE  = regexp.MustCompile(`[.!?](\s|$)`)
-	wordRE           = regexp.MustCompile(`\w+('\w+)?`)
-	metaDescRE       = regexp.MustCompile(`(?i)<meta\s+[^>]*name\s*=\s*["']description["'][^>]*content\s*=\s*["']([^"']*)["']`)
+	multipleSpacesRE  = regexp.MustCompile(`[ ]{2,}`)
+	leadingCapRE      = regexp.MustCompile(`^[a-z]`)
+	ellipsisRE        = regexp.MustCompile(`\.{4,}`)
+	questionMarkRE    = regexp.MustCompile(`\?{2,}`)
+	exclamationRE     = regexp.MustCompile(`!{2,}`)
+	headingRE         = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	h1RE              = regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	h2RE              = regexp.MustCompile(`(?m)^##\s+(.+)$`)
+	h3RE              = regexp.MustCompile(`(?m)^###\s+(.+)$`)
+	linkRE            = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	imageRE           = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	listRE            = regexp.MustCompile(`(?m)^[\s]*[-*+]\s+`)
+	orderedListRE     = regexp.MustCompile(`(?m)^[\s]*\d+\.\s+`)
+	paragraphSplitRE  = regexp.MustCompile(`\n\s*\n`)
+	sentenceSplitRE   = regexp.MustCompile(`[.!?](\s|$)`)
+	wordRE            = regexp.MustCompile(`\w+('\w+)?`)
+	metaDescRE        = regexp.MustCompile(`(?i)<meta\s+[^>]*name\s*=\s*["']description["'][^>]*content\s*=\s*["']([^"']*)["']`)
 )
 
 // ---------- helpers ----------
@@ -46,6 +46,29 @@ func textSentences(text string) []string {
 		}
 	}
 	return out
+}
+
+// findRepeatedWords detects consecutive occurrences of the same word (3+ runes,
+// case-insensitive, Unicode-aware). It replaces the former RE2-incompatible
+// backreference pattern `(?i)\b(\w{3,})\s+\1\b`, which Go's regexp cannot compile.
+func findRepeatedWords(text string) []string {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return nil
+	}
+	trimSet := ".,!?;:'\"()[]{}-–—“”‘’«»"
+	var repeats []string
+	for i := 0; i+1 < len(fields); i++ {
+		first := strings.Trim(fields[i], trimSet)
+		second := strings.Trim(fields[i+1], trimSet)
+		if utf8.RuneCountInString(first) >= 3 &&
+			utf8.RuneCountInString(second) >= 3 &&
+			strings.EqualFold(first, second) {
+			repeats = append(repeats, first+" "+second)
+			i++ // skip past the matched pair (non-overlapping, like the original regex)
+		}
+	}
+	return repeats
 }
 
 // countSyllables estimates syllable count for a word using English rules.
@@ -310,7 +333,7 @@ func (qc *qualityChecker) CheckGrammarDetails(ctx context.Context, text, languag
 	}
 
 	// 2. Repeated words
-	repeats := repeatedWordsRE.FindAllString(text, -1)
+	repeats := findRepeatedWords(text)
 	if len(repeats) > 0 {
 		issues = append(issues, GrammarIssue{
 			Type:       "repeated_word",
