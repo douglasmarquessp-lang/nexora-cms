@@ -37,6 +37,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/migrate"
 	"nexora/internal/pkg/ratelimit"
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
@@ -69,6 +70,15 @@ func main() {
 	db, err := database.New(ctx, &cfg.Database, log)
 	if err != nil {
 		log.Warn("database not available, running in degraded mode", "error", err)
+	} else {
+		migrateCtx, migrateCancel := context.WithTimeout(context.Background(), cfg.MigrationTimeout)
+		defer migrateCancel()
+
+		if err := migrate.Run(migrateCtx, cfg.Database.DSN(), cfg.MigrationsDir, log); err != nil {
+			log.Error("database migrations failed, aborting startup", "error", err)
+			db.Close()
+			os.Exit(1)
+		}
 	}
 
 	code := runServer(cfg, log, ctx, db)
@@ -86,10 +96,10 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		if pool, ok := db.Pool.(*pgxpool.Pool); ok {
 			e, err := casbinPkg.New(pool, log)
 			if err != nil {
-				log.Warn("casbin enforcer not available", "error", err)
-			} else {
-				enforcer = e
+				log.Error("casbin enforcer initialization failed", "error", err)
+				return 1
 			}
+			enforcer = e
 		}
 	}
 

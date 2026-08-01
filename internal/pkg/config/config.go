@@ -12,17 +12,24 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	Auth     AuthConfig
-	OAuth    OAuthConfig
-	Storage  StorageConfig
-	Cache    CacheConfig
-	AI       AIConfig
-	Debug    bool
-	LogLevel string
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Auth      AuthConfig
+	OAuth     OAuthConfig
+	Storage   StorageConfig
+	Cache     CacheConfig
+	AI        AIConfig
+	Debug     bool
+	LogLevel  string
 	LogFormat string
+	// MigrationsDir is the directory containing the SQL migration files.
+	// It must remain reachable at runtime, so the deploy image ships the
+	// migrations folder next to the API binary.
+	MigrationsDir string
+	// MigrationTimeout bounds the whole migrate-up step at startup,
+	// including waiting on the advisory lock held by another instance.
+	MigrationTimeout time.Duration
 }
 
 type ServerConfig struct {
@@ -128,9 +135,12 @@ func Load() (*Config, error) {
 
 	cfg.Server = ServerConfig{
 		Host:    getEnv("SERVER_HOST", "0.0.0.0"),
-		Port:    getEnvInt("SERVER_PORT", 8080),
+		Port:    getEnvInt("SERVER_PORT", getEnvInt("PORT", 8080)),
 		Timeout: getEnvDuration("SERVER_TIMEOUT", 30*time.Second),
 	}
+
+	cfg.MigrationsDir = getEnv("MIGRATIONS_DIR", "migrations")
+	cfg.MigrationTimeout = getEnvDuration("MIGRATION_TIMEOUT", 10*time.Minute)
 
 	cfg.Database = DatabaseConfig{
 		Host:     getEnv("DATABASE_HOST", "localhost"),

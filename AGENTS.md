@@ -627,3 +627,30 @@
 **Added dependencies:** `class-variance-authority`, `@radix-ui/*` (slot, label, dialog, dropdown-menu, select, sheet), `sonner`
 
 **Limitations:** Shell unavailable — npm install not run, no tests executed, no go build/vet/test. Site listing returns all sites (no user filter). No dark mode. No code splitting.
+
+### Sprint 3.14 — Automatic Migrations at API Startup (2026-08-01)
+
+**Problem:** Railway deploy failed because migrations ran only via Pre-deploy Command (`./migrate up`), which broke (`./migrate: No such file or directory`). The API started before migrations, so `casbin_rules` (created by migration 000004, fixed by 000024) did not exist and Casbin init failed with `relation "casbin_rules" does not exist (SQLSTATE 42P01)`.
+
+**Solution: API now runs migrations itself at startup, before Casbin/kernel/HTTP. Pre-deploy Command no longer needed.**
+
+**New package `internal/pkg/migrate/migrate.go`:**
+- `Run(ctx, dsn, migrationsDir, log)` — reuses the existing golang-migrate v4.18.1 infra (same `file://migrations` source, same `schema_migrations` table, same driver)
+- Acquires a session-level PostgreSQL advisory lock (`pg_advisory_lock`, fixed ID `7645017289165482947`) on a dedicated pgx connection BEFORE creating the migrator; releases via `pg_advisory_unlock` in a defer (released even on failure)
+- Lock ID is intentionally DISTINCT from golang-migrate's internally-derived ID (`GenerateAdvisoryLockId`) — using the same ID would self-deadlock the process (outer lock blocks the migrator's own lock in the same process)
+- Concurrent instances serialize: instance B blocks on the outer lock (up to `MIGRATION_TIMEOUT`) until instance A finishes, then sees `ErrNoChange` and proceeds; crashed holders release the lock automatically when the session dies
+- Any `Up()` error — including dirty `schema_migrations` state (`ErrDirty`) — is returned so the caller aborts startup with a clear log
+
+**Changes:**
+- `cmd/api/main.go` — after `database.New` succeeds, runs `migrate.Run` with a dedicated `MIGRATION_TIMEOUT` context (default 10m); on error: `log.Error("database migrations failed, aborting startup")` + `os.Exit(1)`. Casbin init (`casbinPkg.New`) failure is now FATAL (`return 1`) instead of a WARN — with migrations guaranteed before it, `casbin_rules` always exists
+- `internal/pkg/config/config.go` — new `MigrationsDir` (`MIGRATIONS_DIR`, default `migrations`) and `MigrationTimeout` (`MIGRATION_TIMEOUT`, default `10m`); server port falls back to `PORT` env var when `SERVER_PORT` is unset (Railway compatibility, `SERVER_PORT` still wins); struct fields realigned per gofmt
+- `internal/pkg/migrate/migrate_test.go` — 2 DB-free deterministic tests: outer lock ID distinct from golang-migrate's derived ID (self-deadlock guard) and `file://` URL resolution for relative/absolute dirs (mirrors golang-migrate `parseURL`)
+- `.env.example` — `MIGRATIONS_DIR`/`MIGRATION_TIMEOUT` documented + PORT fallback note
+
+**Startup flow:** config.Load → logger → DB connect → advisory lock → apply pending migrations (000024 detected when at version 23) → unlock → Casbin (loads from `casbin_rules`) → kernel → modules → HTTP on `0.0.0.0:SERVER_PORT`.
+
+**Not changed:** migrations 000001–000024 untouched; 000024 remains the casbin_rules fix; `cmd/migrate` CLI kept for manual ops; `deploy/Dockerfile` unchanged (already `ENTRYPOINT ["./nexora"]` + `COPY migrations/ ./migrations/`, WORKDIR /app) — the migrate binary stays in the prod image for manual administration.
+
+**Verified by code audit (shell/go toolchain non-functional in env):** only `cmd/api/main.go:97` constructs the enforcer (migrations run strictly before it, in `main()`); no positional `config.Config{}` literals exist that new fields could break; no package-name collision for `internal/pkg/migrate`.
+
+**Railway config:** Pre-deploy Command = empty; Start Command = `./nexora` (or leave empty — Dockerfile ENTRYPOINT covers it). Keep existing `DATABASE_*` env vars; `PORT` fallback works if `SERVER_PORT` is removed. `MIGRATIONS_DIR` defaults to `migrations` (present in image at `/app/migrations`).
