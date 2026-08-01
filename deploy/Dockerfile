@@ -10,9 +10,14 @@ RUN go mod download
 
 COPY . .
 
+# Build API
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/nexora ./cmd/api/main.go
 
-# ===== Stage 2: Dev (hot reload) =====
+# Build migration tool
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/migrate ./cmd/migrate/main.go
+
+
+# ===== Stage 2: Dev =====
 FROM golang:1.26-alpine AS dev
 
 RUN go install github.com/air-verse/air@latest
@@ -23,6 +28,7 @@ EXPOSE 8080
 
 CMD ["air", "-c", ".air.toml"]
 
+
 # ===== Stage 3: Production =====
 FROM alpine:3.20 AS prod
 
@@ -30,7 +36,13 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /build/nexora .
+# API
+COPY --from=builder /build/nexora ./nexora
+
+# Migration executable
+COPY --from=builder /build/migrate ./migrate
+
+# SQL migrations
 COPY migrations/ ./migrations/
 
 EXPOSE 8080
