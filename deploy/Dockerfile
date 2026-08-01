@@ -1,5 +1,5 @@
-# ===== Stage 1: Build API =====
-FROM golang:1.26-alpine AS api-builder
+# ===== Stage 1: Build =====
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev
 
@@ -10,50 +10,47 @@ RUN go mod download
 
 COPY . .
 
+# Build API
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o /build/nexora \
     ./cmd/api/main.go
 
-
-# ===== Stage 2: Build Migration CLI =====
-FROM golang:1.26-alpine AS migrate-builder
-
-RUN apk add --no-cache gcc musl-dev
-
-WORKDIR /build
-
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-
+# Build migration CLI
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o /build/migrate \
     ./cmd/migrate
 
 
-# ===== Stage 3: Production =====
-FROM alpine:3.20 AS production
+# ===== Stage 2: Dev =====
+FROM golang:1.26-alpine AS dev
 
-RUN apk add --no-cache \
-    ca-certificates \
-    tzdata
+RUN go install github.com/air-verse/air@latest
 
 WORKDIR /app
 
-# API
-COPY --from=api-builder /build/nexora ./nexora
-
-# Migration CLI
-COPY --from=migrate-builder /build/migrate ./migrate
-
-# SQL migrations
-COPY migrations/ ./migrations/
-
-# Railway injects PORT automatically.
 EXPOSE 8080
 
-# Start API
+CMD ["air", "-c", ".air.toml"]
+
+
+# ===== Stage 3: Production =====
+FROM alpine:3.20 AS prod
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+# API binary
+COPY --from=builder /build/nexora ./nexora
+
+# Migration binary
+COPY --from=builder /build/migrate ./migrate
+
+# Database migrations
+COPY migrations/ ./migrations/
+
+EXPOSE 8080
+
 ENTRYPOINT ["./nexora"]
