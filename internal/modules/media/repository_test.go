@@ -430,13 +430,14 @@ func TestRepository_GetFolderChildCount(t *testing.T) {
 	repo, mock := setupMockRepo(t)
 	defer mock.Close()
 
+	siteID := uuid.New()
 	folderID := uuid.New()
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM media WHERE`).
-		WithArgs(folderID).
+		WithArgs(folderID, siteID).
 		WillReturnRows(mock.NewRows([]string{"count"}).AddRow(3))
 
-	count, err := repo.GetFolderChildCount(context.Background(), folderID)
+	count, err := repo.GetFolderChildCount(context.Background(), siteID, folderID)
 	if err != nil {
 		t.Fatal(err)
 	}

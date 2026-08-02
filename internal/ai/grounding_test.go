@@ -141,7 +141,6 @@ func TestGeminiProviderGroundingCapability(t *testing.T) {
 
 func TestGeminiBuildRequestWithGrounding(t *testing.T) {
 	p := NewGeminiProvider("test", "test-model", "test-key", "")
-	ctx := context.Background()
 
 	// Without grounding
 	req := CompletionRequest{
