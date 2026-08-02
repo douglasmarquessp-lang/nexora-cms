@@ -2,6 +2,7 @@ package rest
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -33,7 +34,7 @@ func (rt *Router) registerMiddleware() {
 	rt.Use(middleware.Logger)
 	rt.Use(middleware.Recoverer)
 	rt.Use(middleware.Heartbeat("/ping"))
-	rt.Use(middleware.Timeout(60))
+	rt.Use(middleware.Timeout(60 * time.Second))
 
 	rt.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:3001"},
