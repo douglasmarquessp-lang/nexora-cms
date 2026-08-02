@@ -631,7 +631,6 @@
 ### Sprint 3.14 — Automatic Migrations at API Startup (2026-08-01)
 
 **Problem:** Railway deploy failed because migrations ran only via Pre-deploy Command (`./migrate up`), which broke (`./migrate: No such file or directory`). The API started before migrations, so `casbin_rules` (created by migration 000004, fixed by 000024) did not exist and Casbin init failed with `relation "casbin_rules" does not exist (SQLSTATE 42P01)`.
-
 **Solution: API now runs migrations itself at startup, before Casbin/kernel/HTTP. Pre-deploy Command no longer needed.**
 
 **New package `internal/pkg/migrate/migrate.go`:**
@@ -654,3 +653,27 @@
 **Verified by code audit (shell/go toolchain non-functional in env):** only `cmd/api/main.go:97` constructs the enforcer (migrations run strictly before it, in `main()`); no positional `config.Config{}` literals exist that new fields could break; no package-name collision for `internal/pkg/migrate`.
 
 **Railway config:** Pre-deploy Command = empty; Start Command = `./nexora` (or leave empty — Dockerfile ENTRYPOINT covers it). Keep existing `DATABASE_*` env vars; `PORT` fallback works if `SERVER_PORT` is removed. `MIGRATIONS_DIR` defaults to `migrations` (present in image at `/app/migrations`).
+
+### Sprint 3.14b — Migration Chain Fix: publication_queue forward reference (2026-08-01)
+
+**Problem:** Railway DB stuck at `version = 16, dirty = true` — migration 000016 failed with `relation "publication_queue" does not exist` at `ALTER TABLE publication_queue ENABLE ROW LEVEL SECURITY;` (section 7).
+
+**Root cause:** 000016 section 7 ("RLS FOR AUTOCONTENT TABLES") referenced `publication_queue` — the OLD name of the autocontent queue table. Sprint 3.7 renamed it to `autocontent_queue` in migration 000014 (publisher owns `publication_queue`, created in 000019 — which runs AFTER 000016). The rename was never propagated to 000016, creating a forward reference to a table that does not exist at that point.
+
+**Partial state left in production (000016 failed at line 380):**
+- Sections 1-6 fully applied (fixed posts/categories/tags policies + RLS+policies for editorial, research, writer, editorial-engine, generation tables)
+- Section 7 partial: RLS enabled (NO policies yet) on `autocontent_jobs`, `autocontent_steps`, `autocontent_results`; `autocontent_queue`/`workflow_templates` untouched; no section-7 policies exist
+- Section 8 (SEO tables) NOT executed at all
+
+**Fixes (files):**
+- `migrations/000016_add_rls_policies.up.sql` — section 7: `publication_queue` → `autocontent_queue` (ALTER TABLE + policy renamed `publication_queue_isolation` → `autocontent_queue_isolation`) + explanatory NOTE comment
+- `migrations/000016_add_rls_policies.down.sql` — same rename (DROP POLICY + DISABLE RLS)
+- `migrations/000003_add_audit_log.up.sql` — 4 `CREATE INDEX` → `CREATE INDEX IF NOT EXISTS` (000001 already creates `audit_log` partitioned + `idx_audit_log_user`/`idx_audit_log_created`; this was the historical duplicate-index failure; idempotency fix for fresh installs)
+- `migrations/000025_add_rls_for_late_tables.up.sql` (NEW) — RLS for all tables created AFTER 000016 that had no policies: human writer (8 tables, 000017), article pipeline (5, 000018), publisher (5, 000019 — incl. `publication_queue_isolation` for publisher's queue), workflow (6, 000021), `article_sources` (000023). Excluded: `system_installation` (no site_id), plugins (no site_id)
+- `migrations/000025_add_rls_for_late_tables.down.sql` (NEW) — reverse of 000025
+
+**Recovery on Railway (one-time manual, documented in response):** complete remaining sections 7-8 of corrected 000016 via idempotent SQL (DROP POLICY IF EXISTS + CREATE POLICY), then `UPDATE schema_migrations SET version = 16, dirty = false;` — the objects must actually exist before marking 16 clean. Then startup applies 17→25 automatically. NO "force version" used.
+
+**No Go changes:** `internal/pkg/migrate`, `cmd/api/main.go`, config untouched. Shell non-functional in env — go build/vet/test not re-executed (no Go files changed).
+
+**Audit result (migrations 000001-000025):** after the 000016/000003 fixes, no remaining forward references; all CREATE POLICY/ALTER TABLE target tables created in strictly earlier migrations; all FKs reference prior tables; 000014.down drops `autocontent_queue` and 000019.down drops `publication_queue` (no conflict); 000024 remains the casbin_rules fix.

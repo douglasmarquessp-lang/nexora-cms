@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -248,7 +249,16 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 
 	dbPing := func(ctx context.Context) error {
 		if db != nil && db.Pool != nil {
-			return db.Pool.Ping(ctx)
+			if err := db.Pool.Ping(ctx); err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) {
+					log.Error("health check: database ping failed", "error", err, "sqlstate", pgErr.Code)
+				} else {
+					log.Error("health check: database ping failed", "error", err)
+				}
+				return err
+			}
+			return nil
 		}
 		return fmt.Errorf("database not connected")
 	}

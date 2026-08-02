@@ -374,10 +374,15 @@ CREATE POLICY generation_stats_isolation ON generation_stats
 -- 7. ADD RLS FOR AUTOCONTENT TABLES (migration 000014)
 -- ============================================================
 
+-- NOTE: this section covers the autocontent tables from migration 000014.
+-- Sprint 3.7 renamed the autocontent queue table from 'publication_queue'
+-- to 'autocontent_queue' (the publisher module owns 'publication_queue',
+-- created later in migration 000019). RLS for the publisher's
+-- publication_queue is added in migration 000025.
 ALTER TABLE autocontent_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE autocontent_steps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE autocontent_results ENABLE ROW LEVEL SECURITY;
-ALTER TABLE publication_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE autocontent_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_templates ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY autocontent_jobs_isolation ON autocontent_jobs
@@ -413,7 +418,7 @@ CREATE POLICY autocontent_results_isolation ON autocontent_results
         OR current_setting('app.current_user_role') IN ('superadmin', 'siteadmin')
     );
 
-CREATE POLICY publication_queue_isolation ON publication_queue
+CREATE POLICY autocontent_queue_isolation ON autocontent_queue
     FOR ALL
     USING (
         site_id = current_setting('app.current_site_id')::UUID

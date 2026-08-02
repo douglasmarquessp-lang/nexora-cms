@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"nexora/internal/api/rest"
 	"nexora/internal/pkg/logger"
 )
@@ -20,7 +22,12 @@ func NewHandler(svc *Service, log *logger.Logger) *Handler {
 func (h *Handler) Status(ctx *rest.Context) {
 	resp, err := h.svc.Status(ctx.Request.Context())
 	if err != nil {
-		h.log.Error("failed to check setup status", "error", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			h.log.Error("failed to check setup status", "error", err, "sqlstate", pgErr.Code)
+		} else {
+			h.log.Error("failed to check setup status", "error", err)
+		}
 		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to check setup status")
 		return
 	}

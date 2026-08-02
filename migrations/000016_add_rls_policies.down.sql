@@ -33,13 +33,13 @@ ALTER TABLE seo_projects DISABLE ROW LEVEL SECURITY;
 -- 7. DROP RLS POLICIES FOR AUTOCONTENT TABLES
 -- ============================================================
 DROP POLICY IF EXISTS workflow_templates_isolation ON workflow_templates;
-DROP POLICY IF EXISTS publication_queue_isolation ON publication_queue;
+DROP POLICY IF EXISTS autocontent_queue_isolation ON autocontent_queue;
 DROP POLICY IF EXISTS autocontent_results_isolation ON autocontent_results;
 DROP POLICY IF EXISTS autocontent_steps_isolation ON autocontent_steps;
 DROP POLICY IF EXISTS autocontent_jobs_isolation ON autocontent_jobs;
 
 ALTER TABLE workflow_templates DISABLE ROW LEVEL SECURITY;
-ALTER TABLE publication_queue DISABLE ROW LEVEL SECURITY;
+ALTER TABLE autocontent_queue DISABLE ROW LEVEL SECURITY;
 ALTER TABLE autocontent_results DISABLE ROW LEVEL SECURITY;
 ALTER TABLE autocontent_steps DISABLE ROW LEVEL SECURITY;
 ALTER TABLE autocontent_jobs DISABLE ROW LEVEL SECURITY;
