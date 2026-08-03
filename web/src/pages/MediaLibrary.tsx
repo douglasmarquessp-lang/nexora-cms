@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { useCurrentSiteId, siteQueryKey } from "@/lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -130,6 +131,7 @@ function AuthImage({ src, alt, className }: { src: string; alt: string; classNam
 
 export function MediaLibraryPage() {
   const queryClient = useQueryClient();
+  const currentSiteId = useCurrentSiteId();
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -143,7 +145,7 @@ export function MediaLibraryPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const mediaQuery = useQuery({
-    queryKey: ["media", folderId, search],
+    queryKey: siteQueryKey(["media", folderId, search], currentSiteId),
     queryFn: () => api.get<MediaListResponse>(
       "/media?" + new URLSearchParams({
         ...(folderId ? { folder_id: folderId } : {}),
@@ -152,14 +154,16 @@ export function MediaLibraryPage() {
         per_page: "50",
       }).toString(),
     ),
+    enabled: !!currentSiteId,
   });
 
   const foldersQuery = useQuery({
-    queryKey: ["folders", folderId],
+    queryKey: siteQueryKey(["folders", folderId], currentSiteId),
     queryFn: async () => {
       const resp = await api.get<FolderListResponse>("/media/folders");
       return resp.folders || [];
     },
+    enabled: !!currentSiteId,
   });
 
   const uploadMutation = useMutation({

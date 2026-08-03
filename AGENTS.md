@@ -726,3 +726,39 @@
 - **Not changed (per scope):** no backend files, no `Login.tsx`/`auth.ts`/`client.ts`/`ProtectedRoute`/`AdminLayout`/`Header` changes, no public registration page, no new users system, no commit, no deploy
 - **Validation:** shell 100% non-functional (even `true` times out) — `go build/vet/test` and `npm install/test/build/lint` NOT executed. First working machine must run: `go build ./... && go vet ./... && go test ./internal/modules/auth/... && go test ./internal/api/middleware/...` + `cd web && npm test && npm run build && npm run lint`
 - **Known infra flaw (pre-existing, NOT auth-blocking, out of scope):** `RLSContext` middleware runs `set_config(..., true)` (transaction-local) via pooled `Exec` — the setting can land on a different pooled connection and be lost for subsequent queries, breaking RLS-filtered reads (posts/categories/etc.). Does NOT affect `users`/`sessions`/`sites` (no RLS) so login is unaffected. Deferred
+
+### Sprint 5.1 — F-01: React Query cache isolation by site (Admin SPA) (2026-08-03)
+- **Problem:** After switching from Site A to Site B, data loaded for Site A remained visible because site-scoped queryKeys did NOT include the current site id (query results depend on the `X-Site-ID` header, cached under site-agnostic keys with 5min staleTime).
+- **Solution (idiomatic TanStack Query, no cache eviction/invalidation needed):** the current site id became part of every site-scoped query key, so a site switch automatically creates a new cache entry → automatic refetch of the new site's data, and the previous site's data is never served to the new site. Key shape is stable/predictable: `[resourceName, siteId, ...rest]` — the resource name stays first so existing `invalidateQueries({ queryKey: ["media"] })` prefix invalidations keep working unchanged.
+
+**New helper `web/src/lib/queryKeys.ts`:**
+- `useCurrentSiteId()` — `useSiteStore((s) => s.currentSite?.id ?? null)`; reactive subscription so a store change re-renders consumers.
+- `siteQueryKey(parts, siteId)` → `[parts[0], siteId ?? NO_SITE_KEY, ...parts.slice(1)]`.
+- `NO_SITE_KEY = "__no_site__"` — stable placeholder for disabled queries (no collision with real UUID site ids).
+
+**Query keys changed (site id inserted at position 1):**
+- Media Library (`web/src/pages/MediaLibrary.tsx`): `["media", folderId, search]` → `["media", siteId, folderId, search]`; `["folders", folderId]` → `["folders", siteId, folderId]`. Both queries now `enabled: !!currentSiteId`.
+- Workflow (`web/src/pages/workflow/Dashboard.tsx`): `["workflow-dashboard"]` → `["workflow-dashboard", siteId]`, `["workflow-jobs"]` → `["workflow-jobs", siteId]`, `["workflow-queue"]` → `["workflow-queue", siteId]`, `["workflow-metrics"]` → `["workflow-metrics", siteId]`. All four `enabled: !!currentSiteId`.
+- Mutation `onSuccess` invalidations in MediaLibrary (`["media"]`, `["folders"]`) and Plugins (`["plugins"]`) unchanged — prefix matching still hits the new keys.
+
+**NOT site-scoped (left unchanged, verified against backend):** `["health"]` (Dashboard — global `/health`, no X-Site-ID filtering) and `["plugins"]` (Plugins — plugin rows carry no site_id, excluded from RLS per Sprint 3.7 audit).
+
+**New behavior with the fix:**
+- Site switch (via SiteSwitcher → `setCurrentSite`) changes `currentSiteId` → component re-renders → new query key → TanStack auto-fetches new site; until data arrives the page renders its loading/empty UI (Media Library shows `Carregando mídia...`), so Site A data never lingers.
+- Before `fetchSites()` resolves (currentSite null), site-scoped queries are `enabled: false` → no requests fire without a valid `X-Site-ID` (they register under the `__no_site__` placeholder key only).
+- Switching back to Site A hits the still-cached Site A entry (staleTime 5min) — instant, no double fetch.
+
+**Tests added:**
+- `web/src/__tests__/queryKeys.test.ts` (NEW, 7 tests): Site A vs Site B produce different keys (incl. JSON); same site → identical key; stable/predictable shape (`["media", siteId, folderId, search]`); placeholder when no site id; `invalidateQueries({queryKey:["media"]})` still matches new keys (count = 2); cached Site A data is `getQueryData`-invisible under Site B key (cache isolation); `useCurrentSiteId` reactivity across 3 store states via `renderHook`.
+- `web/src/__tests__/site-scoped-query-keys.test.tsx` (NEW, 6 tests): MediaLibrary keys contain `["media", "site-1", null, ""]` and `["folders", "site-1", null]`; MediaLibrary does not execute (api.get not called) when currentSite null (keys registered under the `__no_site__` placeholder only); MediaLibrary switch test renders `media-site-a`, switches to site-b, asserts Site A text removed and `media-site-b` shown; Workflow keys all contain `"site-1"`; Workflow does not execute without site; Workflow Site A cache entries isolated from Site B / `__no_site__` keys.
+- Both test files mock `@/stores/site` (via `vi.hoisted` selectable `useSiteStore`) and `@/api/client`, using pattern from `SiteSwitcher.test.tsx`.
+
+**Files changed:**
+- `web/src/lib/queryKeys.ts` (NEW)
+- `web/src/pages/MediaLibrary.tsx`
+- `web/src/pages/workflow/Dashboard.tsx`
+- `web/src/__tests__/queryKeys.test.ts` (NEW)
+- `web/src/__tests__/site-scoped-query-keys.test.tsx` (NEW)
+- `AGENTS.md` (this section)
+
+**Validation:** shell 100% non-functional (even `true` times out) — `npm test` / `npm run build` / `npm run lint` / `npx vitest` NOT executed. First working machine must run: `cd web && npm install && npm test && npm run build && npm run lint`. No commit made (per task scope).

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/utils";
+import { useCurrentSiteId, siteQueryKey } from "@/lib/queryKeys";
 
 interface Dashboard {
   total_jobs: number;
@@ -87,25 +88,30 @@ function StatusBadge({ status }: { status: string }) {
 export function WorkflowDashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [actionMsg, setActionMsg] = useState("");
+  const currentSiteId = useCurrentSiteId();
 
   const { data: dash, refetch: refetchDash } = useQuery({
-    queryKey: ["workflow-dashboard"],
+    queryKey: siteQueryKey(["workflow-dashboard"], currentSiteId),
     queryFn: () => api.get<Dashboard>("/workflow/dashboard"),
+    enabled: !!currentSiteId,
   });
 
   const { data: jobs } = useQuery({
-    queryKey: ["workflow-jobs"],
+    queryKey: siteQueryKey(["workflow-jobs"], currentSiteId),
     queryFn: () => api.get<WorkflowJob[]>("/workflow", { params: { limit: "10" } }),
+    enabled: !!currentSiteId,
   });
 
   const { data: queueData } = useQuery({
-    queryKey: ["workflow-queue"],
+    queryKey: siteQueryKey(["workflow-queue"], currentSiteId),
     queryFn: () => api.get<QueueItem[]>("/workflow/queue", { params: { limit: "10" } }),
+    enabled: !!currentSiteId,
   });
 
   const { data: metrics } = useQuery({
-    queryKey: ["workflow-metrics"],
+    queryKey: siteQueryKey(["workflow-metrics"], currentSiteId),
     queryFn: () => api.get<Metrics>("/workflow/metrics"),
+    enabled: !!currentSiteId,
   });
 
   const actionMutation = useMutation({
