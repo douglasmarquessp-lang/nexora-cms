@@ -564,6 +564,36 @@ func (s *Service) CreateFolder(ctx context.Context, siteID, userID uuid.UUID, re
 	return f, nil
 }
 
+func (s *Service) OpenFile(ctx context.Context, siteID, mediaID uuid.UUID, variant string) (io.ReadCloser, string, error) {
+	if err := s.checkDB(); err != nil {
+		return nil, "", err
+	}
+
+	m, err := s.GetByID(ctx, siteID, mediaID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	storageKey := m.StorageKey
+	contentType := m.MimeType
+
+	if variant != "" && variant != string(VariantOriginal) {
+		for _, v := range m.Variants {
+			if v.Variant == VariantType(variant) {
+				storageKey = v.StorageKey
+				contentType = v.MimeType
+				break
+			}
+		}
+	}
+
+	rc, err := s.storage.Download(ctx, storageKey)
+	if err != nil {
+		return nil, "", err
+	}
+	return rc, contentType, nil
+}
+
 func (s *Service) GetFolderByID(ctx context.Context, siteID, folderID uuid.UUID) (*Folder, error) {
 	if err := s.checkDB(); err != nil {
 		return nil, err

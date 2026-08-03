@@ -1,4 +1,5 @@
 import { useAuthStore } from "@/stores/auth";
+import { useNavigate } from "react-router-dom";
 import { SiteSwitcher } from "./SiteSwitcher";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +17,7 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuClick }: HeaderProps) {
+  const navigate = useNavigate();
   const { user, logout } = useAuthStore();
 
   return (
@@ -60,7 +62,13 @@ export function Header({ onMenuClick }: HeaderProps) {
               Perfil
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive">
+            <DropdownMenuItem
+              onClick={async () => {
+                await logout();
+                navigate("/admin/login", { replace: true });
+              }}
+              className="text-destructive"
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Sair
             </DropdownMenuItem>

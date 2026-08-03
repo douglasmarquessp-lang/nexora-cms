@@ -15,9 +15,10 @@ export function ProtectedRoute() {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      navigate(`/admin/login?redirect=${encodeURIComponent(location.pathname)}`, { replace: true });
+      const redirect = encodeURIComponent(location.pathname + location.search);
+      navigate(`/admin/login?redirect=${redirect}`, { replace: true });
     }
-  }, [isLoading, isAuthenticated, navigate, location.pathname]);
+  }, [isLoading, isAuthenticated, navigate, location.pathname, location.search]);
 
   if (isLoading) {
     return (

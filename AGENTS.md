@@ -657,7 +657,6 @@
 ### Sprint 3.14b — Migration Chain Fix: publication_queue forward reference (2026-08-01)
 
 **Problem:** Railway DB stuck at `version = 16, dirty = true` — migration 000016 failed with `relation "publication_queue" does not exist` at `ALTER TABLE publication_queue ENABLE ROW LEVEL SECURITY;` (section 7).
-
 **Root cause:** 000016 section 7 ("RLS FOR AUTOCONTENT TABLES") referenced `publication_queue` — the OLD name of the autocontent queue table. Sprint 3.7 renamed it to `autocontent_queue` in migration 000014 (publisher owns `publication_queue`, created in 000019 — which runs AFTER 000016). The rename was never propagated to 000016, creating a forward reference to a table that does not exist at that point.
 
 **Partial state left in production (000016 failed at line 380):**
@@ -677,3 +676,53 @@
 **No Go changes:** `internal/pkg/migrate`, `cmd/api/main.go`, config untouched. Shell non-functional in env — go build/vet/test not re-executed (no Go files changed).
 
 **Audit result (migrations 000001-000025):** after the 000016/000003 fixes, no remaining forward references; all CREATE POLICY/ALTER TABLE target tables created in strictly earlier migrations; all FKs reference prior tables; 000014.down drops `autocontent_queue` and 000019.down drops `publication_queue` (no conflict); 000024 remains the casbin_rules fix.
+
+### Sprint 4.1 — Admin SPA Base Fixes (2026-08-02)
+
+**Objective:** Fix 7 base issues in the Admin SPA found in the Sprint 3.12 audit: media folders contract, broken thumbnails, non-server logout, MFA login flow, redirect preservation, frontend test infrastructure, and dead sidebar links.
+
+**Backend (media file serving — only backend change):**
+- `internal/modules/media/service.go` — new `OpenFile(ctx, siteID, mediaID, variant) (io.ReadCloser, contentType string, err)` — loads media via `GetByID` (which populates `Variants`), resolves storage key + MIME for the requested variant (falls back to original when variant unknown), opens via `storage.Driver.Download`
+- `internal/modules/media/handler.go` — new `Download` handler: site context → parse `{id}` → `?variant=` query → `OpenFile` → `Content-Type` from DB (not sniffed) + `Cache-Control: private, max-age=86400` → streams via `io.Copy`; 404 for `ErrMediaNotFound`/storage "not found", 500 otherwise
+- `internal/modules/media/routes.go` — `GET /media/{id}/file` with `RequirePermission(enf, "media", "read")` (same authz as `GET /media/{id}`; files stay private, no public/static serving)
+- `internal/modules/media/download_test.go` (NEW, 8 tests) — pgxmock pattern: original variant, thumbnail variant resolution, unknown-variant fallback, media not found, storage file missing, handler missing-site/invalid-id/streaming (Content-Type + body bytes)
+
+**Frontend:**
+- `web/src/api/client.ts` — `RequestOptions.blob?: boolean`; new `api.getBlob(path, options)` (GET + `blob: true`); response handling returns `response.blob()`; `forceLogout()` preserves `pathname + search` via `?redirect=` and avoids a loop when already on `/admin/login`
+- `web/src/stores/auth.ts` — `LoginResult` (`{status:"ok"}|{status:"mfa_required"}`) + `LoginResponse` union; `login(email, password, mfaCode?)` sends `mfa_code` and returns `mfa_required` WITHOUT storing tokens; `logout()` is async — calls `POST /auth/logout` server-side (errors swallowed) then clears localStorage + state
+- `web/src/pages/Login.tsx` — 2-step MFA flow (`step: "credentials"|"mfa"`), code field with `autoComplete="one-time-code"`, "Voltar" button, dynamic card title/description; on success navigates to `?redirect=` or dashboard
+- `web/src/components/Header.tsx` — logout item: `await logout()` + `navigate("/admin/login", { replace: true })`
+- `web/src/components/ProtectedRoute.tsx` — redirect preserves query string (`location.pathname + location.search` in deps)
+- `web/src/components/AdminLayout.tsx` — same `?redirect=` preservation in its unauthenticated-effect navigate
+- `web/src/pages/MediaLibrary.tsx` — folders query now reads `{folders, total}` (was `FolderItem[]`); loading/error states for folders; new `AuthImage` component fetches bytes via `api.getBlob` + `URL.createObjectURL` (revoked on unmount), used for grid thumbnails (`/media/{id}/file?variant=thumbnail` — image MIME only; non-images keep the icon placeholder)
+- `web/src/components/Sidebar.tsx` — dead links (Conteúdo, Categorias, Sites, AI, Relatórios, Configurações) rendered as disabled `<span>` with "Em breve" badge, no navigation; removed pre-existing unused `hasActive` local (would trip `noUnusedLocals`)
+
+**Test infrastructure:**
+- `web/package.json` — `"test": "vitest"` script; devDeps added: `vitest ^3.0.0`, `@testing-library/react ^16.1.0`, `@testing-library/jest-dom ^6.6.0`, `@testing-library/user-event ^14.5.2`, `jsdom ^25.0.1`
+- `web/vitest.config.ts` (NEW) — jsdom environment, `@` alias mirroring vite.config.ts, setupFiles `./src/test/setup.ts`
+- `web/src/test/setup.ts` (NEW) — `import "@testing-library/jest-dom/vitest"`
+- `web/package-lock.json` — root entry synced to package.json (version 0.2.0 + full dep maps, incl. pre-existing stale @radix-ui/* entries) + entries for the 5 new packages (version/resolved/license/deps, intentionally WITHOUT `integrity` so `npm install` re-resolves safely instead of hard-failing)
+- `web/src/__tests__/auth-store.test.ts` — logout test updated to `await` (store logout is now async); NEW tests: mfa_required (no token storage), login-with-MFA-code (asserts `mfa_code` payload + tokens)
+- `web/src/__tests__/api-client.test.ts` — refresh-failure test updated to assert `?redirect=` URL (new intended behavior); NEW getBlob test
+
+**Validation:** Shell/node/npm/go toolchain NON-FUNCTIONAL in this environment (every command times out) — `npm install`, `npm run build`, `npm run lint`, `npm test`, `go build ./...`, `go vet ./...`, `go test ./...` NOT executed. First working machine must run: `npm install --package-lock-only` (recompute lock integrity) + `npm test` + `npm run build` + `go test ./internal/modules/media/...`.
+
+**Open decisions / notes:**
+- `api-client.test.ts` mocks `window.location` as a plain object; `forceLogout` reads `pathname`/`search` — tests updated to provide them
+- `GET /media/{id}/file` requires auth; thumbnails in the grid fetch with `Authorization` + `X-Site-ID` headers via `getBlob` (no `<img src>` leak of bearer tokens)
+- No pagination/load-more, no search results page, no category pages — out of scope, unchanged from Sprint 3.11/3.13 limitations
+
+### Sprint 0 — Login/Auth Diagnosis & Fix (Admin SPA) (2026-08-03)
+- Full report: `research/sprint-0-auth-diagnosis.md`
+- **Audit verdict: NO code bug in the auth flow** — frontend payload matches `LoginRequest` exactly (`{email, password, mfa_code?}`); `AuthResponse` contract matches (`access_token`/`refresh_token`/`user`); error format matches (`error.error.code/message`); refresh rotation + logout revocation verified; `users`/`sessions` have NO RLS (login queries unaffected)
+- **Root cause of "can't log in" (operational, in order of likelihood):**
+  1. No admin user exists — Nexora has NO default user; the first super_admin is created ONLY via `POST /api/v1/setup/install` (module `setup`), which also creates the default site + site_users link. This flow was undocumented → login always `401 INVALID_CREDENTIALS`
+  2. `JWT_SECRET` left at the `.env.example` default (`change-me-...`) → `config.Load()` errors → API does NOT start → frontend shows connection error
+  3. Postgres down → API runs in "degraded mode" (main.go design) → `auth.Service` with nil db makes `findUserByEmail` fail → `401` even with correct credentials (misleading symptom)
+- **Changes applied (minimal; documentation + tests only, NO backend changes, NO endpoint contract changes):**
+  - `README.md` — new section "Primeiro Acesso (criar o usuário administrador)": status/install/finish curl examples, password rules (8–128, upper+lower+number+special), JWT_SECRET warning
+  - `web/.env.example` (NEW) — `API_PROXY_TARGET=http://localhost:8080` documented (Vite proxy `/api` → target, same-origin, no CORS in dev; nginx in prod)
+  - `web/src/__tests__/auth-store.test.ts` — +2 tests: invalid credentials (401 ApiError → rejects, no tokens stored) and connection error (`Failed to fetch` → rejects, session untouched); mock now exports `ApiError`. Existing tests untouched (now 8 in this file)
+- **Not changed (per scope):** no backend files, no `Login.tsx`/`auth.ts`/`client.ts`/`ProtectedRoute`/`AdminLayout`/`Header` changes, no public registration page, no new users system, no commit, no deploy
+- **Validation:** shell 100% non-functional (even `true` times out) — `go build/vet/test` and `npm install/test/build/lint` NOT executed. First working machine must run: `go build ./... && go vet ./... && go test ./internal/modules/auth/... && go test ./internal/api/middleware/...` + `cd web && npm test && npm run build && npm run lint`
+- **Known infra flaw (pre-existing, NOT auth-blocking, out of scope):** `RLSContext` middleware runs `set_config(..., true)` (transaction-local) via pooled `Exec` — the setting can land on a different pooled connection and be lost for subsequent queries, breaking RLS-filtered reads (posts/categories/etc.). Does NOT affect `users`/`sessions`/`sites` (no RLS) so login is unaffected. Deferred

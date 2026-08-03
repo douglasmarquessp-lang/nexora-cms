@@ -361,11 +361,11 @@ func TestService_DeleteFolder_WithMock(t *testing.T) {
 	folderID := uuid.New()
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM media WHERE`).
-		WithArgs(folderID).
+		WithArgs(folderID, siteID).
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM folders WHERE`).
-		WithArgs(folderID).
+		WithArgs(folderID, siteID).
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
 
 	mock.ExpectExec(`UPDATE folders SET deleted_at`).
@@ -390,7 +390,7 @@ func TestService_DeleteFolder_NotEmpty(t *testing.T) {
 	siteID := uuid.New()
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM media WHERE`).
-		WithArgs(folderID).
+		WithArgs(folderID, siteID).
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(5))
 
 	err := svc.DeleteFolder(context.Background(), siteID, folderID)

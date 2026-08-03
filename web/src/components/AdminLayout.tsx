@@ -21,9 +21,10 @@ export function AdminLayout() {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      navigate("/admin/login", { replace: true });
+      const redirect = encodeURIComponent(location.pathname + location.search);
+      navigate(`/admin/login?redirect=${redirect}`, { replace: true });
     }
-  }, [isLoading, isAuthenticated, navigate]);
+  }, [isLoading, isAuthenticated, navigate, location.pathname, location.search]);
 
   useEffect(() => {
     if (isAuthenticated) {

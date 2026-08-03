@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -70,6 +70,11 @@ interface MediaListResponse {
   per_page: number;
 }
 
+interface FolderListResponse {
+  folders: FolderItem[];
+  total?: number;
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -88,9 +93,39 @@ function getMediaIcon(mimeType: string) {
 
 function getThumbnailUrl(item: MediaItem): string {
   if (item.mime_type.startsWith("image/")) {
-    return `/api/v1/media/${item.id}?variant=thumbnail`;
+    return `/media/${item.id}/file?variant=thumbnail`;
   }
   return "";
+}
+
+function AuthImage({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    api
+      .getBlob(src)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  if (!url) {
+    return <div className={cn("h-full w-full bg-muted", className)} />;
+  }
+  return <img src={url} alt={alt} className={cn("h-full w-full object-cover", className)} loading="lazy" />;
 }
 
 export function MediaLibraryPage() {
@@ -121,7 +156,10 @@ export function MediaLibraryPage() {
 
   const foldersQuery = useQuery({
     queryKey: ["folders", folderId],
-    queryFn: () => api.get<FolderItem[]>("/media/folders"),
+    queryFn: async () => {
+      const resp = await api.get<FolderListResponse>("/media/folders");
+      return resp.folders || [];
+    },
   });
 
   const uploadMutation = useMutation({
@@ -313,6 +351,14 @@ export function MediaLibraryPage() {
 
       {breadcrumbs}
 
+      {foldersQuery.isLoading && (
+        <LoadingState variant="inline" text="Carregando pastas..." />
+      )}
+
+      {foldersQuery.isError && (
+        <p className="text-sm text-destructive">Não foi possível carregar as pastas.</p>
+      )}
+
       {foldersQuery.data && foldersQuery.data.length > 0 && (
         <div>
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -391,7 +437,7 @@ export function MediaLibraryPage() {
 
                 {thumb ? (
                   <div className="aspect-square overflow-hidden bg-muted">
-                    <img src={thumb} alt={item.original_name} className="h-full w-full object-cover" loading="lazy" />
+                    <AuthImage src={thumb} alt={item.original_name} />
                   </div>
                 ) : (
                   <div className="flex aspect-square items-center justify-center bg-muted">

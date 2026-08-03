@@ -19,9 +19,12 @@ import (
 	"nexora/internal/pkg/storage"
 )
 
-func withSiteID(r *http.Request) *http.Request {
+func withSiteID(r *http.Request, siteIDs ...uuid.UUID) *http.Request {
 	ctx := r.Context()
 	siteID := uuid.New()
+	if len(siteIDs) > 0 {
+		siteID = siteIDs[0]
+	}
 	ctx = context.WithValue(ctx, middleware.CtxSiteID, siteID)
 	return r.WithContext(ctx)
 }

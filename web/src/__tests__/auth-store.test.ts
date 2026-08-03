@@ -6,6 +6,16 @@ vi.mock("@/api/client", () => ({
     get: vi.fn(),
     post: vi.fn(),
   },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      public code: string,
+      message: string,
+    ) {
+      super(message);
+      this.name = "ApiError";
+    }
+  },
 }));
 
 // Mock localStorage
@@ -57,8 +67,89 @@ describe("AuthStore", () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true);
   });
 
+  it("should return mfa_required without storing tokens", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    (api.post as any).mockResolvedValue({
+      status: "mfa_required",
+      message: "MFA code required",
+    });
+
+    const store = useAuthStore.getState();
+    const result = await store.login("test@test.com", "password");
+
+    expect(result.status).toBe("mfa_required");
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it("should reject and not store tokens when credentials are invalid", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api, ApiError } = await import("@/api/client");
+
+    (api.post as any).mockRejectedValue(
+      new ApiError(401, "INVALID_CREDENTIALS", "invalid email or password"),
+    );
+
+    const store = useAuthStore.getState();
+    await expect(store.login("wrong@test.com", "wrong-password")).rejects.toThrow(
+      "invalid email or password",
+    );
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it("should reject and keep session untouched on connection error", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    (api.post as any).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const store = useAuthStore.getState();
+    await expect(store.login("test@test.com", "password")).rejects.toThrow(
+      "Failed to fetch",
+    );
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it("should login with MFA code and store tokens", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    const mockUser = { id: "user-1", email: "test@test.com", name: "Test", role: "admin" };
+
+    (api.post as any).mockResolvedValue({
+      access_token: "access-token-mfa",
+      refresh_token: "refresh-token-mfa",
+      token_type: "Bearer",
+      expires_in: 3600,
+      user: mockUser,
+    });
+
+    const store = useAuthStore.getState();
+    const result = await store.login("test@test.com", "password", "123456");
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/auth/login",
+      expect.objectContaining({ email: "test@test.com", password: "password", mfa_code: "123456" }),
+    );
+    expect(result.status).toBe("ok");
+    expect(localStorageMock.setItem).toHaveBeenCalledWith("access_token", "access-token-mfa");
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
+  });
+
   it("should logout and clear tokens", async () => {
     const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    (api.post as any).mockResolvedValue({});
 
     // Set logged in state
     useAuthStore.setState({
@@ -68,8 +159,9 @@ describe("AuthStore", () => {
 
     localStorageMock.setItem("access_token", "test-token");
 
-    useAuthStore.getState().logout();
+    await useAuthStore.getState().logout();
 
+    expect(api.post).toHaveBeenCalledWith("/auth/logout");
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("access_token");
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("refresh_token");
     expect(useAuthStore.getState().user).toBeNull();

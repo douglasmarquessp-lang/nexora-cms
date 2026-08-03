@@ -8,6 +8,7 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   params?: Record<string, string>;
   formData?: boolean;
+  blob?: boolean;
 }
 
 export class ApiError extends Error {
@@ -56,7 +57,12 @@ async function attemptRefresh(): Promise<boolean> {
 function forceLogout() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
-  window.location.href = "/admin/login";
+  if (window.location.pathname === "/admin/login") {
+    window.location.href = "/admin/login";
+    return;
+  }
+  const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/admin/login?redirect=${redirect}`;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -123,12 +129,18 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (response.status === 204) return undefined as T;
+  if (options.blob) {
+    return (await response.blob()) as unknown as T;
+  }
   return response.json();
 }
 
 export const api = {
   get: <T>(path: string, options?: RequestOptions) =>
     request<T>(path, { ...options, method: "GET" }),
+
+  getBlob: <T = Blob>(path: string, options?: RequestOptions) =>
+    request<T>(path, { ...options, method: "GET", blob: true }),
 
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, { ...options, method: "POST", body }),

@@ -106,6 +106,45 @@ make docker-down    # Parar containers
 
 ---
 
+## Primeiro Acesso (criar o usuário administrador)
+
+O Nexora não possui usuário padrão: o **primeiro usuário (super_admin) é criado pelo
+fluxo de setup da API** (`/api/v1/setup/*`), que também cria o site padrão e vincula o
+admin a ele. Sem isso, o login no Admin SPA sempre retorna `401 INVALID_CREDENTIALS`.
+
+```bash
+# 1. Verificar se o sistema já está instalado
+curl http://localhost:8080/api/v1/setup/status
+# → {"installed": false}
+
+# 2. Instalar: cria o admin + site padrão (executar UMA única vez)
+curl -X POST http://localhost:8080/api/v1/setup/install \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cms_name": "Nexora CMS",
+    "admin_name": "Administrador",
+    "admin_email": "admin@exemplo.com",
+    "password": "SenhaForte@2026",
+    "site_name": "Meu Site",
+    "site_description": "Site padrão",
+    "language": "pt-BR",
+    "timezone": "America/Sao_Paulo",
+    "site_url": "http://localhost:3001"
+  }'
+
+# 3. Confirmar instalação
+curl -X POST http://localhost:8080/api/v1/setup/finish
+```
+
+**Requisitos da senha do admin:** 8–128 caracteres, com maiúscula, minúscula, número e
+caractere especial. **Importante:** `JWT_SECRET` deve ser alterado do valor padrão do
+`.env.example` — caso contrário a API não inicia.
+
+Depois do setup, acesse `http://localhost:3000/admin/login` com o e-mail e a senha
+definidos no passo 2.
+
+---
+
 ## API
 
 Base URL: `http://localhost:8080/api/v1`

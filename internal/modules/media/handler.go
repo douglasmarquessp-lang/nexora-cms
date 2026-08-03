@@ -3,8 +3,10 @@ package media
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -115,6 +117,44 @@ func (h *Handler) Upload(ctx *rest.Context) {
 		"errors": errs,
 		"total":  len(results),
 	})
+}
+
+func (h *Handler) Download(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	mediaID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid media ID")
+		return
+	}
+
+	variant := ctx.Request.URL.Query().Get("variant")
+
+	rc, contentType, err := h.svc.OpenFile(ctx.Request.Context(), siteID, mediaID, variant)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrMediaNotFound):
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "media not found")
+		case strings.Contains(err.Error(), "not found"):
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "file not found")
+		default:
+			h.log.Error("failed to open media file", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to open media file")
+		}
+		return
+	}
+	defer func() { _ = rc.Close() }()
+
+	ctx.ResponseWriter.Header().Set("Content-Type", contentType)
+	ctx.ResponseWriter.Header().Set("Cache-Control", "private, max-age=86400")
+	ctx.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(ctx.ResponseWriter, rc); err != nil {
+		h.log.Error("failed to stream media file", "error", err)
+	}
 }
 
 func (h *Handler) Get(ctx *rest.Context) {

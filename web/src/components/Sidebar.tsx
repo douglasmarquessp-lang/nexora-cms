@@ -17,12 +17,13 @@ interface NavItem {
   label: string;
   path: string;
   icon: React.ReactNode;
+  soon?: boolean;
 }
 
 const mainNav: NavItem[] = [
   { label: "Dashboard", path: "/admin/dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { label: "Conteúdo", path: "/admin/posts", icon: <FileText className="h-4 w-4" /> },
-  { label: "Categorias", path: "/admin/categories", icon: <Tags className="h-4 w-4" /> },
+  { label: "Conteúdo", path: "/admin/posts", icon: <FileText className="h-4 w-4" />, soon: true },
+  { label: "Categorias", path: "/admin/categories", icon: <Tags className="h-4 w-4" />, soon: true },
   { label: "Mídia", path: "/admin/media", icon: <Image className="h-4 w-4" /> },
 ];
 
@@ -32,10 +33,10 @@ const workflowNav: NavItem[] = [
 ];
 
 const systemNav: NavItem[] = [
-  { label: "Sites", path: "/admin/sites", icon: <Globe className="h-4 w-4" /> },
-  { label: "AI", path: "/admin/ai", icon: <Bot className="h-4 w-4" /> },
-  { label: "Relatórios", path: "/admin/reports", icon: <BarChart3 className="h-4 w-4" /> },
-  { label: "Configurações", path: "/admin/settings", icon: <Settings className="h-4 w-4" /> },
+  { label: "Sites", path: "/admin/sites", icon: <Globe className="h-4 w-4" />, soon: true },
+  { label: "AI", path: "/admin/ai", icon: <Bot className="h-4 w-4" />, soon: true },
+  { label: "Relatórios", path: "/admin/reports", icon: <BarChart3 className="h-4 w-4" />, soon: true },
+  { label: "Configurações", path: "/admin/settings", icon: <Settings className="h-4 w-4" />, soon: true },
 ];
 
 interface SidebarProps {
@@ -79,30 +80,45 @@ function NavSection({
   isActive: (path: string) => boolean;
   onNavigate?: () => void;
 }) {
-  const hasActive = items.some((item) => isActive(item.path));
-
   return (
     <div className="mb-4">
       <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50">
         {title}
       </p>
       <div className="space-y-0.5">
-        {items.map((item) => (
-          <Link
-            key={item.path}
-            to={item.path}
-            onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
-              isActive(item.path)
-                ? "bg-sidebar-muted text-sidebar-foreground"
-                : "text-sidebar-foreground/70 hover:bg-sidebar-muted/50 hover:text-sidebar-foreground",
-            )}
-          >
-            {item.icon}
-            {item.label}
-          </Link>
-        ))}
+        {items.map((item) =>
+          item.soon ? (
+            <span
+              key={item.path}
+              title="Em breve"
+              className={cn(
+                "flex cursor-not-allowed items-center gap-3 rounded-md px-2 py-1.5 text-sm font-medium",
+                "text-sidebar-foreground/40",
+              )}
+            >
+              {item.icon}
+              {item.label}
+              <span className="ml-auto rounded-full bg-sidebar-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sidebar-foreground/50">
+                Em breve
+              </span>
+            </span>
+          ) : (
+            <Link
+              key={item.path}
+              to={item.path}
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-3 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+                isActive(item.path)
+                  ? "bg-sidebar-muted text-sidebar-foreground"
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-muted/50 hover:text-sidebar-foreground",
+              )}
+            >
+              {item.icon}
+              {item.label}
+            </Link>
+          ),
+        )}
       </div>
     </div>
   );

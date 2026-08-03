@@ -142,12 +142,17 @@ describe("API Client", () => {
     expect(localStorageMock.getItem("refresh_token")).toBe("new-refresh-token");
   });
 
-  it("should redirect to login when refresh fails", async () => {
+  it("should redirect to login with redirect param when refresh fails", async () => {
     const { api } = await import("@/api/client");
     const originalHref = window.location.href;
 
     Object.defineProperty(window, "location", {
-      value: { href: "http://localhost:3000/admin/dashboard" },
+      value: {
+        origin: "http://localhost:3000",
+        href: "http://localhost:3000/admin/dashboard?page=2",
+        pathname: "/admin/dashboard",
+        search: "?page=2",
+      },
       writable: true,
     });
 
@@ -166,12 +171,29 @@ describe("API Client", () => {
     });
 
     await expect(api.get("/test")).rejects.toThrow("Sessão expirada");
-    expect(window.location.href).toBe("/admin/login");
+    expect(window.location.href).toBe("/admin/login?redirect=%2Fadmin%2Fdashboard%3Fpage%3D2");
 
     Object.defineProperty(window, "location", {
       value: { href: originalHref },
       writable: true,
     });
+  });
+
+  it("should return blob when blob option is set", async () => {
+    const { api } = await import("@/api/client");
+
+    const fakeBlob = new Blob(["image-bytes"], { type: "image/jpeg" });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(fakeBlob),
+    });
+
+    const result = await api.getBlob("/media/123/file");
+
+    expect(result).toBe(fakeBlob);
+    const callUrl = mockFetch.mock.calls[0][0];
+    expect(callUrl).toContain("/api/v1/media/123/file");
   });
 
   it("should throw ApiError with code and message", async () => {
