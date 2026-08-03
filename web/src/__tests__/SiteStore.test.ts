@@ -254,4 +254,92 @@ describe("SiteStore", () => {
     expect(useSiteStore.getState().currentSite).toBeNull();
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("current_site_id");
   });
+
+  it("reset clears all state and removes the persisted site id", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
+    await useSiteStore.getState().fetchSites();
+    expect(useSiteStore.getState().status).toBe("success");
+    expect(localStorageMock.getItem("current_site_id")).toBe("site-1");
+
+    useSiteStore.getState().reset();
+
+    const state = useSiteStore.getState();
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+    expect(state.status).toBe("idle");
+    expect(state.isLoading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.attempts).toBe(0);
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+  });
+
+  it("reset is safe to call repeatedly", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+
+    localStorageMock.setItem("current_site_id", "site-1");
+    useSiteStore.getState().reset();
+    useSiteStore.getState().reset();
+
+    expect(useSiteStore.getState().status).toBe("idle");
+    expect(useSiteStore.getState().currentSite).toBeNull();
+    expect(useSiteStore.getState().sites).toEqual([]);
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+  });
+
+  it("ignores a fetchSites started before reset when it resolves afterwards", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    let resolveFetch: (value: unknown) => void;
+    (api.get as any).mockImplementation(
+      () => new Promise((res) => { resolveFetch = res; }),
+    );
+
+    const promise = useSiteStore.getState().fetchSites();
+    expect(useSiteStore.getState().status).toBe("loading");
+
+    useSiteStore.getState().reset();
+    expect(useSiteStore.getState().status).toBe("idle");
+
+    resolveFetch!(listResponse([site("site-1")]));
+    await promise;
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("idle");
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+    expect(state.error).toBeNull();
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+  });
+
+  it("lets a new session start clean: a stale fetch can never overwrite the new session", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    let resolveA: (value: unknown) => void;
+    let resolveB: (value: unknown) => void;
+    (api.get as any)
+      .mockImplementationOnce(() => new Promise((res) => { resolveA = res; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveB = res; }));
+
+    const fetchA = useSiteStore.getState().fetchSites();
+    useSiteStore.getState().reset();
+    const fetchB = useSiteStore.getState().fetchSites();
+
+    resolveA!(listResponse([site("site-a")]));
+    await fetchA;
+    expect(useSiteStore.getState().currentSite).toBeNull();
+
+    resolveB!(listResponse([site("site-b")]));
+    await fetchB;
+
+    const state = useSiteStore.getState();
+    expect(state.currentSite?.id).toBe("site-b");
+    expect(state.sites).toHaveLength(1);
+    expect(state.status).toBe("success");
+    expect(localStorageMock.getItem("current_site_id")).toBe("site-b");
+  });
 });

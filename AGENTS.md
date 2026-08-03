@@ -794,3 +794,50 @@
 **Explicitly NOT changed (per scope):** backend, API endpoints, auth/login/MFA/refresh/logout, F-01 queryKeys + `enabled` logic and their tests, `MediaLibrary`, Workflow, Plugins, query-cache clearing on logout (F-09 deferred), `Dashboard` (`/health` is global, not site-scoped), `api/client.ts` X-Site-ID header logic.
 
 **Validation:** shell 100% non-functional (every command, including `ls`, hangs until timeout) — `npm test` / `npm run build` / `npm run lint` NOT executed. First working machine must run: `cd web && npx vitest run src/__tests__/SiteStore.test.ts src/__tests__/SiteSwitcher.test.tsx src/__tests__/AdminLayout.test.tsx src/__tests__/queryKeys.test.ts src/__tests__/site-scoped-query-keys.test.tsx && npm run build && npm run lint`. No commit made (per task scope).
+
+### Sprint 5.3 — F-10: Workflow Notifications tab (Admin SPA) (2026-08-03)
+
+**Objective:** Make the "Notifications" tab of `web/src/pages/workflow/Dashboard.tsx` real. Previously it was a stub: it rendered `null` when `jobs.length > 0` and used `(jobs || []).length === 0` as a proxy for "no notifications" (wrong semantics — jobs are not notifications). Frontend-only; no backend changes; no commit.
+
+**Backend endpoints consumed (verified read-only, unchanged):**
+- `GET /workflow/notifications` (`ListNotifications`, handler.go:602) — returns `NotificationList { notifications[], total, unread }` (model.go:335-339); supports `type`/`unread`/`limit`/`offset` query params; requires site context
+- `PUT /workflow/notifications/{notifID}/read` (`MarkNotificationRead`, handler.go:624) — returns `{"status":"ok"}`
+- `POST /workflow/notifications/read-all` (`MarkAllNotificationsRead`, handler.go:651) — returns `{"status":"ok"}`
+- `Notification` model (model.go:194-206): `id`, `site_id`, `notification_type`, `title`, `message`, `severity` (string: info|warning|error|critical|success), `read` (bool), `action_url` (omitempty), `created_at`
+
+**Changes to `web/src/pages/workflow/Dashboard.tsx`:**
+- New frontend types: `Notification` (id, notification_type, title, message, severity, read, action_url?, created_at), `NotificationListResponse` (notifications, total, unread)
+- Query (site-scoped per F-01 pattern, `web/src/lib/queryKeys.ts`):
+  - `queryKey: siteQueryKey(["workflow-notifications"], currentSiteId)` → key shape `["workflow-notifications", siteId]`
+  - `queryFn: () => api.get<NotificationListResponse>("/workflow/notifications", { params: { limit: "50" } })`
+  - `enabled: !!currentSiteId` — no requests without a valid site (registers under `NO_SITE_KEY` placeholder only)
+- Mutations:
+  - `markReadMutation` — `api.put(/workflow/notifications/${id}/read)`, `onSettled: invalidateQueries({ queryKey: ["workflow-notifications"] })` (prefix invalidation covers the site-scoped key)
+  - `markAllReadMutation` — `api.post("/workflow/notifications/read-all")`, same invalidation
+- Tab bar: "Notifications" button shows an unread count badge (`notifications-unread-badge`, `data-testid`) rendered only when `notifUnread > 0`
+- New local components (bottom of file):
+  - `NotificationsPanel` — receives data/isLoading/isError/onRetry/onMarkRead/onMarkAllRead/markAllPending; renders `LoadingState variant="inline"` (loading), `ErrorState` with retry (error, pt-BR), `EmptyState` "Nenhuma notificação" / "Você está em dia." (only when `notifications.length === 0`), list otherwise
+  - `NotificationItem` logic inline — Card with severity badge (`SeverityBadge`), unread dot (`notification-unread-dot` data-testid), title, message, relative + formatted date (`formatRelativeTime`/`formatDate` from `@/lib/utils`), "Marcar como lida" ghost button (only when unread, `notifications-mark-read-{id}` data-testid), "Marcar todas como lidas" outline button (only when `unread > 0`, `notifications-mark-all-read` data-testid)
+  - `SeverityBadge` — color + label maps for info/warning/error/critical/success, fallback to muted
+  - `safeActionUrl(actionUrl)` — `new URL()` parse; only `http:`/`https:` protocols accepted; any other (incl. `javascript:`) → `null`; link rendered with `target="_blank"` + `rel="noreferrer noopener"`, never `dangerouslySetInnerHTML`
+- Summary line: `{total} notificação(ões), {unread} não lida(s)`
+
+**Tests (`web/src/__tests__/workflow-notifications.test.tsx`, NEW, 12 tests):**
+- site-scoped query key `["workflow-notifications", "site-1"]` registered
+- no execution without site (`apiMock.get` never called; key registered under `NO_SITE_KEY`)
+- renders title + message + severity badge (Success/Error)
+- unread count badge on tab button
+- unread vs read distinction (1 unread dot, mark-read + mark-all buttons present)
+- empty state only when notifications array is empty
+- error state + "Tentar novamente" retry recovers
+- mark-read calls `apiMock.put("/workflow/notifications/n1/read")` and query used `{ params: { limit: "50" } }`
+- mark-all calls `apiMock.post("/workflow/notifications/read-all")`
+- `javascript:` action_url renders NO link (no `Ver detalhes`, no `a[href*=javascript:]`)
+- https action_url renders safe link (`href`, `rel="noreferrer noopener"`, `target="_blank"`)
+- Mocks: `@/stores/site` (`useSiteStoreMock` via `vi.hoisted`), `@/api/client` (`apiMock` incl. `put`), pattern from `site-scoped-query-keys.test.tsx`
+
+**Also updated:** `web/src/__tests__/site-scoped-query-keys.test.tsx` — `mockWorkflowApi` now handles `/workflow/notifications` (returns empty list); assertions added for `["workflow-notifications", "site-1"]` and `["workflow-notifications", NO_SITE_KEY]` keys.
+
+**Explicitly NOT changed (per task spec):** backend (incl. workflow handler/model), auth/login/MFA/refresh/logout/forceLogout/sessionReset/SiteStore, F-01 queryKeys + `enabled` logic, MediaLibrary/Plugins/Dashboard pages, F-09 (query-cache clearing on logout — NOT documented in this sprint). No commit made.
+
+**Validation:** shell 100% non-functional (every command, including `true`, hangs until timeout) — `npm test` / `npm run build` / `npm run lint` / `npx vitest` NOT executed. First working machine must run: `cd web && npm install && npx vitest run src/__tests__/workflow-notifications.test.tsx src/__tests__/site-scoped-query-keys.test.tsx && npm run build && npm run lint`.

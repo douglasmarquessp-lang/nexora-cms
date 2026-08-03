@@ -1,3 +1,4 @@
+import { resetSession } from "@/lib/sessionReset";
 import { useSiteStore } from "@/stores/site";
 
 const API_BASE = "/api/v1";
@@ -57,6 +58,7 @@ async function attemptRefresh(): Promise<boolean> {
 function forceLogout() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
+  resetSession();
   if (window.location.pathname === "/admin/login") {
     window.location.href = "/admin/login";
     return;

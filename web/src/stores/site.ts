@@ -48,6 +48,9 @@ interface SiteState {
   retrySites: () => Promise<void>;
   setCurrentSite: (site: Site) => void;
   clearCurrentSite: () => void;
+  /** Full teardown used on logout: invalidates in-flight loads, clears all
+   * state and removes the persisted `current_site_id`. Idempotent. */
+  reset: () => void;
 }
 
 const STORAGE_KEY = "current_site_id";
@@ -68,6 +71,15 @@ function loadPersistedSite(sites: Site[]): Site | null {
 }
 
 export const useSiteStore = create<SiteState>((set, get) => {
+  /**
+   * Monotonic generation counter. Every load() captures the current value at
+   * start; whenever the captured generation differs from the current one the
+   * request result is stale (e.g. the session was reset mid-flight) and is
+   * discarded. reset() bumps it so no in-flight fetchSites can ever apply
+   * results from a previous session.
+   */
+  let loadEpoch = 0;
+
   function applySites(sites: Site[]) {
     const persisted = loadPersistedSite(sites);
 
@@ -84,12 +96,16 @@ export const useSiteStore = create<SiteState>((set, get) => {
   }
 
   async function load(): Promise<void> {
+    const epoch = loadEpoch;
     for (let attempt = 1; attempt <= MAX_SITE_FETCH_ATTEMPTS; attempt++) {
+      if (epoch !== loadEpoch) return;
       set({ status: "loading", isLoading: true, error: null, attempts: attempt });
       try {
         const response = await api.get<SiteListResponse>("/sites");
+        if (epoch !== loadEpoch) return;
         const sites = response.sites || [];
         applySites(sites);
+        if (epoch !== loadEpoch) return;
         set({
           status: sites.length > 0 ? "success" : "empty",
           isLoading: false,
@@ -98,6 +114,7 @@ export const useSiteStore = create<SiteState>((set, get) => {
         });
         return;
       } catch (err) {
+        if (epoch !== loadEpoch) return;
         if (attempt < MAX_SITE_FETCH_ATTEMPTS) {
           await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
           continue;
@@ -134,6 +151,19 @@ export const useSiteStore = create<SiteState>((set, get) => {
     clearCurrentSite: () => {
       localStorage.removeItem(STORAGE_KEY);
       set({ currentSite: null });
+    },
+
+    reset: () => {
+      loadEpoch++;
+      localStorage.removeItem(STORAGE_KEY);
+      set({
+        sites: [],
+        currentSite: null,
+        status: "idle",
+        isLoading: false,
+        error: null,
+        attempts: 0,
+      });
     },
   };
 });

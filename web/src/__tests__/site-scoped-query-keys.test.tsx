@@ -105,6 +105,8 @@ function mockWorkflowApi() {
         return Promise.resolve([]);
       case "/workflow/metrics":
         return Promise.resolve({});
+      case "/workflow/notifications":
+        return Promise.resolve({ notifications: [], total: 0, unread: 0 });
       default:
         return Promise.reject(new Error(`unexpected path: ${path}`));
     }
@@ -214,6 +216,7 @@ describe("WorkflowDashboard page queries", () => {
       expect(keys).toContainEqual(["workflow-jobs", "site-1"]);
       expect(keys).toContainEqual(["workflow-queue", "site-1"]);
       expect(keys).toContainEqual(["workflow-metrics", "site-1"]);
+      expect(keys).toContainEqual(["workflow-notifications", "site-1"]);
     });
   });
 
@@ -235,6 +238,7 @@ describe("WorkflowDashboard page queries", () => {
       expect(keys).toContainEqual(["workflow-jobs", NO_SITE_KEY]);
       expect(keys).toContainEqual(["workflow-queue", NO_SITE_KEY]);
       expect(keys).toContainEqual(["workflow-metrics", NO_SITE_KEY]);
+      expect(keys).toContainEqual(["workflow-notifications", NO_SITE_KEY]);
     });
   });
 

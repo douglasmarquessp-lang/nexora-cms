@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { queryClient } from "@/lib/queryClient";
+import { useSiteStore } from "@/stores/site";
 
 // Mock api client
 vi.mock("@/api/client", () => ({
@@ -30,10 +32,31 @@ const localStorageMock = (() => {
 })();
 Object.defineProperty(window, "localStorage", { value: localStorageMock });
 
+function site(id: string) {
+  return {
+    id,
+    name: `Site ${id}`,
+    slug: id,
+    status: "active",
+    owner_id: "user-1",
+    created_at: "",
+    updated_at: "",
+  };
+}
+
 describe("AuthStore", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorageMock.clear();
     vi.clearAllMocks();
+    useSiteStore.setState({
+      sites: [],
+      currentSite: null,
+      status: "idle",
+      isLoading: false,
+      error: null,
+      attempts: 0,
+    });
+    queryClient.clear();
   });
 
   it("should initialize with unauthenticated state", async () => {
@@ -166,6 +189,95 @@ describe("AuthStore", () => {
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("refresh_token");
     expect(useAuthStore.getState().user).toBeNull();
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
+  it("logout removes current_site_id and fully resets the SiteStore", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    (api.post as any).mockResolvedValue({});
+
+    const siteA = site("site-1");
+    useSiteStore.setState({
+      sites: [siteA],
+      currentSite: siteA,
+      status: "success",
+      isLoading: false,
+      error: null,
+      attempts: 2,
+    });
+    localStorageMock.setItem("access_token", "test-token");
+    localStorageMock.setItem("refresh_token", "refresh-token");
+    localStorageMock.setItem("current_site_id", "site-1");
+
+    await useAuthStore.getState().logout();
+
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+    const state = useSiteStore.getState();
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+    expect(state.status).toBe("idle");
+    expect(state.isLoading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.attempts).toBe(0);
+  });
+
+  it("logout clears the React Query cache (health, plugins, media, workflow)", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api } = await import("@/api/client");
+
+    (api.post as any).mockResolvedValue({});
+    localStorageMock.setItem("access_token", "test-token");
+
+    queryClient.setQueryData(["health"], { status: "ok" });
+    queryClient.setQueryData(["plugins"], { plugins: [] });
+    queryClient.setQueryData(["media", "site-1", null, ""], [{ id: "m1" }]);
+    queryClient.setQueryData(["folders", "site-1", null], [{ id: "f1" }]);
+    queryClient.setQueryData(["workflow-dashboard", "site-1"], { total_jobs: 1 });
+    queryClient.setQueryData(["workflow-jobs", "site-1"], []);
+    queryClient.setQueryData(["workflow-queue", "site-1"], []);
+    queryClient.setQueryData(["workflow-metrics", "site-1"], {});
+
+    await useAuthStore.getState().logout();
+
+    expect(queryClient.getQueryCache().findAll()).toHaveLength(0);
+    expect(queryClient.getQueryData(["health"])).toBeUndefined();
+    expect(queryClient.getQueryData(["plugins"])).toBeUndefined();
+    expect(queryClient.getQueryData(["media", "site-1", null, ""])).toBeUndefined();
+    expect(queryClient.getQueryData(["workflow-jobs", "site-1"])).toBeUndefined();
+  });
+
+  it("logout still clears everything when the /auth/logout endpoint fails", async () => {
+    const { useAuthStore } = await import("@/stores/auth");
+    const { api, ApiError } = await import("@/api/client");
+
+    (api.post as any).mockRejectedValue(new ApiError(500, "INTERNAL", "logout failed"));
+
+    const siteA = site("site-1");
+    useSiteStore.setState({
+      sites: [siteA],
+      currentSite: siteA,
+      status: "success",
+      isLoading: false,
+      error: null,
+      attempts: 2,
+    });
+    localStorageMock.setItem("access_token", "test-token");
+    localStorageMock.setItem("refresh_token", "refresh-token");
+    localStorageMock.setItem("current_site_id", "site-1");
+    queryClient.setQueryData(["media", "site-1", null, ""], [{ id: "m1" }]);
+
+    await useAuthStore.getState().logout();
+
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    expect(localStorageMock.getItem("access_token")).toBeNull();
+    expect(localStorageMock.getItem("refresh_token")).toBeNull();
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+    expect(useSiteStore.getState().status).toBe("idle");
+    expect(useSiteStore.getState().sites).toEqual([]);
+    expect(useSiteStore.getState().currentSite).toBeNull();
+    expect(queryClient.getQueryCache().findAll()).toHaveLength(0);
   });
 
   it("should check auth successfully", async () => {

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/api/client";
+import { resetSession } from "@/lib/sessionReset";
 
 export interface User {
   id: string;
@@ -72,6 +73,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
+    resetSession();
     set({ user: null, isAuthenticated: false });
   },
 

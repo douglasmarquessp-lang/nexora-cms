@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { api } from "@/api/client";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
-import { cn } from "@/lib/utils";
+import { ErrorState } from "@/components/ErrorState";
+import { cn, formatDate, formatRelativeTime } from "@/lib/utils";
 import { useCurrentSiteId, siteQueryKey } from "@/lib/queryKeys";
+import { Bell, CheckCheck, ExternalLink } from "lucide-react";
 
 interface Dashboard {
   total_jobs: number;
@@ -53,7 +55,14 @@ interface Notification {
   message: string;
   severity: string;
   read: boolean;
+  action_url?: string;
   created_at: string;
+}
+
+interface NotificationListResponse {
+  notifications: Notification[];
+  total: number;
+  unread: number;
 }
 
 interface Metrics {
@@ -89,6 +98,7 @@ export function WorkflowDashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [actionMsg, setActionMsg] = useState("");
   const currentSiteId = useCurrentSiteId();
+  const queryClient = useQueryClient();
 
   const { data: dash, refetch: refetchDash } = useQuery({
     queryKey: siteQueryKey(["workflow-dashboard"], currentSiteId),
@@ -114,6 +124,24 @@ export function WorkflowDashboardPage() {
     enabled: !!currentSiteId,
   });
 
+  const { data: notificationsData, isLoading: notificationsLoading, isError: notificationsError, refetch: refetchNotifications } =
+    useQuery({
+      queryKey: siteQueryKey(["workflow-notifications"], currentSiteId),
+      queryFn: () =>
+        api.get<NotificationListResponse>("/workflow/notifications", { params: { limit: "50" } }),
+      enabled: !!currentSiteId,
+    });
+
+  const markReadMutation = useMutation({
+    mutationFn: (notificationId: string) => api.put(`/workflow/notifications/${notificationId}/read`),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["workflow-notifications"] }),
+  });
+
+  const markAllReadMutation = useMutation({
+    mutationFn: () => api.post("/workflow/notifications/read-all"),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["workflow-notifications"] }),
+  });
+
   const actionMutation = useMutation({
     mutationFn: (action: { action: string; title?: string; job_id?: string }) =>
       api.post("/workflow/actions", action),
@@ -131,6 +159,7 @@ export function WorkflowDashboardPage() {
   const tabs = ["overview", "jobs", "queue", "notifications"];
 
   const runningJobs = (jobs || []).filter((j) => j.status === "running");
+  const notifUnread = notificationsData?.unread ?? 0;
 
   return (
     <div className="space-y-6">
@@ -140,16 +169,27 @@ export function WorkflowDashboardPage() {
           <p className="text-sm text-muted-foreground">Monitore e gerencie seus workflows de conteúdo</p>
         </div>
         <div className="flex gap-2">
-          {tabs.map((tab) => (
-            <Button
-              key={tab}
-              variant={activeTab === tab ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Button>
-          ))}
+          {tabs.map((tab) => {
+            const label = tab === "notifications" ? "Notifications" : tab.charAt(0).toUpperCase() + tab.slice(1);
+            return (
+              <Button
+                key={tab}
+                variant={activeTab === tab ? "default" : "outline"}
+                size="sm"
+                onClick={() => setActiveTab(tab)}
+              >
+                {label}
+                {tab === "notifications" && notifUnread > 0 && (
+                  <span
+                    data-testid="notifications-unread-badge"
+                    className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-600 px-1 text-[10px] font-semibold text-white"
+                  >
+                    {notifUnread}
+                  </span>
+                )}
+              </Button>
+            );
+          })}
         </div>
       </div>
 
@@ -277,11 +317,15 @@ export function WorkflowDashboardPage() {
       )}
 
       {activeTab === "notifications" && (
-        <div className="space-y-2">
-          {(jobs || []).length === 0 ? (
-            <EmptyState title="Nenhuma notificação" description="Você está em dia." />
-          ) : null}
-        </div>
+        <NotificationsPanel
+          data={notificationsData}
+          isLoading={notificationsLoading}
+          isError={notificationsError}
+          onRetry={refetchNotifications}
+          onMarkRead={(id) => markReadMutation.mutate(id)}
+          onMarkAllRead={() => markAllReadMutation.mutate()}
+          markAllPending={markAllReadMutation.isPending}
+        />
       )}
     </div>
   );
@@ -409,5 +453,156 @@ function QueueMonitorCard({ items }: { items: QueueItem[] }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+const NOTIFICATION_SEVERITY_COLORS: Record<string, string> = {
+  info: "bg-blue-50 text-blue-700",
+  warning: "bg-yellow-50 text-yellow-700",
+  error: "bg-red-50 text-red-700",
+  critical: "bg-red-100 text-red-800",
+  success: "bg-green-50 text-green-700",
+};
+
+const NOTIFICATION_SEVERITY_LABELS: Record<string, string> = {
+  info: "Info",
+  warning: "Warning",
+  error: "Error",
+  critical: "Critical",
+  success: "Success",
+};
+
+function SeverityBadge({ severity }: { severity: string }) {
+  return (
+    <span
+      className={`rounded px-2 py-0.5 text-xs font-medium ${
+        NOTIFICATION_SEVERITY_COLORS[severity] || "bg-muted text-muted-foreground"
+      }`}
+    >
+      {NOTIFICATION_SEVERITY_LABELS[severity] || severity}
+    </span>
+  );
+}
+
+function safeActionUrl(actionUrl?: string): string | null {
+  if (!actionUrl) return null;
+  try {
+    const url = new URL(actionUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+interface NotificationsPanelProps {
+  data: NotificationListResponse | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+  onMarkRead: (id: string) => void;
+  onMarkAllRead: () => void;
+  markAllPending: boolean;
+}
+
+function NotificationsPanel({
+  data,
+  isLoading,
+  isError,
+  onRetry,
+  onMarkRead,
+  onMarkAllRead,
+  markAllPending,
+}: NotificationsPanelProps) {
+  if (isLoading) {
+    return <LoadingState variant="inline" text="Carregando notificações..." />;
+  }
+
+  if (isError) {
+    return (
+      <ErrorState
+        title="Não foi possível carregar as notificações"
+        message="Ocorreu um erro ao buscar as notificações. Tente novamente."
+        onRetry={onRetry}
+      />
+    );
+  }
+
+  const notifications = data?.notifications ?? [];
+
+  if (notifications.length === 0) {
+    return <EmptyState title="Nenhuma notificação" description="Você está em dia." />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {data?.total ?? notifications.length} notificação(ões), {data?.unread ?? 0} não lida(s)
+        </p>
+        {data && data.unread > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onMarkAllRead}
+            disabled={markAllPending}
+            data-testid="notifications-mark-all-read"
+          >
+            <CheckCheck className="h-4 w-4" />
+            Marcar todas como lidas
+          </Button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {notifications.map((notification) => (
+          <Card
+            key={notification.id}
+            className={cn("p-4", !notification.read && "border-brand-500 bg-brand-50/50")}
+            data-testid="notification-item"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <SeverityBadge severity={notification.severity} />
+                  {!notification.read && (
+                    <span className="h-2 w-2 rounded-full bg-brand-600" data-testid="notification-unread-dot" />
+                  )}
+                </div>
+                <h4 className="mt-1 font-medium text-foreground">{notification.title}</h4>
+                <p className="mt-1 text-sm text-muted-foreground">{notification.message}</p>
+                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{formatRelativeTime(notification.created_at)}</span>
+                  <span>·</span>
+                  <span>{formatDate(notification.created_at)}</span>
+                  {safeActionUrl(notification.action_url) && (
+                    <a
+                      href={safeActionUrl(notification.action_url) ?? undefined}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Ver detalhes
+                    </a>
+                  )}
+                </div>
+              </div>
+              {!notification.read && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onMarkRead(notification.id)}
+                  data-testid={`notifications-mark-read-${notification.id}`}
+                >
+                  <CheckCheck className="h-4 w-4" />
+                  Marcar como lida
+                </Button>
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
   );
 }

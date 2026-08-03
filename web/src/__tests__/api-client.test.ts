@@ -1,11 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { queryClient } from "@/lib/queryClient";
 
 // Mock site store
+const { siteStoreMock } = vi.hoisted(() => ({
+  siteStoreMock: {
+    currentSite: { id: "test-site-id" },
+    reset: vi.fn(() => {
+      window.localStorage?.removeItem?.("current_site_id");
+    }),
+  },
+}));
+
 vi.mock("@/stores/site", () => ({
   useSiteStore: {
-    getState: vi.fn(() => ({
-      currentSite: { id: "test-site-id" },
-    })),
+    getState: () => siteStoreMock,
   },
 }));
 
@@ -38,6 +46,7 @@ describe("API Client", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorageMock.clear();
+    queryClient.clear();
     localStorageMock.setItem("access_token", "test-access-token");
     localStorageMock.setItem("refresh_token", "test-refresh-token");
   });
@@ -194,6 +203,51 @@ describe("API Client", () => {
     expect(result).toBe(fakeBlob);
     const callUrl = mockFetch.mock.calls[0][0];
     expect(callUrl).toContain("/api/v1/media/123/file");
+  });
+
+  it("forceLogout clears the query cache, resets the site store and removes current_site_id", async () => {
+    const { api } = await import("@/api/client");
+    const originalHref = window.location.href;
+
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        href: "http://localhost:3000/admin/media",
+        pathname: "/admin/media",
+        search: "",
+      },
+      writable: true,
+    });
+
+    localStorageMock.setItem("current_site_id", "test-site-id");
+    queryClient.setQueryData(["media", "test-site-id", null, ""], [{ id: "m1" }]);
+    queryClient.setQueryData(["health"], { status: "ok" });
+
+    // First call returns 401, refresh also fails -> forceLogout
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: { code: "UNAUTHORIZED" } }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: { code: "INVALID_TOKEN" } }),
+    });
+
+    await expect(api.get("/test")).rejects.toThrow("Sessão expirada");
+
+    expect(siteStoreMock.reset).toHaveBeenCalled();
+    expect(queryClient.getQueryCache().findAll()).toHaveLength(0);
+    expect(queryClient.getQueryData(["health"])).toBeUndefined();
+    expect(queryClient.getQueryData(["media", "test-site-id", null, ""])).toBeUndefined();
+    expect(localStorageMock.getItem("current_site_id")).toBeNull();
+    expect(localStorageMock.getItem("access_token")).toBeNull();
+
+    Object.defineProperty(window, "location", {
+      value: { href: originalHref },
+      writable: true,
+    });
   });
 
   it("should throw ApiError with code and message", async () => {
