@@ -41,9 +41,12 @@ describe("ProtectedRoute", () => {
     siteStore = {
       sites: [],
       currentSite: null,
+      status: "success",
       isLoading: false,
       error: null,
+      attempts: 0,
       fetchSites: vi.fn(),
+      retrySites: vi.fn(),
       setCurrentSite: vi.fn(),
       clearCurrentSite: vi.fn(),
     };

@@ -762,3 +762,35 @@
 - `AGENTS.md` (this section)
 
 **Validation:** shell 100% non-functional (even `true` times out) — `npm test` / `npm run build` / `npm run lint` / `npx vitest` NOT executed. First working machine must run: `cd web && npm install && npm test && npm run build && npm run lint`. No commit made (per task scope).
+
+### Sprint 5.2 — F-02: SiteStore resilience & site-load failure visibility (2026-08-03)
+
+**Objective:** Make `GET /sites` loading resilient and make the failure state clearly visible instead of silently leaving the app without a site (which produced silent `MISSING_SITE` 400s on site-scoped pages).
+
+**Audit of existing state:** The core F-02 mechanics were ALREADY in place from previous work:
+- `stores/site.ts` had a full status machine (`idle|loading|success|empty|error`), bounded retry (`MAX_SITE_FETCH_ATTEMPTS=3`, backoff `800ms * attempt`), `retrySites`, persisted `current_site_id` validation (`loadPersistedSite` → restore / first-site fallback / storage fix), and stale-data preservation on refresh failure.
+- `SiteSwitcher` had loading/error/empty/success branches; `AdminLayout` had `SiteLoadBanner` for the error state.
+- `Sprint 5.1` F-01 query keys + `enabled: !!currentSiteId` were intact in MediaLibrary/Workflow.
+
+**Gaps found and fixed:**
+1. **False "no sites" during `idle`** — `SiteSwitcher.tsx:59` used `if (status === "empty" || sites.length === 0)`, so before the first fetch ran (status `idle`) the UI flashed "Nenhum site disponível", making the user believe no sites existed. Now `idle` renders the same loading skeleton as `loading`; only `status === "empty"` shows the no-sites message.
+2. **Error with previously-loaded sites hid a working switcher** — on `status === "error"` the Select was replaced by the error pill even when `sites.length > 0` (data is preserved by design on refresh failure). Now the error pill only renders when there is NO loaded data; with existing data the selector stays functional and the `AdminLayout` banner communicates the failed refresh.
+3. **No explicit UI for the empty list** — `AdminLayout.SiteLoadBanner` now also handles `status === "empty"` with a neutral banner (`site-load-banner-empty`, `role="status"`, "Nenhum site disponível para este usuário." + "Recarregar" button), visually distinct from the destructive `site-load-banner` error banner. Requirement 7 (empty ≠ network error, no silent 400 storms — queries are disabled without `currentSiteId`) satisfied.
+
+**How retry works:** `load()` runs a bounded cycle of at most 3 attempts, `set({status:"loading"})` per attempt, awaits `retryDelay(attempt)` (800ms, 1600ms) between failures, and only sets `status:"error"` on the final exhausted attempt. `retrySites()` simply re-enters a fresh cycle. `fetchSites()` guards against concurrent runs (`if (status === "loading") return`). UI surfaces the attempt count (`após N tentativas`), distinguishing the initial failure from a post-retry failure. No infinite loop.
+
+**UI state differentiation (SiteSwitcher + AdminLayout banner):**
+- `loading`/`idle` → skeleton (`site-switcher-skeleton`), no banner.
+- `error` (no data) → destructive pill (`site-switcher-error`) with "Tentar novamente" + full-width destructive banner (`site-load-banner`) with retry; `error` plus existing sites → selector stays + banner explains.
+- `empty` → "Nenhum site disponível" in header + neutral banner (`site-load-banner-empty`) with "Recarregar".
+- `success` → functional Select, no banner.
+- Bamers are full-width (all viewports), satisfying desktop + mobile/Android clarity.
+
+**Tests added/changed (not executed — shell non-functional):**
+- `web/src/__tests__/SiteSwitcher.test.tsx` — +2 tests: idle shows skeleton and NEVER "Nenhum site disponível"/error pill; error with previously-loaded sites keeps the Select functional (no error pill, no false empty).
+- `web/src/__tests__/SiteStore.test.ts` — +1 test: initial state is `idle` (distinct from loading/success/empty/error). Existing 12 tests already cover the required mandatory scenarios (success stores sites + sets currentSite, error → error state + retry available, retry recovery, empty ≠ error, persisted current_site_id restore/fallback + storage fix, F-01 preserved via site-scoped-query-keys tests, API-down-then-recovery).
+- `web/src/__tests__/AdminLayout.test.tsx` (NEW, 4 tests) — calls `fetchSites` once when authenticated; error banner + retry action; distinct empty banner (`role="status"`, no error text); no banner while loading/success. Mocks auth/site stores, Sidebar, Header, ui/sheet, ui/sonner.
+
+**Explicitly NOT changed (per scope):** backend, API endpoints, auth/login/MFA/refresh/logout, F-01 queryKeys + `enabled` logic and their tests, `MediaLibrary`, Workflow, Plugins, query-cache clearing on logout (F-09 deferred), `Dashboard` (`/health` is global, not site-scoped), `api/client.ts` X-Site-ID header logic.
+
+**Validation:** shell 100% non-functional (every command, including `ls`, hangs until timeout) — `npm test` / `npm run build` / `npm run lint` NOT executed. First working machine must run: `cd web && npx vitest run src/__tests__/SiteStore.test.ts src/__tests__/SiteSwitcher.test.tsx src/__tests__/AdminLayout.test.tsx src/__tests__/queryKeys.test.ts src/__tests__/site-scoped-query-keys.test.tsx && npm run build && npm run lint`. No commit made (per task scope).

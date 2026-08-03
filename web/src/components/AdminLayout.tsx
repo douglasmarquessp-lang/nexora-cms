@@ -7,7 +7,8 @@ import { Header } from "./Header";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { AlertTriangle, Info, RefreshCw } from "lucide-react";
 
 export function AdminLayout() {
   const navigate = useNavigate();
@@ -54,6 +55,7 @@ export function AdminLayout() {
 
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onMenuClick={() => setSidebarOpen(true)} />
+        <SiteLoadBanner />
         <main className="flex-1 overflow-y-auto bg-muted/30 p-4 lg:p-6">
           <Outlet />
         </main>
@@ -62,6 +64,69 @@ export function AdminLayout() {
       <Toaster />
     </div>
   );
+}
+
+function SiteLoadBanner() {
+  const { status, error, isLoading, attempts, retrySites } = useSiteStore();
+
+  if (status === "error") {
+    return (
+      <div
+        role="alert"
+        data-testid="site-load-banner"
+        className="flex flex-wrap items-center gap-2 border-b border-destructive/30 bg-destructive/5 px-4 py-2"
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+        <span className="text-xs font-medium text-destructive">
+          Não foi possível carregar os sites{attempts > 1 ? ` (após ${attempts} tentativas)` : ""}
+        </span>
+        {error && (
+          <span className="hidden max-w-[45%] truncate text-xs text-destructive/70 lg:inline" title={error}>
+            {error}
+          </span>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="ml-auto h-6 gap-1 px-2 text-xs"
+          onClick={retrySites}
+          disabled={isLoading}
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "empty") {
+    return (
+      <div
+        role="status"
+        data-testid="site-load-banner-empty"
+        className="flex flex-wrap items-center gap-2 border-b border-muted bg-muted/40 px-4 py-2"
+      >
+        <Info className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span className="text-xs font-medium text-muted-foreground">
+          Nenhum site disponível para este usuário.
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="ml-auto h-6 gap-1 px-2 text-xs"
+          onClick={retrySites}
+          disabled={isLoading}
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          Recarregar
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function LoadingScreen() {

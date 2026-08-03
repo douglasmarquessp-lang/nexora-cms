@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock api client
 vi.mock("@/api/client", () => ({
@@ -19,60 +19,227 @@ const localStorageMock = (() => {
 })();
 Object.defineProperty(window, "localStorage", { value: localStorageMock });
 
+function site(id: string, name = id) {
+  return { id, name, slug: id, status: "active", owner_id: "user-1", created_at: "", updated_at: "" };
+}
+
+function listResponse(sites: ReturnType<typeof site>[]) {
+  return { sites, total: sites.length, page: 1, per_page: 20, total_pages: Math.max(1, sites.length) };
+}
+
+async function resetStore() {
+  const { useSiteStore } = await import("@/stores/site");
+  useSiteStore.setState({
+    sites: [],
+    currentSite: null,
+    status: "idle",
+    isLoading: false,
+    error: null,
+    attempts: 0,
+  });
+}
+
 describe("SiteStore", () => {
-  beforeEach(() => {
-    localStorageMock.clear();
+  beforeEach(async () => {
     vi.clearAllMocks();
+    localStorageMock.clear();
+    await resetStore();
   });
 
-  it("should fetch sites and set currentSite to first site", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts in the idle state, distinct from loading/success/empty/error", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("idle");
+    expect(state.isLoading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.attempts).toBe(0);
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+  });
+
+  it("loads sites successfully and selects the first site", async () => {
     const { useSiteStore } = await import("@/stores/site");
     const { api } = await import("@/api/client");
 
-    const mockSites = [
-      { id: "site-1", name: "Site 1", slug: "site-1", status: "active", owner_id: "user-1", created_at: "", updated_at: "" },
-      { id: "site-2", name: "Site 2", slug: "site-2", status: "active", owner_id: "user-1", created_at: "", updated_at: "" },
-    ];
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
 
-    (api.get as any).mockResolvedValue({ sites: mockSites, total: 2, page: 1, per_page: 20, total_pages: 1 });
-
-    const store = useSiteStore.getState();
-    await store.fetchSites();
+    await useSiteStore.getState().fetchSites();
 
     const state = useSiteStore.getState();
-    expect(state.sites).toEqual(mockSites);
+    expect(state.sites).toHaveLength(2);
     expect(state.currentSite?.id).toBe("site-1");
+    expect(state.status).toBe("success");
     expect(state.isLoading).toBe(false);
     expect(state.error).toBeNull();
+    expect(localStorageMock.getItem("current_site_id")).toBe("site-1");
   });
 
-  it("should restore persisted site from localStorage", async () => {
+  it("restores the persisted current site when it still exists", async () => {
     localStorageMock.setItem("current_site_id", "site-2");
 
     const { useSiteStore } = await import("@/stores/site");
     const { api } = await import("@/api/client");
 
-    const mockSites = [
-      { id: "site-1", name: "Site 1", slug: "site-1", status: "active", owner_id: "user-1", created_at: "", updated_at: "" },
-      { id: "site-2", name: "Site 2", slug: "site-2", status: "active", owner_id: "user-1", created_at: "", updated_at: "" },
-    ];
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
 
-    (api.get as any).mockResolvedValue({ sites: mockSites, total: 2, page: 1, per_page: 20, total_pages: 1 });
-
-    const store = useSiteStore.getState();
-    await store.fetchSites();
+    await useSiteStore.getState().fetchSites();
 
     const state = useSiteStore.getState();
     expect(state.currentSite?.id).toBe("site-2");
+    expect(state.status).toBe("success");
+  });
+
+  it("falls back to the first site when the persisted site no longer exists and fixes the stored id", async () => {
+    localStorageMock.setItem("current_site_id", "ghost-site");
+
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
+
+    await useSiteStore.getState().fetchSites();
+
+    const state = useSiteStore.getState();
+    expect(state.currentSite?.id).toBe("site-1");
+    expect(localStorageMock.getItem("current_site_id")).toBe("site-1");
+  });
+
+  it("exposes a loading state while sites are being fetched", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    let resolveFetch: (value: unknown) => void;
+    (api.get as any).mockImplementation(
+      () => new Promise((res) => { resolveFetch = res; }),
+    );
+
+    const promise = useSiteStore.getState().fetchSites();
+
+    expect(useSiteStore.getState().status).toBe("loading");
+    expect(useSiteStore.getState().isLoading).toBe(true);
+
+    resolveFetch!(listResponse([site("site-1")]));
+    await promise;
+
+    expect(useSiteStore.getState().status).toBe("success");
+    expect(useSiteStore.getState().currentSite?.id).toBe("site-1");
+  });
+
+  it("marks the store as error (not empty) when all attempts fail", async () => {
+    vi.useFakeTimers();
+
+    const { useSiteStore, MAX_SITE_FETCH_ATTEMPTS } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockRejectedValue(new Error("Network error"));
+
+    const promise = useSiteStore.getState().fetchSites();
+    await vi.runAllTimersAsync();
+    await promise;
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("error");
+    expect(state.error).toBe("Network error");
+    expect(api.get).toHaveBeenCalledTimes(MAX_SITE_FETCH_ATTEMPTS);
+    expect(state.attempts).toBe(MAX_SITE_FETCH_ATTEMPTS);
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+    expect(state.isLoading).toBe(false);
+  });
+
+  it("recovers via retry after an initial failure (API down then back)", async () => {
+    vi.useFakeTimers();
+
+    const { useSiteStore, MAX_SITE_FETCH_ATTEMPTS } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockRejectedValue(new Error("Network error"));
+
+    const initial = useSiteStore.getState().fetchSites();
+    await vi.runAllTimersAsync();
+    await initial;
+
+    expect(useSiteStore.getState().status).toBe("error");
+    expect(api.get).toHaveBeenCalledTimes(MAX_SITE_FETCH_ATTEMPTS);
+
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
+
+    await useSiteStore.getState().retrySites();
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("success");
+    expect(state.error).toBeNull();
+    expect(state.isLoading).toBe(false);
+    expect(state.currentSite?.id).toBe("site-1");
+    expect(localStorageMock.getItem("current_site_id")).toBe("site-1");
+  });
+
+  it("does not loop forever while retrying", async () => {
+    vi.useFakeTimers();
+
+    const { useSiteStore, MAX_SITE_FETCH_ATTEMPTS } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockRejectedValue(new Error("Network error"));
+
+    const promise = useSiteStore.getState().fetchSites();
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(api.get).toHaveBeenCalledTimes(MAX_SITE_FETCH_ATTEMPTS);
+    expect(useSiteStore.getState().status).toBe("error");
+  });
+
+  it("treats an empty list as 'no sites available', distinct from an error", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockResolvedValue(listResponse([]));
+
+    await useSiteStore.getState().fetchSites();
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("empty");
+    expect(state.error).toBeNull();
+    expect(state.isLoading).toBe(false);
+    expect(state.sites).toEqual([]);
+    expect(state.currentSite).toBeNull();
+
+    const invalid = localStorageMock.getItem("current_site_id");
+    expect(invalid).toBeNull();
+  });
+
+  it("does not clear previously loaded sites/currentSite when a refresh fails", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    (api.get as any).mockResolvedValue(listResponse([site("site-1"), site("site-2")]));
+    await useSiteStore.getState().fetchSites();
+    expect(useSiteStore.getState().currentSite?.id).toBe("site-1");
+
+    vi.useFakeTimers();
+    (api.get as any).mockRejectedValue(new Error("Network error"));
+
+    const promise = useSiteStore.getState().retrySites();
+    await vi.runAllTimersAsync();
+    await promise;
+
+    const state = useSiteStore.getState();
+    expect(state.status).toBe("error");
+    expect(state.sites).toHaveLength(2);
+    expect(state.currentSite?.id).toBe("site-1");
   });
 
   it("should set current site and persist to localStorage", async () => {
     const { useSiteStore } = await import("@/stores/site");
 
-    const site = { id: "site-3", name: "Site 3", slug: "site-3", status: "active", owner_id: "user-1", created_at: "", updated_at: "" };
-
-    const store = useSiteStore.getState();
-    store.setCurrentSite(site);
+    const s = site("site-3", "Site 3");
+    useSiteStore.getState().setCurrentSite(s);
 
     expect(useSiteStore.getState().currentSite?.id).toBe("site-3");
     expect(localStorageMock.setItem).toHaveBeenCalledWith("current_site_id", "site-3");
@@ -81,42 +248,10 @@ describe("SiteStore", () => {
   it("should clear current site", async () => {
     const { useSiteStore } = await import("@/stores/site");
 
-    const site = { id: "site-1", name: "Site 1", slug: "site-1", status: "active", owner_id: "user-1", created_at: "", updated_at: "" };
-
-    const store = useSiteStore.getState();
-    store.setCurrentSite(site);
-    store.clearCurrentSite();
+    useSiteStore.getState().setCurrentSite(site("site-1", "Site 1"));
+    useSiteStore.getState().clearCurrentSite();
 
     expect(useSiteStore.getState().currentSite).toBeNull();
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("current_site_id");
-  });
-
-  it("should handle fetch errors gracefully", async () => {
-    const { useSiteStore } = await import("@/stores/site");
-    const { api } = await import("@/api/client");
-
-    (api.get as any).mockRejectedValue(new Error("Network error"));
-
-    const store = useSiteStore.getState();
-    await store.fetchSites();
-
-    const state = useSiteStore.getState();
-    expect(state.error).toBe("Network error");
-    expect(state.isLoading).toBe(false);
-    expect(state.sites).toEqual([]);
-  });
-
-  it("should handle empty sites list", async () => {
-    const { useSiteStore } = await import("@/stores/site");
-    const { api } = await import("@/api/client");
-
-    (api.get as any).mockResolvedValue({ sites: [], total: 0, page: 1, per_page: 20, total_pages: 0 });
-
-    const store = useSiteStore.getState();
-    await store.fetchSites();
-
-    const state = useSiteStore.getState();
-    expect(state.sites).toEqual([]);
-    expect(state.currentSite).toBeNull();
   });
 });
