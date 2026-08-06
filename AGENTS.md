@@ -841,3 +841,336 @@
 **Explicitly NOT changed (per task spec):** backend (incl. workflow handler/model), auth/login/MFA/refresh/logout/forceLogout/sessionReset/SiteStore, F-01 queryKeys + `enabled` logic, MediaLibrary/Plugins/Dashboard pages, F-09 (query-cache clearing on logout — NOT documented in this sprint). No commit made.
 
 **Validation:** shell 100% non-functional (every command, including `true`, hangs until timeout) — `npm test` / `npm run build` / `npm run lint` / `npx vitest` NOT executed. First working machine must run: `cd web && npm install && npx vitest run src/__tests__/workflow-notifications.test.tsx src/__tests__/site-scoped-query-keys.test.tsx && npm run build && npm run lint`.
+
+### Sprint 5.4 — Frontend Test Suite Green (2026-08-04)
+
+**Objective:** Make the full vitest suite + `tsc -b` + `npm run lint` + `npm run build` pass. Only tests and test infrastructure changed — no production code, no F-01/F-02/F-09/F-10 logic, no commit.
+
+**Final state (validated):** `npx vitest run` = 10 files, **82/82 tests pass**; `npx tsc -b` exit 0; `npm run lint` 0 errors (45 pre-existing `no-explicit-any` warnings); `npm run build` exit 0 (single >500kB chunk warning, pre-existing).
+
+**Fixes applied (tests only):**
+
+1. **Global cleanup** (`src/test/setup.ts`) — added `afterEach(() => { cleanup(); })` from `@testing-library/react`. RTL 16 only auto-cleans when `afterEach` is global; vitest runs without `globals: true`, so DOM mounted by earlier tests leaked into later ones (multiple `Notifications` components → duplicate `notifications-unread-badge`; tab-render count became test index). Alone this fixed 6 failures (4 `AdminLayout` + 2 `workflow-notifications`) and eliminated all 4 "Unhandled Errors" (`jobs.filter is not a function` from `Dashboard.tsx:382`).
+2. **`workflow-notifications.test.tsx`** — `mockWorkflowApi` defensive `Promise.resolve({})` → explicit per-path returns (`/workflow`, `/workflow/queue` → `[]`; dashboard/metrics → `{}`); simplified to respect switch narrowing (removed impossible `path === "/workflow"` comparisons inside `case "/workflow/dashboard"`).
+3. **`auth-store.test.ts`** — added `useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: true })` to `beforeEach` (store leaked auth state between tests; prior tests left `isAuthenticated: true`).
+4. **`SiteSwitcher.test.tsx`** — mock store migrated to `vi.hoisted` (`useSiteStoreMock`) to fix TS build error (`mockImplementation` on typed import); Radix mock completed (was missing `Group`, `Viewport`, `ScrollUpButton/Down`, `Label`, `ItemIndicator`, `ItemText`, `Separator` — `select.tsx:7` destructures `SelectPrimitive.Group`); replaced native-`<select>` mock with a `vi.hoisted` `selectBridge` + context-free clickable `role="option"` items (jsdom's native select only honors a value if a matching `<option>` is a direct child — div-wrapped options made the controlled value stick as `""`); change test now clicks `option-site-2` instead of `fireEvent.change` on the native select.
+5. **`ProtectedRoute.test.tsx`** — mocks migrated to `vi.hoisted` (`useAuthStoreMock`, `useSiteStoreMock`) — same TS build fix as #4.
+6. **`vitest.config.ts`** — `testTimeout: 15000`, `hookTimeout: 15000` (ProtectedRoute runs ~12.6s in the full parallel suite; 5s default caused intermittent timeouts).
+7. **`queryKeys.test.ts`** — "keeps resource-name prefix invalidation working" asserted the TanStack v4 contract (`invalidateQueries` returns a count). v5 returns `void`; rewritten to `getQueryCache().findAll({ queryKey: ["media"] })` + `q.state.isInvalidated` (2 invalidated, 2 total).
+8. **`api-client.test.ts`** — `mock.calls[0]` → `mock.calls[0]!` (7× `noUncheckedIndexedAccess`); `err as ApiError` → `err as InstanceType<typeof ApiError>` (3× — `ApiError` destructured from dynamic `await import` is a value-only binding).
+
+**Not changed:** any production file (`src/pages/*`, `src/components/*` except none, `src/stores/*`, `src/api/client.ts`, `src/lib/queryKeys.ts`, `Dashboard.tsx`, etc.), `package.json`/`package-lock.json` (no dep changes, no npm install), F-01/F-02/F-09/F-10 logic and their test semantics.
+
+**Validation:** EXECUTED in this environment (shell functional): `npx vitest run` (82/82), `npx tsc -b` (0), `npm run lint` (0 errors), `npm run build` (0). No commit made.
+
+### Sprint 5.5 — F-11: Dashboard Inteligente (executive panel) (2026-08-05)
+
+**Objective:** Transform the main Admin Dashboard from a 2-card health stub into an executive CMS panel consuming pre-existing backend endpoints. No refactor, no architecture change, F-01/F-02/F-09/F-10 intact.
+
+**Endpoints consumed (all verified against backend contracts):**
+- `GET /health` — kept as-is (global, not site-scoped, `["health"]` key unchanged)
+- `GET /workflow/dashboard` — `WorkflowDashboard` struct (workflow/model.go:208: `running_jobs`, `completed_jobs`, `failed_jobs`, `success_rate`, `scheduled_publications`, `queue_size`, `pending_review`, ...)
+- `GET /editorial/stats` — `DashboardStats` struct (editorial/model.go:62: `published_posts`, `draft_posts`, `recent_posts[]`)
+- `GET /workflow/history?limit=10` — `HistoryEntry[]` (workflow/model.go:177; action strings `workflow.started|paused|resumed|cancelled|retry|completed`, `error_message` for failures)
+
+**Changes — single file rewrite: `web/src/pages/Dashboard.tsx`**
+- 3 new site-scoped React Query queries using the F-01 pattern: `siteQueryKey(["dashboard-workflow"], currentSiteId)`, `["dashboard-editorial"]`, `["dashboard-history"]` — all `enabled: !!currentSiteId` (no requests without valid site; register under NO_SITE_KEY only). `["health"]` stays global. Prefix invalidations work via resource-name-first keys.
+- 10 metric cards (grid `md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`): Status do Sistema (health), Jobs em execução (running_jobs), Jobs concluídos (completed_jobs), Jobs com erro (failed_jobs), Taxa de sucesso (success_rate %), Jobs agendados (scheduled_publications), Itens na fila (queue_size), Artigos publicados (published_posts), Artigos em rascunho (draft_posts), Conteúdo pendente (pending_review). Per-card Skeleton while site queries load.
+- `ActivitiesPanel` — merges `recent_posts` (post kind, Publicado/Rascunho/Agendado -> green) + workflow history (workflow kind, action label / Falha if `error_message` -> red; blue otherwise), sorted desc, top 10, `formatRelativeTime`; `LoadingState`/`ErrorState`(retry)/`EmptyState` from shared components.
+- `QuickAccessCard` — shortcuts Workflow (`/admin/workflow`), Media Library (`/admin/media`), Plugins (`/admin/plugins`) as `Button asChild`+`Link`; Sites (`/admin/sites`) rendered as disabled "Em breve" span (route doesn't exist yet — consistent with Sidebar `soon: true`).
+- Shared `StatCard` local component with optional icon + loading skeleton; `buildActivities`/`workflowActionLabel`/`postStatusLabel`/`StatusDot` helpers. Uses existing `Card`/`Button`/`Skeleton`/`LoadingState`/`EmptyState`/`ErrorState`/lucide icons — no new components, no new dependencies.
+
+**Tests (`web/src/__tests__/dashboard.test.tsx`, NEW, 7 tests):** site-scoped keys `["dashboard-workflow|dashboard-editorial|dashboard-history", "site-1"]` registered; no site-scoped execution without site (`apiMock.get` not called, keys under NO_SITE_KEY); renders metric cards + combined values (90.5%); renders activities (Post site-1, Workflow iniciado), quick shortcuts, Sites "Em breve"; Site A cache isolated from Site B / NO_SITE_KEY; `["health"]` remains global; prefix invalidation `["dashboard-workflow"]` isolates from `["dashboard-editorial"]`/`["health"]`. Uses `vi.hoisted` `useSiteStoreMock`/`apiMock` + `mockDashboardApi` switch pattern from `site-scoped-query-keys.test.tsx`.
+
+**Validation:** EXECUTED in this environment: `npx tsc -b` (0), `npm run build` (0, pre-existing >500kB chunk warning), `npm run lint` (0 errors, 45 pre-existing warnings — no new), `npx vitest run` = **11 files, 89/89 pass** (82 existing + 7 new). No commit made.
+
+### Sprint 5.6 — F-21: SEO Intelligence Engine real (2026-08-05)
+
+**Objective:** Replace every fake `simScore()` heuristic in the `seoengine` module with real deterministic analysis (weighted 0–100), persist real audits with articles, and add an optional configurable publish block (422 when SEO score < `SEO_MIN_PUBLISH_SCORE`).
+
+**Architecture decisions:**
+1. **Deterministic-only analysis.** All scores computed locally from text — zero API cost, zero latency, no `math/rand`. `simScore()` (which returned a constant midpoint) deleted.
+2. **`internal/ai` reused for the heavy checks** (readability via `ScoreReadabilityDetailed`, duplicate blocks via `CheckDuplicateBlocks`) — injected as `ai.QualityChecker`; nil-safe fallbacks keep the module fully functional without AI.
+3. **Publish gate is an interface defined in `publisher`** (`PublishGate`), implemented by `seoengine` — no hard module import from publisher to seoengine (seoengine imports publisher for the input type only; no cycle).
+4. **Fail-open gate semantics:** gate errors → allow publish (logged); stored audit score on the linked post wins, otherwise the gate runs the same deterministic analysis inline on title+content (no DB write).
+5. **Keyword research stays out of scope** (user decision): `AnalyzeKeywords` volume/difficulty/etc. now use stable FNV-1a hashes per keyword (`stableScore`) instead of constants — deterministic, no real research claims.
+
+**New file `internal/modules/seoengine/analyzer.go`:**
+- Weights (sum 100): title 15, meta 10, headings 15, keyword 20, readability 10, internal links 10, external links 5, EEAT 10, images/ALT 5
+- `ArticleAnalysisInput{Title, MetaDescription, Slug, Content, Keyword, Language}` + `ArticleAnalysis` (12 sub-scores + density, word count, link/image counts, `DuplicateCount`, `Suggestions []AuditIssue`)
+- `AnalyzeArticle(ctx, in, qc)` — pure function, no DB: `analyzeTitle` (30–60 chars ideal, keyword presence), `analyzeMeta` (150–160 chars, keyword), `analyzeHeadings` (markdown `#`/`##`/`###` + HTML h1-h3 regexps; exactly one H1, H2≥2, H3≥1), `analyzeKeyword` (density band 1–3%, first-100-words + title presence), `analyzeReadability` (delegates to `qc.ScoreReadabilityDetailed`; nil → 50), `analyzeLinks` (markdown links relative→internal, http(s)→external; bare-URL regex with markdown destinations stripped to avoid double-counting), `analyzeEEAT` (author/date/source/keyword-coverage signals), `analyzeImages` (markdown `![alt]` + HTML alt), `analyzeSlug`, `analyzeSchema` (JSON-LD regex)
+- Additional deterministic dimensions: `analyzePassiveVoice` (PT `foi/foram/é/são… + -ado/-ida` regex, EN `is/was/been… + -ed` regex; score = 100 − count×8), `analyzeSentenceVariation` (avg sentence length 12–22 ideal), `analyzeFreshness` (year ≥ current−2 → 100, any year → 60, none → 30), `analyzeDuplicates` (via `qc.CheckDuplicateBlocks`, score = 100 − blocks×20), `TopicalAuthorityScore` = keyword term coverage × 100, `ParagraphScore` = (headings+readability)/2
+- Bilingual messages: `bi{pt, en}` pair struct + `issue(field, msg, sugg bi, score, priority, lang)`; EN selected when `Language == "en"`, default PT
+- `extractContentText(contentJSON)` — converts posts JSONB blocks (`{"type":"heading|text", "text":…}` incl. nested `content`) to markdown-ish text; invalid JSON falls back to raw string
+- `shingleSimilarity(a, b)` — 3-word shingle Jaccard for pairwise duplicate detection; `deriveKeyword` (longest non-stopword from title), `tokenize`, `clampScore`, `round2`, `keywordCoverage`
+
+**Service rewrites (`internal/modules/seoengine/service.go`):**
+- `Service` gains `qualityChecker ai.QualityChecker` + `SetQualityChecker`; wired in `cmd/api/main.go` as `seoengineSvc.SetQualityChecker(aiModule.NewQualityChecker())`
+- `RunFullAudit` — loads project + linked post (title/slug/content::text/excerpt/metadata->>'meta_description'), runs `AnalyzeArticle`, persists real scores into `seo_audits` (incl. paragraph/passive/sentence-variation/duplicate/freshness), updates `seo_projects` (seo_score, readability, eeat, freshness, technical = avg(title,meta,slug,heading,schema), checklist), inserts `seo_scores` (content = avg(readability,eeat,freshness,keyword), linking = avg(internal,external), metadata = avg(meta,title), topical authority, multilingual = 50 neutral constant), and updates the post row when `PostID` set
+- `buildChecklist(analysis)` — derives `ChecklistItem`s from real `Suggestions` via field→category map (title→CategoryTitle, internal/external_link→CategoryLink, passive_voice/sentence_variation→CategoryReadability, …)
+- `GenerateChecklist` — runs the real analysis, persists to `seo_projects.checklist`
+- `AnalyzeContent` / `AnalyzeTechnical` — real analysis filtered by field (readability/eeat/freshness/passive/sentence-variation vs title/meta/slug/headings/image_alt/schema)
+- `GetInternalLinkingSuggestions` — queries up to 25 site posts, scores each by `keywordCoverage(title+slug)`, top 5 with relevance ≥ 40, real slug/title anchors
+- `DetectDuplicates` — loads up to 20 site posts (excluding project's own), pairwise `shingleSimilarity` ≥ 0.6 → `DuplicateContent`
+- `AnalyzeKeywords` — deterministic `stableScore(keyword+":dimension")` FNV-1a values; cannibalization only when keywords overlap; `avgKeywordScore` cluster authority
+- `CheckPublishScore(ctx, publisher.PublishGateInput)` — stored `posts.seo_score` when `seo_analyzed_at` set (DB errors fail over to inline), else inline deterministic analysis
+- `simScore` deleted; helpers `stableScore`/`avgKeywordScore`/`fnv64` added
+
+**Publish gate (`internal/modules/publisher/gate.go` + service/handler):**
+- `PublishGateInput{SiteID, PostID, Title, Content, Language}` + `PublishGate` interface + `ErrSEOPublishBlocked`
+- `Service.publishGate` + `minPublishScore` (from `cfg.SEO.MinPublishScore`; 0 disables) + `SetPublishGate` setter + `checkPublishGate` (skip when disabled/empty; gate error → fail-open; score < min → `ErrSEOPublishBlocked` wrapping score info)
+- Enforced in `PublishArticle` when `req.PostID != nil` (stored-score path) and always in `PublishGeneratedArticle` (inline path) — the single funnel covers all 4 auto-content engines
+- `handler.go` `Publish`: new branch `ErrSEOPublishBlocked` → `422 SEO_SCORE_BELOW_MINIMUM`
+- Wired in `cmd/api/main.go`: `publisherSvc.SetPublishGate(seoengineSvc)` right after `SetQualityChecker`
+
+**Config + migration:**
+- `internal/pkg/config/config.go` — `SEOConfig{MinPublishScore float64}` (zero = gate disabled), `getEnvFloat` helper, `SEO_MIN_PUBLISH_SCORE=80` default; `.env.example` new `# === SEO Intelligence Engine ===` section
+- `migrations/000026_add_post_seo_columns.{up,down}.sql` (NEW) — `posts`: `seo_score NUMERIC(5,2) DEFAULT 0`, `seo_analyzed_at TIMESTAMPTZ`, `seo_issues JSONB DEFAULT '[]'`, index `idx_posts_site_seo_score`
+
+**Tests:**
+- `internal/modules/seoengine/analyzer_test.go` (NEW, 44 tests) — determinism, score ranges, heading detection, density band, title length bands, keyword penalty, meta empty, no/multi H1, passive voice, freshness (no date/recent year), images alt, JSON-LD, links (internal/external + no double-count), EEAT signals, slug, weights sum, nil quality checker, `extractContentText` (headings/nested/invalid/empty), shingle similarity, clamp/round2, buildChecklist, filterIssues, issueMessages, stableScore, tokenize, keywordCoverage, deriveKeyword
+- `internal/modules/seoengine/gate_test.go` (NEW, 7 tests) — stored score path (pgxmock), inline fallback on ErrNoRows/DB error/no post, no-DB inline, determinism
+- `internal/modules/publisher/gate_test.go` (NEW, 7 tests) — disabled gate (min=0 / nil gate), empty content skip, blocks low score with input passthrough, allows high score with PostID passthrough, fail-open on gate error, `PublishGeneratedArticle` blocked before any DB access, manual publish unchanged without gate
+- Pre-existing `internal/ai` failures confirmed NOT caused by this sprint (verified via `git stash` + test on clean tree): `TestGeminiProvider_GenerateStream_InvalidKey`, `TestGeminiProvider_Health_InvalidKey` (network-dependent), `TestCheckGrammarDetails_Issues`, `TestFindRepeatedWords/multiple_pairs`, `TestScoreReadabilityDetailed`, `TestCountSyllables` (Sprint 3.9 tests never executed — shell was broken then)
+
+**Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 26 packages ok; only the 6 pre-existing `internal/ai` failures above (unrelated). No commit made.
+
+### Sprint 5.7 — Translation Intelligence Engine (2026-08-05)
+
+**Objective:** New `translation` module: PT↔EN article translation pipeline with native-quality review, per-language SEO regeneration, cultural localization, persistent glossary, persisted quality scores, and per-language publishing.
+
+**Architecture decisions:**
+1. **Pipeline: translate → native_review → seo_review → publish** (`StageOrder` in model.go). `ApproveStage` resumes at `nextStageType`; `RejectStage` reopens the *previous* stage with `attempt+1` and sets job to `waiting_review`. Job transitions: pending → running → waiting_review → running → completed; cancel allowed from pending/running.
+2. **Deterministic-first quality gating, AI for translation only.** `runNativeReview` scores the AI translation deterministically (grammar via `ai.QualityChecker.CheckGrammarDetails`, fluency via `ScoreReadabilityDetailed` + literal-marker/repeated-word penalties) and re-rewrites the worst paragraph via `PromptTypeRevision` up to `MaxRewriteAttempts=2` until `MinNativeReviewScore=70`. `runSEOReview` requires `MinSEOScore=60` (recompute + rewrite fallback, then `fallbackSEO` deterministic metadata). No `math/rand` anywhere.
+3. **Seamless mock fallback.** `ai.Manager`/`Prompts().Build` optional; when Build fails (mock provider returns non-JSON `"Mock response for: …"`), translate falls back to source text and `generateSEO` falls back to deterministic metadata (title from heading, `truncateTo` 155-char description) — the whole pipeline runs DB-only in tests.
+4. **Concurrency safety.** `StartJob`/`ApproveStage`/`RejectStage` lock the job row with `SELECT … FOR UPDATE`; `executePipeline` runs in a goroutine and re-checks status each stage.
+5. **Cultural localization** (`localize.go`): R$→US$, R$X.XXX,XX→$X,XXX.XX, km→miles, dates (dd/mm/yyyy→MM/DD/YYYY), Brasil→Estados Unidos (PT→EN) and reverse; applied on top of AI output.
+6. **Glossary** (`glossary.go`): global + per-project terms, direction-aware (source/target language), word-boundary + case-insensitive replacement, `forbidden` terms never translated (protected), `GlossaryConsistency` counts protected/applied for the score.
+7. **Score persistence** (`score.go`): `TranslationScore` with Grammar .25 / Fluency .20 / Naturalness .20 / SEO .15 (via `seoengine.AnalyzeArticle`) / Consistency .10 / Localization .10 → Overall; stored as JSONB in `translation_jobs.translation_score`.
+8. **Publishing** (`runPublish`): creates a new post in the target site via `posts.Service.Create` (content blocks via `textToBlocks`, `PostMeta{language, translated_from}`), then `publisher.Service.PublishArticle` (SEO gate applies); falls back to `PublishGeneratedArticle` when no valid user ID.
+9. **pgxmock v3 quirk discovered (test-only):** reflect-based `rowSets.Scan` cannot assign a plain `string` cell into a *named* string type dest (`JobStatus`) — it returns an error which `connRow.Scan` silently swallows, leaving the field zero. Fix: `scanJob` scans into a plain `string` and converts to `JobStatus(status)`. Same pattern already used in `loadStages`.
+10. **go regexp has no backreferences** — repeated-word detection uses a deterministic token-scan `countRepeatedWords` (adjacent equal tokens, len ≥ 4) instead of `\b(\w+)\s+\1\b`.
+
+**New files:**
+- `migrations/000027_add_translation_tables.{up,down}.sql` — `translation_jobs`, `translation_stages`, `glossary_terms` + RLS policies (`translation_jobs_isolation`, `translation_stages_isolation`, `glossary_terms_isolation`) + `update_updated_at_column()` triggers + indexes + down migration
+- `internal/modules/translation/model.go` — TranslationJob, TranslationStage, GlossaryTerm, StageResult, TranslationScore, 8 statuses, 4 stage types, DTOs, 14 EventBus events, 12 sentinel errors, `MinNativeReviewScore=70`, `MinSEOScore=60`, `MaxRewriteAttempts=2`
+- `internal/modules/translation/detect.go` — `DetectLanguage` (stopword + diacritic heuristics, min confidence 0.5), `GenerateSlug` (diacritics stripped, PT truncated to 70), `DeriveKeyword`, `blocksToText`/`textToBlocks` (heading/text blocks, JSON round-trip)
+- `internal/modules/translation/localize.go` — currency/units/dates/country expressions (PT↔EN)
+- `internal/modules/translation/glossary.go` — ApplyGlossary, GlossaryConsistency, normalizeTerm
+- `internal/modules/translation/score.go` — ComputeTranslationScore (deterministic, uses `ai.QualityChecker` + `seoengine.AnalyzeArticle`, nil-safe fallbacks)
+- `internal/modules/translation/service.go` — CreateJob/GetJob/ListJobs/StartJob/CancelJob/GetScore, ApproveStage/RejectStage, glossary CRUD, audit + events
+- `internal/modules/translation/pipeline.go` — executePipeline, runTranslate/runNativeReview/runSEOReview/runPublish, generateSEO/fallbackSEO, parseJSONObject, truncateTo, worstSection, splitParagraphs, rewriteSection
+- `internal/modules/translation/handler.go` — 15 REST endpoints under `/api/v1/translation/` (jobs CRUD/start/cancel/stages/score/approve/reject, detect, glossary CRUD)
+- `internal/modules/translation/module.go` — kernel module with SetAIManager/SetQualityChecker/SetPostsSvc/SetPublisherSvc
+
+**Wiring:**
+- `internal/api/routes.go` — `Dependencies.TranslationSvc`, `registerTranslationRoutes` (called after `registerWorkflowRoutes`, before `registerAIRoutes`)
+- `cmd/api/main.go` — `translationMod` after `workflowMod`, added to kernel module list; `SetAIManager(aiSvc)`, `SetQualityChecker(aiModule.NewQualityChecker())`, `SetPostsSvc(postsSvc)`, `SetPublisherSvc(publisherSvc)`; `TranslationSvc` in Dependencies literal
+
+**Tests (75 tests, all pass):** detect_test.go, localize_test.go, glossary_test.go, score_test.go, service_test.go (pgxmock state-only, jobRow helper — plain strings only in AddRow, never pointers), pipeline_test.go (translate with/without AI, native review determinism, worstSection, parseJSONObject, fallbackSEO, finalScore with nil DB). Notable pgxmock fixes during the run: named-string-type scan (see decision 9), `*string` cell values → plain strings, INSERT arg count (11 not 12 — `$11` reused).
+
+**Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — only the 6 known pre-existing `internal/ai` failures (verified unrelated in Sprint 5.6): `TestGeminiProvider_GenerateStream_InvalidKey`, `TestGeminiProvider_Health_InvalidKey` (network), `TestCheckGrammarDetails_Issues`, `TestFindRepeatedWords/multiple_pairs`, `TestScoreReadabilityDetailed`, `TestCountSyllables`. No commit made.
+
+### Sprint 5.8 — AI Research Intelligence (2026-08-05)
+
+**Objective:** Research before article generation. Before any auto-content workflow writes a draft, deep-research the topic across multiple sources (Google search grounding, official sites, docs, articles), fight "surface content" by extracting real data (dates, numbers, versions, companies), rank sources by domain reliability, produce a structured briefing + persisted fact base, cache the result for 24h, and feed it into the generation pipeline AND the Translation Engine (research once → Article PT → Article EN → review → SEO → publish).
+
+**Architecture decisions:**
+1. **Deterministic-first, AI-optional everywhere.** Every AI-assisted path (fact extraction, briefing synthesis) computes the deterministic result first and falls back to it whenever AI is nil or returns unparsable JSON (mock provider returns non-JSON `"Mock response for: …"`). No `math/rand`, no package-level mutable state (fact extraction dedupes via a **per-call** `known map[string]bool` — a package-level map was rejected as a race hazard).
+2. **Reliability is a score, not a flag.** `internal/ai/reliability.go` owns the deterministic domain ranking (used by the pipeline, so it stays DB-free): allowlist (openai/google/microsoft/nature/science/pnas=100, reuters/apnews/who/un/nih=95, bbc/nytimes/wsj/ft/guardian/wp/who/gov=90, arxiv/ieee/acm/springer=90, statista=80, wikipedia=70, github=75), suffix rules (.gov/.gov.br/.mil/.int=90 official, .edu/.edu.br=75 established), unknown domain=30 (low), empty=0 (unknown). `ExtractDomain` strips scheme/path/query/port + loops prefixes (www./m./blog./news./docs. + language subdomains en./pt./es./de./fr./it./nl./sv./ru./ar./zh./ja./ko.); bare single-label hosts (blog.google→google) get `.com` appended so scoring stays consistent. `ReliabilityOfDomain` also progressively strips leading labels (en.wikipedia.org → wikipedia.org) checking allowlist + suffix rules each iteration. Labels: verified(≥90)/official(≥75)/established(≥55)/low(≥30)/unknown.
+3. **Cache is the contract between engines.** Cache key `(site_id, topic_hash, language)`, `topicHash = sha256(lower(topic))[:16]` hex, TTL `cfg.Research.CacheTTL` (`RESEARCH_CACHE_TTL`, default 24h; zero/negative → `DefaultResearchCacheTTL`). `getCached` requires `expires_at > NOW()`, bumps `hit_count` on hit. `GetCachedResearch`/`GetCachedSummary` NEVER trigger a search (translation engine guarantee); `DeepResearchSummary` always runs-or-returns-cache.
+4. **runResearch priority chain (pipeline):** preloaded `input.Research` (from cache) → `input.ResearchFn` (injected site-scoped callback into the 4 generation modules) → grounding-only AI fallback which still builds a deterministic `ResearchSummary` via `summaryFromGrounding`. `researchContext(input)` appends the fact base ("use these verified facts") to `runBriefing` and `runDraft` prompt inputs so drafts cannot invent dates/numbers.
+5. **Fact extraction** (`research/factbase.go`): deterministic regex extractors — versions `\b(?i:v)?\d+\.\d+(\.\d+)?([-.]?(alpha|beta|rc|stable|latest)\d*)?\b`, prices (US$/R$/$/USD/EUR/BRL + PT words), ISO+long dates (EN+PT month names), numbers with unit words (%/million/billion/users/anos…), event sentences (launch/announcement verbs); hardcoded company term list (openai…nubank/itau/bradesco/caixa) and tech term list (gpt, gemini, claude, llama, llm, api, gpu, rag…). Confidence defaults: version 80, price 70, date 60, company 75, tech 70, number 65, event 70. Snippet preferred over title. AI contract (prompt `fact_base`): JSON array `{type, entity, value, source, confidence}` — invalid types dropped, confidence out of [1,100] → 50, `parseJSONArray` grabs first `[…]` span.
+6. **Briefing** (`research/briefing.go`): deterministic `BuildBriefing` fills summary/key_points (top source titles + number facts, cap 12)/statistics/dates/companies/products/data_found; conclusions from corroboration (≥3 sources with IsVerified or reliability ≥75 → corroborated; ≥1 → partial; 0 → unverified warning). AI contract (prompt `deep_research`/`deep_research_pt`): JSON object `{summary, key_points[], data_found[], statistics[], dates[], companies[], products[], conclusions[]}` — empty summary → fallback. `rankSources` sorts reliability desc then relevance desc, never mutates input.
+7. **Deep research flow** (`research/deep.go`): cache lookup → `ExecuteGroundedResearch` → `CreateJob` (userID `uuid.Nil`; pt/en only) → `SourcesFromGrounding` → `decorateSources` (domain + reliability) → `rankSources` → persist via `AddSource` (19 params now, skip empty URLs) → `ExtractFactBaseAI` → `saveFactBase` (row per fact) → `BuildBriefingAI` → `persistBriefing` (wraps doc into `ResearchBriefing` via existing `SaveBriefing`) → `saveCache` (UPSERT + refresh expires_at; failures logged, not fatal) → `CompleteJob` (errors ignored) → `DeepResearchReport`. All AI/DB errors abort with wrapped errors except cache write and job completion.
+8. **Translation integration:** `translation.Service` gains `researchSvc` + `SetResearchSvc`; `runTranslate` calls `researchContext(ctx, job)` which does a **cache-only** `GetCachedSummary(ctx, job.SiteID, job.Title, job.TargetLanguage)` and appends briefing + "Verified facts:" lines to the translation prompt (deterministic fallback: nil service / cache miss / error → prompt unchanged). Research happens once per topic; both language versions share the same facts.
+
+**New types/constants:** `FactType` enum (company/product/version/price/date/event/technology/number), `DefaultResearchCacheTTL`, `EventResearchCached`, `ErrCacheEntryNotFound`, `ResearchSource.Domain/ReliabilityScore/ReliabilityLabel`, `FactBaseEntry`, `ResearchBriefingDoc` (9 JSON fields), `DeepResearchReport` (embeds ResearchJob + Briefing/Facts/Sources/Cached), `CachedResearch`; ai package: `ResearchFact`, `ResearchSourceSummary`, `ResearchSummary`, `ResearchFn`, `PipelineInput.Research/ResearchFn` (json:"-"), `PipelineResult.Research`, `PromptTypeDeepResearch`/`PromptTypeFactBase` (+ `_pt` variants, 4 new templates in prompt_builder.go — total 24).
+
+**Files changed/created:**
+- `migrations/000028_add_research_intelligence.{up,down}.sql` (NEW) — `research_cache` (+ unique index `(site_id, topic_hash, language)`, expires index), `research_fact_base` (+ job/type indexes), `ALTER research_sources ADD domain + reliability_score`, RLS `research_cache_isolation`/`research_fact_base_isolation`
+- `internal/ai/reliability.go` (NEW) — scoring map, ExtractDomain, ReliabilityOfDomain, labels
+- `internal/ai/pipeline.go` — tri-path runResearch, summaryFromGrounding, formatResearchSummary, researchContext, fact injection in runBriefing/runDraft
+- `internal/ai/model.go`, `internal/ai/prompt_builder.go` — new prompt types/templates
+- `internal/modules/research/{factbase.go,briefing.go,deep.go}` (NEW) — extraction, briefing, orchestration
+- `internal/modules/research/{model.go,service.go,handler.go,module.go}` — types, `cacheTTL`+`SetCacheTTL`, `GetFactBase`, 6 new endpoints
+- `internal/api/routes.go` — `POST /research/deep`, `GET /research/deep/{id}`, `GET /research/{id}/facts`, `GET /research/cache/{topic}?language=`, `GET /research/reliability`
+- `internal/pkg/config/config.go` — `ResearchConfig{CacheTTL}` + `RESEARCH_CACHE_TTL`; `.env.example` new section
+- `internal/modules/{autocontent,contentgenerator,articlepipeline,workflow}/service.go` — `researchFn(siteID)` helper (nil-safe) + `input.ResearchFn` at both input-construction sites (before loop + after rebuild)
+- `internal/modules/translation/{service.go,module.go,pipeline.go}`, `cmd/api/main.go` — `SetResearchSvc` + cache-only researchContext in runTranslate
+
+**Tests (70 new, all pass):**
+- `internal/ai/reliability_test.go` (6) — ExtractDomain (scheme/prefix/lang/bare-SLD), ReliabilityOfDomain (allowlist/gov/edu/unknown case-fold), labels, determinism, ranking order
+- `internal/ai/research_pipeline_test.go` (13) — preloaded Research path, ResearchFn path/error/nil-fallback, priority (preloaded beats fn), summaryFromGrounding (scoring, nil/empty metadata), formatResearchSummary, researchContext, fact injection into Briefing and Draft stages
+- `internal/modules/research/factbase_test.go` (20) — versions/prices(EN+PT)/dates(ISO+long+PT)/companies/tech/numbers/events, version dedup, snippet-over-title, deterministic, empty sources, AI fallback (nil manager, unparsable), valid JSON, invalid types dropped, confidence clamp, parseJSONArray, corpus
+- `internal/modules/research/briefing_test.go` (14) — sections, 3 conclusion branches, empty, deterministic, AI fallbacks (nil/unparsable/empty-summary), rankSources (order + no mutation), dedupeStrings, parseJSONObject, JSON round-trip
+- `internal/modules/research/deep_test.go` (17) — topic hash (case-fold/trim), cache-hit full row, cache-miss full flow (cache→CreateJob→SaveBriefing→GetBriefing→saveCache→CompleteJob incl. GetJob+UPDATE), invalid inputs, no-DB, GetCachedResearch not-found, GetCachedSummary never-triggers-research + entry conversion, DeepResearchSummary non-nil, decorateSources, reportFromCache, formatBriefingDoc, TTL default/set, AI entry conversions, summaryFromReport
+- `internal/modules/research/ai_stub_test.go` (NEW helper) — stub AIProvider with fixed Generate content + `newAIManagerReturning`
+- `internal/modules/research/service_test.go` — `TestService_AddSource` updated for the new 19-param INSERT (domain + reliability_score)
+
+**Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 26 packages ok; only the 6 known pre-existing `internal/ai` failures (network-only Gemini + Sprint 3.9 grammar/syllable tests): `TestGeminiProvider_GenerateStream_InvalidKey`, `TestGeminiProvider_Health_InvalidKey`, `TestCheckGrammarDetails_Issues`, `TestFindRepeatedWords/multiple_pairs`, `TestScoreReadabilityDetailed`, `TestCountSyllables`. No commit made.
+
+### Sprint 5.9 — E-E-A-T + Linking Intelligence + Rich SEO (2026-08-06)
+
+**Objective:** Before every generated-content publish, (1) score the article across the 4 E-E-A-T pillars with a weighted final AND bilingual explanations for every lost point; (2) auto-insert internal links ranked by keyword + subject/entity + category + intent; (3) auto-attach external links only to high-reliability official/research sources — never competitor domains; (4) compute Topic Authority (does the site already own the topic?); (5) detect Content Gaps against the research fact base, optionally AI-fill them; (6) enrich generated content in the publisher funnel via a fail-open `ContentEnhancer`; (7) public article API emits hreflang + canonical + OG/Twitter Cards + JSON-LD rich snippets (Article/NewsArticle/FAQ/HowTo/Breadcrumb/Organization/WebSite) and a public `GET /schema/site` endpoint.
+
+**Architecture decisions:**
+1. **Deterministic-first, AI-optional everywhere.** No `math/rand`, no package-level mutable state. Every AI-assisted path (gap-fill, EEAT explanations) computes a deterministic result first and falls back on nil AI / mock / error.
+2. **EEAT is a weighted business score** (`eeat.go`): Experience 0.25 / Expertise 0.30 / Authority 0.25 / Trust 0.20 (asserted to sum to 1.0). `AnalyzeEEAT(in ArticleAnalysisInput) → EEATReport` is DB-free, pure, and honors `AuthorName`/`Category` for signal weights; each pillar records per-signal points + `Missing []string` and a bilingual explanation; constant detectors for Experience (first-person "em nossos testes", "escrevi", comparison words), Expertise (credentials: "especialista", "certificado", qualifications, Google Web/Threat, "foi" (PT) pass) and Authority (`.gov.br`/`.gov` links, authoritative domains, inbound credentials, co-authorship) and Trust (citations/fontes, sources, published date).
+3. **`analyzeEEAT` in `analyzer.go` delegates to the module service** (was a heuristic returning fixed points) — full audit now reports `eeat.*` findings via `AuditIssue{Field: "eeat."+pillar}` at `PriorityHigh` when the pillar score < threshold.
+4. **Internal linker (`linking.go`)** — `ScoreInternalLinkCandidate` blends keyword (35%) + subject/entity (35%) + category (15%) + intent (15%); intent detected deterministically (`detectIntent`: informational → "como fazer/guia/tutorial/o que é/what is/how to", transactional → "comprar/preço/onde baixar/buy", navigational → brandish). `SelectInternalLinks` reads up to 100 site posts, keeps score ≥ `internalLinkMinScore` (default 40), returns ≤ `internalLinkMax` (default 5), sorted relevance desc.
+5. **External links** — `SelectExternalLinks` reads `research_sources` (domain + reliability_score), keeps reliability ≥ `externalLinkMinReliability` (default 75), **excludes competitor domains** (`isCompetitorDomain` — exact or subdomain of each `SEO_COMPETITOR_DOMAINS` entry), sorts reliability desc then relevance, URLs never include `javascript:`; enriched with `ReliabilityLabel` from `ai.ReliabilityOfDomain`.
+6. ** Topic Authority** (`topicauthority.go`) — `TopicAuthorityScore(relatedCount)` maps to a log2 curve (1→~18, 3→~40, 10→~68, 25→~85, 50+→100); DB aggregations (`TopicAuthority`, `FillGapsTopContent`) count posts whose title/slug cover the topic terms.
+7. **Content gaps** (`contentgap.go`) — 8 deterministic dimensions (price, availability, requirements, limitations, roadmap, comparison, installation, support); each checks the fact base (`GetFactBase` over `research_sources`) and the article text; `DetectContentGaps` returns a coverage ratio + bilingual suggestions (`suggestionForGap`, PT). `FillContentGapsAI` optionally asks the AI provider to draft the missing section (JSON schema enforced; mock/text error → deterministic fallback paragraph), never overwrites the article.
+8. **Enhancer in the publisher funnel** (`publisher/enhance.go` + `service.go`) — `ContentEnhancer` interface (`EnhanceBeforePublish(ctx, in) → *ContentEnhancement`); wired only on generated content via `PublishGeneratedArticle` — the single funnel for autocontent, contentgenerator, articlepipeline, workflow (and translation non-user path); it calls `s.contentEnhancer.EnhanceBeforePublish` BEFORE the SEO gate (`checkPublishGate`), so a low SEO score still blocks; NULL/empty result → original content; gate error → fail-open. `seoengine.Service` implements the enhancer: `appendRelatedLinks` appends "### Leia também"/"### Related reading" + a bullet with backlinks; `var _ publisher.ContentEnhancer = (*Service)(nil)`.
+9. **Public JSON-rich SEO** (`internal/api/article_seo.go`) — `buildArticleSEO(pub, siteDomain)` builds `PublicArticleSEO{Canonical, Hreflang[], OgType, OgImage, OgLocale, TwitterCard, SchemaJSONLD[], SiteSchemaJSONLD[], StructuralData}`; `deriveSiteDomain` from `pub.URL` or `pub.CanonicalURL` (fallback `https://example.com`). 7 JSON-LD builders use `renderSchema`:
+   - Weighted average also correctly reuses the existing `isNewsArticle`/`*Q:/A:`/numbered-line heuristics: FAQ when `Q:/A:` pairs exist; HowTo when "como fazer"/"passo a passo" + numbered steps; Org/WebSite attached to the requested; always present Article. Breadcrumb always present.
+10. **Config** — `SEOConfig{CompetitorDomains, InternalLinkMinScore, InternalLinkMax, ExternalLinkMinReliability, MinPublishScore}`; new `.env.example`: `SEO_COMPETITOR_DOMAINS`, `SEO_INTERNAL_LINK_MIN_SCORE` (default 40), `SEO_INTERNAL_LINK_MAX` (5), `SEO_EXTERNAL_LINK_MIN_RELIABILITY` (75).
+
+**New REST endpoints (`internal/modules/seoengine`):**
+- `POST /seoengine/analyze-eeat` (AnalyzeEEAT), `POST /seoengine/topic-authority`, `POST /seoengine/internal-links`, `POST /seoengine/external-links` (Reliability), `POST /seoengine/content-gap` (Gap), `POST /seoengine/enhance`.
+- `GET /public/schema/site` (in public group, site middleware) returns Org + WebSite JSON-LD.
+- Public article GET now enriched with hreflang + canonical + OG/Twitter + 7 JSON-LD blobs (only `article` schemas gated to published + accessible media).
+
+**Publisher `PublishGeneratedArticle` flow (enhancer + gate ordering):**
+`verify site → build draft → enhanceContent(draft, kw) → checkPublishGate(enhanced) → repository.SaveGeneratedArticle → PublishArticle(enhanced)` — the SEO gate now sees the ENHANCED content, so a bad (unscored) draft cannot pass the gate by skipping the enhancer.
+
+**Tests (all EXECUTED and passing except pre-existing ai):**
+- `internal/modules/seoengine/intelligence_service_test.go` (NEW, 8 tests) — service-level pgxmock: SelectInternalLinks filter-by-score → only ≥40, cap (needs `id <> $2` second arg), no-DB fallback; SelectExternalLinks reliability + competitor + dedupe; TopicAuthority counts related; EnhanceBeforePublish returns unchanged content on nil DB; nil-service no-op.
+- `internal/modules/seoengine/intelligence_test.go` (NEW, 21 tests) — AnalyzeEEAT empty/weights-sum-1/deterministic/author-name-boost/authority gov-br/competitor-link detection; Descriptioner; content-gap (full/missing/price regex hurting `R$`/deterministic); ScoreTopicAuthority scale/determinism; category boost; intent detection both languages; `appendRelatedLinks` (PT/EN/empty); all 7 schema builders produce valid JSON + required keys.
+- `internal/api/article_seo_test.go` (NEW, 10 tests) — hreflang self + EN, Article/Breadcrumb/FAQ/HowTo schema presence, no-FAQ-without-pairs, OG/Twitter fields, Org+WebSite, `isNewsArticle` PT/EN, extractFAQPairs, extractHowToSteps, deriveSiteDomain, siteNameFromDomain.
+- `internal/modules/publisher/gate_test.go` (+6 tests) — fakeEnhancer: nil/no-op, empty content skip, applies result, fail-open on error and on empty result, and PublishGeneratedArticle runs enhancer before DB (so a nil-DB path proves the enhancer ran + the input carries the original draft).
+- `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 26 packages ok; still ONLY the 6 known pre-existing `internal/ai` failures (network Gemini + Sprint 3.9 grammar/syllable). No commit made.
+
+### Sprint 5.10 — Freshness Engine + News Intelligence (2026-08-06)
+
+**Objective:** Guarantee Nexora never uses old information to produce news. Before any research: (1) automatically classify intent (NEWS/EVERGREEN/UPDATE/REVIEW/TUTORIAL) which changes the whole research strategy; (2) dynamic temporal windows (NEWS: 24h→7d→max 30d, never >90d; EVERGREEN: date not priority; UPDATE: always latest version — changelog/docs/roadmap); (3) per-source Freshness Score (published, updated, age, category, source); (4) official-source-first priority (official site → docs → official blog → changelog → Reuters/AP/Bloomberg → specialized sites → others); (5) obsolete-information detection (mentions of GPT-4 when GPT-6 exists → Obsolete, never primary source); (6) once-per-day automatic re-evaluation of published articles → mark "Needs Update"; (7) version history (v1/v2/v3, changes, new sources, date); (8) version diffs (price/context/limits/API/benchmark); (9) duplicate-news detection (same subject + same fact + same day → UPDATE existing article instead of creating a new one); (10) independent PT/EN strategies (PT: Brasil→Portugal; EN: EUA/Canadá/Reino Unido/Austrália; never literal-translate a BR news when official EN sources exist).
+
+**Architecture decisions:**
+1. **Deterministic-only engines; no AI, no `math/rand`, no network.** All 10 requirements are pure functions (intent.go, score.go, obsolete.go, versions.go, dedup.go) — same input → same output, fully unit-tested. DB is optional (pool nil → DB-free results still returned).
+2. **New module `internal/modules/freshness/`** — no changes to existing modules; endpoints under `/api/v1/freshness` registered after translation routes; `FreshnessSvc` in Dependencies; module in kernel list (registered last).
+3. **Intent classifier** (`intent.go`): per-language cue tables (PT/EN regex + weights); version-token signal (`versionSignal`, e.g. "GPT-6", "Gemini 2.5", "v4.1") adds an UPDATE boost; fallback EVERGREEN with `fallback_evergreen` signal; confidence = winner/(winner+runner), clamped [0.5,1].
+4. **Temporal windows** (`model.go WindowStrategy`): NEWS {Priority 1, Recent 7, Max 30, Never>90}; UPDATE {Recent 30, Max 90, VersionFirst}; REVIEW {Recent 30, Max 90, Never>365}; TUTORIAL {Recent 90, no max}; EVERGREEN {no date priority}. Config overrides `FRESHNESS_NEWS_MAX_DAYS`/`FRESHNESS_NEWS_NEVER_OLDER_DAYS` applied via `Service.windowFor`.
+5. **Freshness Score** (`score.go`): weighted 0.50×age + 0.30×update + 0.20×source, clamped [0,100]; age component linear-decays across the window (unlimited windows use tiered flat values: ≤2y 85, ≤10y 70, else 45); update component (≤1d 95 … ≥90d 60, nil=50 neutral); source component from priority tier (official 100, agency 98, docs/changelog 95, blog 92, specialized 80, other 60, unknown 40). Outside-window sources are `Usable=false` with -40 penalty. "Publicado há 2 dias + atualizado ontem" lands ~95 (≈ the spec's 98).
+6. **Official-first priority** (`score.go SourcePriorityClassify`): marker substring check (changelog/release notes → docs → blog), news-agency allowlist (reuters/apnews/ap.org/bloomberg/afp/france24/ft), specialized allowlist (theverge/techcrunch/engadget/wired/techradar), then target-entity official match (registrable domain OR first hostname label equals the derived entity, e.g. `gemini.google.com` + entity "gemini" → official). `SortSourcesByPriorityAndScore` sorts tier → score, obsolete last.
+7. **Obsolete detection** (`obsolete.go`): `tokenRE` captures version-ish tokens (`[a-z0-9]{2,}[\s\-]?(v?\d+(?:\.\d+){0,2})` — NOTE `{0,2}` not `{1,2}`: the `{1,2}` form fails on plain "GPT-4" because RE2 requires a decimal part); `CheckObsolete` matches entity brand adjacency and compares versions (2.5 < 6). Obsolete sources are flagged and rank last (never primary). `DetectObsoleteSources` runs over a list of `EntityVersion{Entity, Current}`.
+8. **Version history + diffs** (`versions.go`): `NextVersion` bumps v1.2→v1.3; `DiffVersions` compares 6 facets (price/context/limits/api/benchmark/features) via keyword line extraction; `Fingerprint` = FNV-64a hex of normalized topic+first-sentence (stable); `TokenJaccard` near-duplicate similarity; persisted in `article_versions` (changes/diff/sources as JSONB).
+9. **Dedupe / update-not-duplicate** (`dedup.go`): `CheckDuplicate` — duplicate = token overlap ≥0.6 AND same calendar day; on match the caller updates the existing article. `CheckDuplicate` (service) registers fingerprints in `news_dedup` (idempotent: no insert on duplicate). `SourceMatchesRegion` enforces PT (.br/.pt) vs EN (.com/.ca/.co.uk/.com.au) region rules; `shouldBlockTranslation` implements "never literal-translate a BR news when official EN sources exist".
+10. **Daily sweep** (`RunDailySweep` + `ReEvaluateArticleWithWindow`): once-per-day guard via `freshness_sweeps` row (skipped same-day; disabled via `FRESHNESS_SWEEP_ENABLED=false`); each published article is re-evaluated — outside its temporal window OR a newer `news_dedup` for the same topic → `content_updates` row with status `needs_update`, reason `outside_temporal_window`/`newer_source_found`, old/new scores, details JSONB.
+
+**Migration `000029_add_freshness_tables.{up,down}.sql`** (NEW): 6 tables — `news_intents` (intent cache, unique (site_id, topic_hash, language)), `source_freshness_scores` (per-source scores, index on research_job_id), `article_versions` (version history), `news_dedup` (unique (site_id, fingerprint), created_on date), `content_updates` (Needs Update flags), `freshness_sweeps` (once-per-day guard, site_id PK). All RLS `{table}_isolation USING (site_id = current_setting('app.current_site_id')::UUID)`; `update_updated_at_column()` triggers guarded by function existence; down drops triggers → policies → disables RLS → tables.
+
+**New REST endpoints (`/api/v1/freshness`, all behind site middleware):**
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/freshness/classify` | Intent classification + temporal window (cached in news_intents) |
+| POST | `/freshness/score` | Per-source freshness scoring + obsolete flags (persisted) |
+| POST | `/freshness/obsolete` | Outdated entity-version detection on a text |
+| POST | `/freshness/versions` | Save a version record |
+| GET | `/freshness/versions/{publicationID}` | Version history |
+| POST | `/freshness/dedup` | Duplicate check + fingerprint registration |
+| POST | `/freshness/sweep` | Once-per-day re-evaluation (409 when already run) |
+| GET | `/freshness/updates` | Needs Update flags |
+
+**Config:** `FreshnessConfig{SweepEnabled (default true), NewsMaxDays (30), NewsNeverOlderDays (90)}` in `internal/pkg/config/config.go`; env `FRESHNESS_SWEEP_ENABLED`, `FRESHNESS_NEWS_MAX_DAYS`, `FRESHNESS_NEWS_NEVER_OLDER_DAYS` documented in `.env.example` under a new `# === Freshness Engine + News Intelligence ===` section.
+
+**Wiring:** `internal/api/routes.go` — `freshnessModule` import, `Dependencies.FreshnessSvc`, `registerFreshnessRoutes` (after translation, before AI routes); `cmd/api/main.go` — `freshnessMod` created with `(cfg, log, db)` (no cache — module doesn't need it), added to the kernel module list, `freshnessSvc := freshnessMod.Service()`, `SetEventBus`, `FreshnessSvc: freshnessSvc` in the Dependencies literal.
+
+**Tests (61 tests, all EXECUTED and passing):**
+- `internal/modules/freshness/engine_test.go` (38) — windows (news 1/7/30/90, evergreen unlimited, update version-first); classifier (news PT/EN, evergreen docs + fallback, update + version-token boost, review, tutorial EN, invalid language, empty input, confidence bounds); freshness scoring (fresh news ~high score + changelog priority, 45d outside window unusable, 120d never-usable + penalized, evergreen 2y usable + moderate, official/blog/docs/agency/specialized priorities, obsolete-last sort, brand-domain official via first label); obsolete (GPT-4 vs current 6, current not obsolete, no-match, multi-entity, newer-not-obsolete, version compare); versions (NextVersion, DiffVersions change/no-change, Fingerprint stability, CheckDuplicate same-day match + no-match, ReEvaluateArticle needs-update/newer-source/fresh, DailySweepOnce guard); language (PT/EN regions, region-domain matching, block-literal-translation); DeriveMainEntity.
+- `internal/modules/freshness/service_test.go` (15) — pgxmock: ClassifyAndWindow caches news_intents (update intent + version-first window), DB-free classify, ScoreSources persists + usable + agency priority, obsolete marked + reasons, empty-sources error, SaveVersion+ListVersions round-trip (JSONB decode), CheckDuplicate registers (no match) + finds same-day match (no insert), RunDailySweep marks needs_update + records guard, same-day block, disabled sweep, ListUpdates decode (typed strings scanned as plain strings then converted — pgxmock named-string-type quirk, same pattern as translation Sprint 5.7).
+- `internal/modules/freshness/handler_test.go` (8) — classify/score/obsolete/dedup endpoints (200 + intent/has_obsolete assertions), missing-site → 400 MISSING_SITE, rest.AdaptHandler contract.
+- `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 29 packages ok; still ONLY the 6 known pre-existing `internal/ai` failures (network Gemini + Sprint 3.9 grammar/syllable). No commit made.
+
+**Open notes:**
+- The intent classifier is consumed via the freshness API/service; wiring it *automatically before* the research module's `DeepResearchSummary`/`ExecuteGroundedResearch` calls is a cross-module hook (research does not import freshness yet) — the endpoints exist for callers to classify first and pass `FRESHNESS_NEWS_*`-aware windows. Deferred as an explicit integration to avoid touching the research module's test surface.
+- Migration numbering: 000029 is the first migration after the pre-existing duplicate-version pair 000026 (session_metadata + post_seo_columns — golang-migrate treats both as version 26; known pre-existing issue, untouched).
+
+### Sprint 5.11 — AI Editorial Brain (2026-08-06)
+
+**Objective:** Before writing, the module produces an intelligent Editorial Brief (search intent, reader persona, article angle, complete outline, required questions). Before publishing, it runs a full editorial note (coverage, fluency, evidence, per-block confidence, semantic SEO, weighted final score) and auto-returns the article to review when the final score is below the threshold (default 90). Publisher gate is fail-open (no review/error → publish allowed).
+
+**Architecture decisions:**
+1. **Deterministic-only engines; no AI, no `math/rand`, no network.** All scoring is pure and unit-tested. AI (seoengine.AnalyzeArticle/AnalyzeEEAT via injected `ai.QualityChecker`) is optional and nil-safe.
+2. **Per-language cue gating** (intent.go/persona.go): cue tables are `map[intent]map[lang][]signal` (pt/en); only the topic language's cues fire (fixes brand-word double counting, e.g. "gemini" in both PT+EN tables). `pre()` uses leading-boundary-only matching so plurals ("criadores") match singular cues ("criador"). Each cue group is one weighted signal; several groups accumulate (e.g. "comparação" + " vs " = 3.6).
+3. **Confidence** = winner/(winner+runner) clamped [0.5,1] (0.8 when only one intent fires). Tie-break precedence: breaking_news > tutorial > comparison > commercial > navigational > update > informational (personas: developer > business > creator > general). Version tokens (`GPT-6`, `Gemini 2.5` via `versionTokenRE`) add +0.6 to UPDATE.
+4. **Final score weights (sum 1.0):** SEO 0.20, EEAT 0.20, Freshness 0.15, Coverage 0.20, Naturalness 0.15, Confidence 0.10. `Final < threshold` → `needs_review`; threshold ≤0 → default 90.
+5. **Evidence is claim-first:** `LinkEvidence(text, facts, sources, language)` marks important claims (numeric token OR claim word OR >18 tokens), matches against the fact/source corpus via full-token Jaccard (≥0.5), confidence 100/90/80/70 by source score (≥90 official note), 45 unverified. Evidence score = avg claim confidence (100 when no claims). Evidence flows to `ScoreBlocks` per block (score = 40 + verified×15 + official×10, +5 single block).
+6. **pgxmock v3.4.0 gotchas (test-only):** `val.Type().AssignableTo(destVal.Elem().Type())` — row cells must use the exact named types (`SearchIntent("tutorial")`, `Persona("developer")`, `DecisionNeedsReview`) and exact numeric kinds (`float64(90)` for score columns, never int); `connRow.Scan` (QueryRow path) swallows scan errors silently, leaving zero fields (typed cells are mandatory); audit `INSERT INTO audit_log` args are `*uuid.UUID`/`*string` pointers — use `pgxmock.AnyArg()` for UserID/SiteID/EntityID/IPAddress.
+7. **Publisher gate ordering:** `checkEditorialGate` runs AFTER `checkPublishGate` in both publish paths; missing review (content_hash miss) → gate reports 100 (fail-open). `ErrEditorialScoreBelowMinimum` → 422 `EDITORIAL_SCORE_BELOW_MINIMUM`.
+
+**Migration `000030_add_editorial_brain_tables.{up,down}.sql`** (NEW): 4 tables — `editorial_briefs` (unique (site_id, topic_hash, language)), `editorial_reviews` (content_hash, per-dimension NUMERIC(5,2) score columns, decision, threshold, coverage/fluency/semantic JSONB), `editorial_block_scores` (review_id CASCADE), `editorial_evidence` (claim/verified/source_title/source_url/confidence/note). RLS `{table}_isolation USING (site_id = current_setting('app.current_site_id')::UUID)`; updated_at trigger on briefs.
+
+**New module `internal/modules/editorialbrain/`** — model.go (SearchIntent/Persona/SectionType/QuestionID/FacetID enums, bi-bilingual structs, EditorialScore/EditorialBrief/EditorialReview, 3 events, 7 sentinels), helpers.go (fnv64a 16-hex contentHash/topicHash, tokenize w/ accent runes, sentences, Jaccard termOverlap, stopWords, `b()` constructor), intent.go, persona.go, outline.go, questions.go, coverage.go (8 facets), fluency.go (shingle 4-gram + word-repeat + PT/EN passive regexes + 150-word paragraphs + readability 35/25/15/15/10 blend), evidence.go, blocks.go, semantic.go (entity/concept/terms/faq/synonym blend), score.go, service.go (BuildBrief/ReviewArticle/CheckEditorialScore/Get/List + `loadResearch` via optional ResearchProvider), repo.go (saveBrief upsert, saveReview + block/evidence rows), handler.go (15 endpoints), module.go (`Name()="editorialbrain"`), engine_test.go (40) + service_test.go (14) + handler_test.go (15) = 69 tests.
+
+**New REST endpoints (`/api/v1/editorialbrain`, all behind site middleware):**
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/editorialbrain/intent` | Search intent classification (+confidence/signals) |
+| POST | `/editorialbrain/persona` | Reader persona detection |
+| POST | `/editorialbrain/outline` | Outline + suggested title + FAQs + table/callout flags |
+| POST | `/editorialbrain/questions` | Required question list (or verification when `text` given) |
+| POST | `/editorialbrain/coverage` | 8-facet coverage + bilingual missing list |
+| POST | `/editorialbrain/fluency` | Reading fluency report |
+| POST | `/editorialbrain/evidence` | Claim→research evidence links (optional `research_job_id`) |
+| POST | `/editorialbrain/semantic` | Entities/concepts/missing-terms/FAQ/synonym check |
+| POST | `/editorialbrain/score` | Final weighted note from components |
+| POST | `/editorialbrain/brief` | Build + persist editorial brief |
+| GET | `/editorialbrain/briefs` | List briefs (limit/offset) |
+| GET | `/editorialbrain/brief/{id}` | Brief detail |
+| POST | `/editorialbrain/review` | Full editorial review + gate decision |
+| GET | `/editorialbrain/reviews` | List reviews (?decision=approved\|needs_review) |
+| GET | `/editorialbrain/review/{id}` | Review detail incl. blocks + evidence |
+
+**Config:** `EditorialConfig{MinFinalScore}` + env `EDITORIAL_MIN_FINAL_SCORE` (default 90, via getEnvFloat); `.env.example` "=== AI Editorial Brain ===" block before "=== Modo de Desenvolvimento ===".
+
+**Wiring:** routes.go `Dependencies.EditorialBrainSvc` + `registerEditorialBrainRoutes` (after freshness, nil-safe); main.go registers `editorialBrainMod` last in the kernel module list, `SetQualityChecker(aiModule.NewQualityChecker())`, `SetResearchProvider(editorialResearchAdapter{svc: researchSvc})` (maps GetFactBase→FactEntry, GetCachedResearch→SourceRef with Snippet=s.Summary), `publisherSvc.SetEditorialGate(editorialBrainSvc)`.
+
+**Fixes during implementation:** kernel import path is `nexora/internal/kernel` (NOT internal/pkg/kernel); `rest.Context` has no QueryInt (custom `queryInt`); HTML heading regex cannot use `\1` backreferences (RE2) — uses `</h[1-6]>`; tie-break test now a true tie ("comparação e preço e comprar" = 3.6 vs 3.6); evidence verified test claim matches source tokens exactly (full-token Jaccard ≥0.5).
+
+**Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 30 packages ok; still ONLY the 6 known pre-existing `internal/ai` failures (network Gemini ×2 + Sprint 3.9 grammar/syllable ×4). No commit made.
+
+### Sprint 5.12 — Editorial Pipeline Board + ISR Revalidation (2026-08-06)
+
+**Objective:** (1) Editorial pipeline control plane: a board that tracks every content item across 11 editorial stages, per-stage stats, an article review screen with the deterministic "IA recomenda" block, and a fail-open publish-readiness checklist; (2) JIT publishing foundation: `posts.scheduled_at` + draw a live ISR revalidate trigger (backend → Next.js).
+
+**Architecture decisions:**
+1. **Read-only UNION pipeline.** `pipelineUnionSQL` merges 11 sources (briefs, research_jobs, 4 generation engines, translation, posts seo/eeat/review/approval/scheduled/published) into one column shape ordered by `updated_at DESC` with `LIMIT $2` (default 200). Every branch filters `site_id = $1`. Post rows appear in exactly one stage via branch precedence (published > scheduled > approval > review > eeat > seo). No writes, no triggers — board reads stay side-effect free.
+2. **Fail-open readiness checklist** (`GetPublishReadiness`): pipeline→SEO→EEAT→Freshness→Editorial note; missing editorial review NEVER blocks a manual publish; blocking stage name returned for the UI dialog. Thresholds come from `cfg.SEO.MinPublishScore` / `cfg.Editorial.MinFinalScore`.
+3. **Fail-open link suggestor.** `LinkSuggestor` interface (SelectInternalLinks/SelectExternalLinks) wrapped; seoengine implements it in `cmd/api/main.go` (`editorialSvc.SetLinkSuggestor(seoengineSvc)`).
+4. **Deterministic recommendations.** "IA recomenda" block derives statuses (ok/warning/info/fail) purely from scores, problems and source verification ratio. Problems bucket: seo/coverage/fluency/semantic/sources/evidence/editorial.
+5. **ISR revalidation is fail-open by design** (never blocks publish): `internal/pkg/revalidate` POSTs `{base}/api/revalidate` with `x-revalidate-token`; a per-site failure is logged, error ONLY when every site fails. Subscriber in `cmd/api/main.go` on `EventPubCachePurge` → go-around.
+6. **`posts.scheduled_at` already existed** (migration 000005) — migration **000031** only adds the missing partial index `idx_posts_site_scheduled ON posts(site_id, scheduled_at) WHERE status='scheduled' AND deleted_at IS NULL`. `SetStatus` now writes `scheduled_at` via new `SetStatusWithSchedule(ctx, siteID, postID, status, scheduledAt *time.Time)` (same signature as `SetStatus` kept; `SetStatusRequest.scheduled_at` wired in the handler).
+
+**New files:**
+- `internal/modules/editorial/pipeline.go` (NEW) — pipeline + stats + readiness + article-review composition: `GetPipeline`, `GetPipelineStats` (11 counts + review-score averages + published-this-week), `GetPublishReadiness`, `GetArticleReview` (post + latest review + JSONB details + sources + unverified evidence + stored `posts.seo_issues` + deterministic problems/recommendations + link suggestions), `LinkSuggestor` interface, `deriveKeyword` (4+ chars, non-stopword, longest), bilingual problem messages.
+- `internal/modules/editorial/model.go` — pipeline types (`PipelineStage` constants + `PipelineStageOrder`, `PipelineItem`, `StageCount`, `PipelineResponse`, `PipelineStats`, `ReviewPost/Scores/Source/Link/Problem/Recommendation/ReadinessCheck/PublishReadiness/ArticleReview`), `ErrPostNotFound`, `ErrDatabaseNotAvail`.
+- `internal/modules/editorial/service.go` — Service gains `cfg *config.Config` and `linkSuggestor`, `SetLinkSuggestor`.
+- `internal/modules/editorial/handler.go` — new endpoints `GET /editorial/pipeline`, `GET /editorial/pipeline/stats`, `GET /editorial/review/{id}`, `GET /editorial/publish-readiness/{id}`.
+- `internal/api/routes.go` — the 4 new editorial routes.
+- `internal/pkg/revalidate/revalidate.go` (NEW) — `Client.New(urls, token, enabled, timeout, log)`, `Enabled()`, `Revalidate(ctx, slug)` with `TokenHeader = "x-revalidate-token"`; per-site collect + all-fail error.
+- `internal/pkg/config/config.go` — `RevalidateConfig{PublicURLs []string, Token string, Enabled bool, Timeout time.Duration}` loaded from `SITE_PUBLIC_URLS` (falls back to `SITE_PUBLIC_URL`), `SITE_REVALIDATE_TOKEN`, `SITE_REVALIDATION_ENABLED` (default true), `SITE_REVALIDATE_TIMEOUT` (default 5s); new helpers `firstNonEmpty`, `splitCSV`.
+- `migrations/000031_add_post_scheduled_index.{up,down}.sql` (NEW) — partial index on posts(site_id, scheduled_at).
+- `.env.example` — `# === Revalidação ISR (Next.js) ===` block.
+- `cmd/api/main.go` — revalidate Client + EventBus subscriber (EventPubCachePurge → go-revalidate), `editorialSvc.SetLinkSuggestor(seoengineSvc)`.
+- `site/lib/api.ts` — fetch now sets `next: { revalidate: 60, tags: ["articles"] }`.
+- `site/app/api/revalidate/route.ts` (NEW) — POST handler: token header check (missing/mismatch → 401), slug validation (400), `revalidatePath("/")` + `revalidatePath("/"+slug)` + `revalidateTag("articles")`, `{revalidated: true, slug}`.
+- `site/next.config.mjs` — proxy rewrites use `API_PROXY_TARGET` (fallback `http://localhost:8080`).
+- `deploy/docker-compose.yml` — site service env `NEXT_PUBLIC_API_URL: http://api:8080`, `API_PROXY_TARGET: http://api:8080`.
+- `site/.env.local.example` — `SITE_REVALIDATE_TOKEN=`, `API_PROXY_TARGET=http://localhost:8080`.
+
+**Frontend (Admin SPA) — Editorial + Dashboard:**
+- `web/src/lib/editorial.ts` (NEW) — TS types mirroring Go JSON (PipelineStage union, `PIPELINE_STAGES`, `STAGE_LABELS` pt, `STAGE_COLORS` dot+card), `PipelineItem/Response/Stats`, `ArticleReview`, `ApprovalRequest`, `ReadinessCheck`, `PublishReadiness`, Review types.
+- `web/src/components/Sidebar.tsx` — new "Editorial" nav item wired to `/admin/editorial`.
+- `web/src/App.tsx` — routes `editorial` + `editorial/review/:id` under `/admin`.
+- `web/src/pages/editorial/Dashboard.tsx` (NEW) — 3 tabs (Pipeline/Revisões/Estatísticas), 11-column drag-and-drop board (native HTML5 dnd, `dataTransfer` JSON), PipelineCard with StageBadge/ScorePill + "Abrir" link (review/approval stage) + "Mover…" Select (sch/to/published), `PATCH /posts/{id}/status` (+ scheduled_at via `editorial-schedule-date`), `POST /publisher/publish` with 422 → readiness Dialog (`/editorial/publish-readiness/{id}`). Queries site-scoped (`siteQueryKey(["editorial-pipeline"], siteId)` etc.) with `enabled: !!currentSiteId`; mutations invalidate pipeline/stats/dashboard prefixes.
+- `web/src/pages/editorial/Review.tsx` (NEW) — header with StatusBadge + actions (Rascunho/Agendar/Solicitar aprovação/Aprovar via `PUT /editorial/posts/{id}/approvals/{id}/review`/Publicar w/ 422 readiness dialog), score grid (SEO/EEAT/Freshness/Cobertura/Naturalidade/Confiança/Final + threshold), "IA recomenda" RecommendationBlock, ProblemsBlock (severity colors), SourcesBlock, LinksBlock, approvals (client-side post filter because ListApprovals handler doesn't filter).
+
+**Tests added (all EXECUTED and passing):**
+- `internal/modules/editorial/pipeline_test.go` (13 tests): GetPipeline rows/stages/no-DB, GetPipelineStats full + empty averages, GetPublishReadiness blocked-seo/ready/fail-open, GetArticleReview no-review (sources problem + readiness) / with-review (all problem kinds + recommendations statuses + editorial blocking) / not-found, `loadReviewEvidence` isolated, `deriveKeyword`. (pgxmock notes: cells must be pointer-typed for nullable dests → scan-silent swallowing keeps pointer fields zero; QueryRow swallows scan errors — all cells typed.)
+- `internal/pkg/revalidate/revalidate_test.go` (9 tests): disabled flag/no-config/empty-slug no-op, success asserts token header + slug + path normalization, fail-open partial, all-fail error, network error message, context cancellation.
+- `internal/modules/posts/service_test.go` — `TestService_SetStatusScheduledAt` asserts the exact `scheduled_at` argument; the 2 existing SetStatus expectations updated (`scheduled_at = $5`, `pgxmock.AnyArg()`).
+- `web/src/__tests__/editorial.test.tsx` (NEW, 6 tests): pipeline/review keys `["editorial-pipeline", siteId]`, `["editorial-review", siteId, id]` site-scoped; NO_SITE_KEY registration without execution; board renders title/tabs/"Abrir"; review renders title + decision badge; cache isolation.
+- `web/vitest.config.ts` — testTimeout 30000 / hookTimeout 20000 (Protectorled18s under full parallel load).
+
+**Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 26 packages ok (6 known pre-existing `internal/ai` failures: network Gemini ×2 + Sprint 3.9 grammar/syllable ×4); `npx tsc -b` (0), `npx vitest run` = **12 files, 95/95 pass**, `npm run lint` (0 errors, 45 pre-existing warnings), `npm run build` (0, pre-existing chunk warning). No commit made.

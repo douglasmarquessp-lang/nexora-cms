@@ -29,7 +29,10 @@ import (
 	publisherModule "nexora/internal/modules/publisher"
 	seoengineModule "nexora/internal/modules/seoengine"
 	siteModule "nexora/internal/modules/site"
+	translationModule "nexora/internal/modules/translation"
 	workflowModule "nexora/internal/modules/workflow"
+	freshnessModule "nexora/internal/modules/freshness"
+	editorialbrainModule "nexora/internal/modules/editorialbrain"
 	tagsModule "nexora/internal/modules/tags"
 	casbinPkg "nexora/internal/pkg/casbin"
 	"nexora/internal/pkg/logger"
@@ -65,6 +68,9 @@ type Dependencies struct {
 	PublisherSvc          *publisherModule.Service
 	SeoEngineSvc          *seoengineModule.Service
 	WorkflowSvc           *workflowModule.Service
+	TranslationSvc        *translationModule.Service
+	FreshnessSvc          *freshnessModule.Service
+	EditorialBrainSvc     *editorialbrainModule.Service
 	AIManager             *aiModule.Manager
 	PluginManager      *pluginsModule.Manager
 	CasbinEnforcer   *casbinPkg.Enforcer
@@ -104,6 +110,7 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 
 		publicArticleH := newPublicArticleHandler(deps)
 		publicCategoriesH := newPublicCategoriesHandler(deps)
+		publicSiteSchemaH := newPublicSiteSchemaHandler(deps)
 
 		r.Group(func(r chi.Router) {
 			r.Use(siteIdentify)
@@ -111,6 +118,7 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 			r.Get("/articles", rest.AdaptHandler(publicArticleH.List))
 			r.Get("/articles/{slug}", rest.AdaptHandler(publicArticleH.GetBySlug))
 			r.Get("/categories", rest.AdaptHandler(publicCategoriesH.List))
+			r.Get("/schema/site", rest.AdaptHandler(publicSiteSchemaH.Get))
 		})
 
 		r.Group(func(r chi.Router) {
@@ -194,6 +202,9 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	registerPublisherRoutes(r, deps)
 	registerSeoEngineRoutes(r, deps)
 	registerWorkflowRoutes(r, deps)
+	registerTranslationRoutes(r, deps)
+	registerFreshnessRoutes(r, deps)
+	registerEditorialBrainRoutes(r, deps)
 	registerAIRoutes(r, deps)
 }
 
@@ -229,6 +240,11 @@ func registerEditorialRoutes(r chi.Router, deps *Dependencies) {
 	r.Get("/editorial/widgets", rest.AdaptHandler(editorialHandler.ListWidgets))
 	r.Put("/editorial/widgets/{id}", rest.AdaptHandler(editorialHandler.UpdateWidget))
 
+	r.Get("/editorial/pipeline", rest.AdaptHandler(editorialHandler.Pipeline))
+	r.Get("/editorial/pipeline/stats", rest.AdaptHandler(editorialHandler.PipelineStats))
+	r.Get("/editorial/review/{id}", rest.AdaptHandler(editorialHandler.ArticleReview))
+	r.Get("/editorial/publish-readiness/{id}", rest.AdaptHandler(editorialHandler.PublishReadiness))
+
 	r.Get("/editorial/ai-insights", rest.AdaptHandler(editorialHandler.AIInsights))
 }
 
@@ -242,6 +258,11 @@ func registerResearchRoutes(r chi.Router, deps *Dependencies) { //nolint:unused 
 	r.Put("/research/{id}", rest.AdaptHandler(researchHandler.UpdateJob))
 	r.Delete("/research/{id}", rest.AdaptHandler(researchHandler.DeleteJob))
 	r.Get("/research/{id}/briefing", rest.AdaptHandler(researchHandler.GetBriefing))
+	r.Get("/research/{id}/facts", rest.AdaptHandler(researchHandler.GetFactBase))
+	r.Get("/research/deep/{id}", rest.AdaptHandler(researchHandler.GetDeepReport))
+	r.Post("/research/deep", rest.AdaptHandler(researchHandler.DeepResearch))
+	r.Get("/research/cache/{topic}", rest.AdaptHandler(researchHandler.GetCachedResearch))
+	r.Get("/research/reliability", rest.AdaptHandler(researchHandler.ListReliability))
 
 	registerWriterRoutes(r, deps)
 }
@@ -377,11 +398,32 @@ func registerSeoEngineRoutes(r chi.Router, deps *Dependencies) {
 	seoengineModule.RegisterRoutes(r, deps.SeoEngineSvc, deps.Log)
 }
 
+func registerFreshnessRoutes(r chi.Router, deps *Dependencies) {
+	if deps.FreshnessSvc == nil {
+		return
+	}
+	freshnessModule.RegisterRoutes(r, deps.FreshnessSvc, deps.Log)
+}
+
+func registerEditorialBrainRoutes(r chi.Router, deps *Dependencies) {
+	if deps.EditorialBrainSvc == nil {
+		return
+	}
+	editorialbrainModule.RegisterRoutes(r, deps.EditorialBrainSvc, deps.Log)
+}
+
 func registerWorkflowRoutes(r chi.Router, deps *Dependencies) {
 	if deps.WorkflowSvc == nil {
 		return
 	}
 	workflowModule.RegisterRoutes(r, deps.WorkflowSvc, deps.Log)
+}
+
+func registerTranslationRoutes(r chi.Router, deps *Dependencies) {
+	if deps.TranslationSvc == nil {
+		return
+	}
+	translationModule.RegisterRoutes(r, deps.TranslationSvc, deps.Log)
 }
 
 func registerSetupRoutes(r chi.Router, deps *Dependencies) {

@@ -193,7 +193,7 @@ func TestService_AddSource(t *testing.T) {
 
 	mock.ExpectExec(`INSERT INTO research_sources`).
 		WithArgs(
-			pgxmock.AnyArg(), jobID, "Source Title", "https://example.com", "en", "Author",
+			pgxmock.AnyArg(), jobID, "Source Title", "https://example.com", "example.com", 30, "en", "Author",
 			pgxmock.AnyArg(), "Summary", "Facts", "Stats", 85, 1,
 			float64(0), false, pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 		).
@@ -204,15 +204,17 @@ func TestService_AddSource(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	source, err := svc.AddSource(context.Background(), jobID, ResearchSource{
-		Title:          "Source Title",
-		URL:            "https://example.com",
-		Language:       "en",
-		Author:         "Author",
-		Summary:        "Summary",
-		MainFacts:      "Facts",
-		Statistics:     "Stats",
-		RelevanceScore: 85,
-		Position:       1,
+		Title:            "Source Title",
+		URL:              "https://example.com",
+		Domain:           "example.com",
+		ReliabilityScore: 30,
+		Language:         "en",
+		Author:           "Author",
+		Summary:          "Summary",
+		MainFacts:        "Facts",
+		Statistics:       "Stats",
+		RelevanceScore:   85,
+		Position:         1,
 	})
 	if err != nil {
 		t.Fatalf("AddSource failed: %v", err)
@@ -369,11 +371,11 @@ func TestService_SourcesFromGrounding(t *testing.T) {
 	gm := &ai.GroundingMetadata{
 		Sources: []ai.GroundingSource{
 			{
-				URI:           "https://example.com/src1",
-				Title:         "Source 1",
+				URI:            "https://example.com/src1",
+				Title:          "Source 1",
 				FreshnessScore: 0.95,
-				IsVerified:    true,
-				RetrievedAt:   now,
+				IsVerified:     true,
+				RetrievedAt:    now,
 			},
 		},
 		SearchSuggested: true,
@@ -412,13 +414,13 @@ func TestService_ArticleSourceModel(t *testing.T) {
 	now := time.Now()
 
 	src := ArticleSource{
-		SiteID:        siteID,
-		SourceURL:     "https://example.com/test",
-		Title:         "Test Source",
-		Snippet:       "Snippet",
+		SiteID:         siteID,
+		SourceURL:      "https://example.com/test",
+		Title:          "Test Source",
+		Snippet:        "Snippet",
 		FreshnessScore: 0.9,
-		IsVerified:    true,
-		RetrievedAt:   now,
+		IsVerified:     true,
+		RetrievedAt:    now,
 	}
 
 	if src.SourceURL != "https://example.com/test" {

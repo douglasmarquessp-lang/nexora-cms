@@ -20,16 +20,23 @@ import (
 )
 
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
+	log       *logger.Logger
+	db        *database.Database
+	cache     *cache.Cache
+	eventBus  *kernel.EventBus
+	auditLog  *audit.Logger
 	aiManager *ai.Manager
+	cacheTTL  time.Duration
 }
 
 func (s *Service) SetAIManager(m *ai.Manager) {
 	s.aiManager = m
+}
+
+// SetCacheTTL configures how long deep research results are cached
+// (default 24h when unset/zero).
+func (s *Service) SetCacheTTL(ttl time.Duration) {
+	s.cacheTTL = ttl
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -254,6 +261,43 @@ func (s *Service) GetArticleSources(ctx context.Context, siteID uuid.UUID, opts 
 		sources = []ArticleSource{}
 	}
 	return sources, nil
+}
+
+// GetFactBase returns the persisted fact base entries for a research job.
+func (s *Service) GetFactBase(ctx context.Context, siteID, jobID uuid.UUID) ([]FactBaseEntry, error) {
+	if siteID != uuid.Nil {
+		if _, err := s.GetJob(ctx, siteID, jobID); err != nil {
+			return nil, err
+		}
+	}
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := p.Query(ctx,
+		`SELECT id, site_id, research_job_id, fact_type, entity, value,
+		        COALESCE(source_url, ''), confidence, created_at
+		 FROM research_fact_base WHERE research_job_id = $1 ORDER BY created_at, id`,
+		jobID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list fact base: %w", err)
+	}
+	defer rows.Close()
+
+	var facts []FactBaseEntry
+	for rows.Next() {
+		var f FactBaseEntry
+		var factType string
+		if err := rows.Scan(&f.ID, &f.SiteID, &f.ResearchJobID, &factType, &f.Entity, &f.Value,
+			&f.SourceURL, &f.Confidence, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan fact base entry: %w", err)
+		}
+		f.FactType = FactType(factType)
+		facts = append(facts, f)
+	}
+	return facts, rows.Err()
 }
 
 func (s *Service) pool() (database.Pool, error) {
@@ -564,11 +608,13 @@ func (s *Service) AddSource(ctx context.Context, jobID uuid.UUID, source Researc
 	}
 
 	_, err = p.Exec(ctx,
-		`INSERT INTO research_sources (id, research_job_id, title, url, language, author, published_at,
+		`INSERT INTO research_sources (id, research_job_id, title, url, domain, reliability_score,
+		 language, author, published_at,
 		 summary, main_facts, statistics, relevance_score, position,
 		 freshness_score, is_verified, retrieved_at, grounding_metadata, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17)`,
-		sourceID, jobID, source.Title, source.URL, source.Language, source.Author,
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19)`,
+		sourceID, jobID, source.Title, source.URL, source.Domain, source.ReliabilityScore,
+		source.Language, source.Author,
 		source.PublishedAt, source.Summary, source.MainFacts, source.Statistics,
 		source.RelevanceScore, source.Position,
 		source.FreshnessScore, source.IsVerified, retrievedAt,

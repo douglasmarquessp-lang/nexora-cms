@@ -49,6 +49,7 @@ type PublicArticleResponse struct {
 	ReadingTime      int                    `json:"reading_time"`
 	FreshnessScore   float64                `json:"freshness_score,omitempty"`
 	Sources          []PublicArticleSource  `json:"sources,omitempty"`
+	SEO              PublicArticleSEO       `json:"seo,omitempty"`
 }
 
 type PublicArticleSource struct {
@@ -108,6 +109,7 @@ func (h *publicArticleHandler) List(c *rest.Context) {
 }
 
 func toPublicArticleResponse(pub *publisherModule.Publication, researchSvc *researchModule.Service, siteID uuid.UUID, c *rest.Context) PublicArticleResponse {
+	domain := deriveSiteDomain(pub.URL, pub.CanonicalURL)
 	resp := PublicArticleResponse{
 		ID:               pub.ID,
 		SiteID:           pub.SiteID,
@@ -128,6 +130,7 @@ func toPublicArticleResponse(pub *publisherModule.Publication, researchSvc *rese
 		WordCount:        pub.WordCount,
 		ReadingTime:      pub.ReadingTime,
 		FreshnessScore:   publisherModule.ComputeFreshnessScore(pub.PublishedAt),
+		SEO:              buildArticleSEO(pub, domain),
 	}
 
 	if researchSvc != nil && pub.PublishedAt != nil {

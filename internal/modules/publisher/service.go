@@ -26,6 +26,11 @@ type Service struct {
 	eventBus *kernel.EventBus
 	auditLog *audit.Logger
 	siteDomain string
+	publishGate  PublishGate
+	contentEnhancer ContentEnhancer
+	editorialGate  EditorialGate
+	minPublishScore float64
+	minEditorialScore float64
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -41,11 +46,114 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		val:      NewValidator(),
 		auditLog: audit.New(pool, log),
 		siteDomain: "https://example.com",
+		publishGate: nil,
+		minPublishScore: cfg.SEO.MinPublishScore,
+		minEditorialScore: cfg.Editorial.MinFinalScore,
 	}
 }
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+// SiteDomain returns the configured site base domain.
+func (s *Service) SiteDomain() string {
+	return s.siteDomain
+}
+
+// SetPublishGate registers the SEO publish gate. When set and the configured
+// minimum score is > 0, generated content below the threshold is blocked.
+func (s *Service) SetPublishGate(g PublishGate) {
+	s.publishGate = g
+}
+
+// SetContentEnhancer registers the pre-publish content enhancer (SEO engine).
+// The enhancer may add internal/external links and gap fillers; it always
+// fails open.
+func (s *Service) SetContentEnhancer(e ContentEnhancer) {
+	s.contentEnhancer = e
+}
+
+// SetEditorialGate registers the editorial brain publish gate. When set and
+// the configured minimum editorial score is > 0, content whose latest review
+// is below the threshold is sent back to review instead of published.
+func (s *Service) SetEditorialGate(g EditorialGate) {
+	s.editorialGate = g
+}
+
+// checkEditorialGate enforces the editorial note threshold. Fails open: gate
+// errors and missing reviews never block publication.
+func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang string) error {
+	if s.editorialGate == nil || s.minEditorialScore <= 0 {
+		return nil
+	}
+	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
+		return nil
+	}
+	score, err := s.editorialGate.CheckEditorialScore(ctx, EditorialGateInput{
+		SiteID:   siteID,
+		PostID:   postID,
+		Title:    title,
+		Content:  content,
+		Language: lang,
+	})
+	if err != nil {
+		s.log.Warn("editorial gate evaluation failed, allowing publish", "error", err)
+		return nil
+	}
+	if score < s.minEditorialScore {
+		return fmt.Errorf("%w: editorial score %.2f below minimum %.2f", ErrEditorialScoreBelowMinimum, score, s.minEditorialScore)
+	}
+	return nil
+}
+
+// enhanceContent runs the registered content enhancer and returns the possibly
+// enhanced content. Fails open: on any error the content is returned unchanged.
+func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string) string {
+	if s.contentEnhancer == nil || strings.TrimSpace(content) == "" {
+		return content
+	}
+	out, err := s.contentEnhancer.EnhanceBeforePublish(ctx, ContentEnhancerInput{
+		SiteID:   siteID,
+		PostID:   postID,
+		Title:    title,
+		Content:  content,
+		Keyword:  keyword,
+		Category: category,
+		Language: lang,
+	})
+	if err != nil {
+		s.log.Warn("content enhancement failed, publishing original", "error", err)
+		return content
+	}
+	if out == nil || strings.TrimSpace(out.Content) == "" {
+		return content
+	}
+	return out.Content
+}
+
+func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang string) error {
+	if s.publishGate == nil || s.minPublishScore <= 0 {
+		return nil
+	}
+	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
+		return nil
+	}
+	score, err := s.publishGate.CheckPublishScore(ctx, PublishGateInput{
+		SiteID:   siteID,
+		PostID:   postID,
+		Title:    title,
+		Content:  content,
+		Language: lang,
+	})
+	if err != nil {
+		s.log.Warn("publish gate evaluation failed, allowing publish", "error", err)
+		return nil
+	}
+	if score < s.minPublishScore {
+		return fmt.Errorf("%w: seo score %.2f below minimum %.2f", ErrSEOPublishBlocked, score, s.minPublishScore)
+	}
+	return nil
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -101,6 +209,15 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	}
 	if exists {
 		return nil, ErrDuplicateSlug
+	}
+
+	if req.PostID != nil {
+		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
+			return nil, err
+		}
+		if err := s.checkEditorialGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
+			return nil, err
+		}
 	}
 
 	now := time.Now()
@@ -199,6 +316,14 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	}
 	if req.Language == "" {
 		pubReq.Language = "pt"
+	}
+	keyword := deriveKeyword(req.Title)
+	pubReq.Content = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)
+	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {
+		return nil, err
+	}
+	if err := s.checkEditorialGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {
+		return nil, err
 	}
 	resp, err := s.PublishArticle(ctx, req.SiteID, uuid.Nil, pubReq)
 	if err != nil {
@@ -790,4 +915,53 @@ func coalesceStr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// firstCategory returns the first category in the list, or "" when empty.
+func firstCategory(categories []string) string {
+	for _, c := range categories {
+		if strings.TrimSpace(c) != "" {
+			return strings.TrimSpace(c)
+		}
+	}
+	return ""
+}
+
+// deriveKeyword picks the longest non-stopword token from a title. Deterministic
+// primary-keyword fallback for the content enhancer.
+func deriveKeyword(title string) string {
+	best := ""
+	seen := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(title)) {
+		w = strings.Trim(w, ".,;:!?\"'()[]{}")
+		if w == "" || stopWord(w) || seen[w] {
+			continue
+		}
+		seen[w] = true
+		if len(w) > len(best) {
+			best = w
+		}
+	}
+	if best == "" {
+		words := strings.Fields(title)
+		if len(words) > 0 {
+			return strings.Trim(strings.ToLower(words[0]), ".,;:!?\"'()[]{}")
+		}
+		return "article"
+	}
+	return best
+}
+
+var publisherStopWords = map[string]bool{
+	"a": true, "o": true, "e": true, "de": true, "da": true, "do": true,
+	"em": true, "para": true, "com": true, "por": true, "um": true, "uma": true,
+	"na": true, "no": true, "os": true, "as": true, "que": true, "ao": true,
+	"the": true, "and": true, "of": true, "to": true, "in": true, "for": true,
+	"on": true, "with": true, "is": true, "at": true, "from": true, "by": true,
+	"sobre": true, "entre": true, "como": true, "mais": true, "mas": true,
+	"or": true, "an": true, "be": true, "this": true, "that": true,
+}
+
+func stopWord(w string) bool {
+	return publisherStopWords[w]
 }

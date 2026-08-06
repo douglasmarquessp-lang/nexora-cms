@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -40,11 +42,15 @@ import (
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/migrate"
 	"nexora/internal/pkg/ratelimit"
+	"nexora/internal/pkg/revalidate"
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
 	publisherModule "nexora/internal/modules/publisher"
 	seoengineModule "nexora/internal/modules/seoengine"
+	translationModule "nexora/internal/modules/translation"
 	workflowModule "nexora/internal/modules/workflow"
+	freshnessModule "nexora/internal/modules/freshness"
+	editorialbrainModule "nexora/internal/modules/editorialbrain"
 )
 
 type eventBusAdapter struct {
@@ -53,6 +59,57 @@ type eventBusAdapter struct {
 
 func (a *eventBusAdapter) Emit(ctx context.Context, eventType string, payload interface{}, siteID string) error {
 	return a.bus.Emit(ctx, kernel.EventType(eventType), payload, siteID)
+}
+
+// editorialResearchAdapter adapts the research module into the editorial
+// brain research provider (facts + cached sources).
+type editorialResearchAdapter struct {
+	svc *researchModule.Service
+}
+
+func (a editorialResearchAdapter) LoadFacts(ctx context.Context, siteID, jobID uuid.UUID) ([]editorialbrainModule.FactEntry, error) {
+	if a.svc == nil {
+		return nil, nil
+	}
+	raw, err := a.svc.GetFactBase(ctx, siteID, jobID)
+	if err != nil || len(raw) == 0 {
+		return nil, err
+	}
+	out := make([]editorialbrainModule.FactEntry, 0, len(raw))
+	for _, f := range raw {
+		out = append(out, editorialbrainModule.FactEntry{
+			FactType:   string(f.FactType),
+			Entity:     f.Entity,
+			Value:      f.Value,
+			SourceURL:  f.SourceURL,
+			Confidence: f.Confidence,
+		})
+	}
+	return out, nil
+}
+
+func (a editorialResearchAdapter) LoadSources(ctx context.Context, siteID uuid.UUID, topic, language string) ([]editorialbrainModule.SourceRef, error) {
+	if a.svc == nil || topic == "" {
+		return nil, nil
+	}
+	cached, err := a.svc.GetCachedResearch(ctx, siteID, topic, language)
+	if err != nil || cached == nil {
+		return nil, err
+	}
+	out := make([]editorialbrainModule.SourceRef, 0, len(cached.Sources))
+	for _, s := range cached.Sources {
+		out = append(out, editorialbrainModule.SourceRef{
+			Title:            s.Title,
+			URL:              s.URL,
+			Domain:           s.Domain,
+			Snippet:          s.Summary,
+			ReliabilityScore: s.ReliabilityScore,
+			Language:         s.Language,
+			PublishedAt:      s.PublishedAt,
+			IsVerified:       s.IsVerified,
+		})
+	}
+	return out, nil
 }
 
 func main() {
@@ -137,8 +194,11 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	publisherMod := publisherModule.NewPublisherModule(cfg, log, db, ch)
 	seoengineMod := seoengineModule.NewSEOEngineModule(cfg, log, db, ch)
 	workflowMod := workflowModule.NewWorkflowModule(cfg, log, db, ch)
+	translationMod := translationModule.NewTranslationModule(cfg, log, db, ch)
+	freshnessMod := freshnessModule.NewFreshnessModule(cfg, log, db)
+	editorialBrainMod := editorialbrainModule.NewEditorialBrainModule(cfg, log, db)
 
-	for _, mod := range []kernel.Module{setupMod, authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod, workflowMod} {
+	for _, mod := range []kernel.Module{setupMod, authMod, siteMod, postsMod, categoriesMod, tagsMod, assetsMod, mediaMod, editorialMod, researchMod, writerMod, editorialEngineMod, generatorMod, autocontentMod, humanwriterMod, articlepipelineMod, aiMod, publisherMod, seoengineMod, workflowMod, translationMod, freshnessMod, editorialBrainMod} {
 		if err := k.RegisterModule(mod); err != nil {
 			log.Error("failed to register module", "error", err)
 			return 1
@@ -222,9 +282,56 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 
 	seoengineSvc := seoengineMod.Service()
 	seoengineMod.SetEventBus(k.EventBus())
+	seoengineSvc.SetQualityChecker(aiModule.NewQualityChecker())
+	seoengineSvc.SetAIManager(aiSvc)
+	publisherSvc.SetPublishGate(seoengineSvc)
+	publisherSvc.SetContentEnhancer(seoengineSvc)
+	editorialSvc.SetLinkSuggestor(seoengineSvc)
 
 	workflowSvc := workflowMod.Service()
 	workflowMod.SetEventBus(k.EventBus())
+
+	translationSvc := translationMod.Service()
+	translationMod.SetEventBus(k.EventBus())
+	translationMod.SetAIManager(aiSvc)
+	translationMod.SetQualityChecker(aiModule.NewQualityChecker())
+	translationMod.SetPostsSvc(postsSvc)
+	translationMod.SetPublisherSvc(publisherSvc)
+	translationMod.SetResearchSvc(researchSvc)
+
+	freshnessSvc := freshnessMod.Service()
+	freshnessMod.SetEventBus(k.EventBus())
+
+	editorialBrainSvc := editorialBrainMod.Service()
+	editorialBrainMod.SetEventBus(k.EventBus())
+	editorialBrainMod.SetQualityChecker(aiModule.NewQualityChecker())
+	editorialBrainMod.SetResearchProvider(editorialResearchAdapter{svc: researchSvc})
+	publisherSvc.SetEditorialGate(editorialBrainSvc)
+
+	// ISR revalidation: after every publish, ask the public site(s) to
+	// revalidate the article (and the homepage). Fail-open — a broken
+	// webhook never blocks the publish flow (see pkg/revalidate).
+	revalClient := revalidate.New(cfg.Revalidate.PublicURLs, cfg.Revalidate.Token, cfg.Revalidate.Enabled, cfg.Revalidate.Timeout, log)
+	k.EventBus().Subscribe(publisherModule.EventPubCachePurge, func(ctx context.Context, event kernel.Event) error {
+		var payload struct {
+			SiteID string `json:"site_id"`
+			Slug   string `json:"slug"`
+		}
+		if raw, err := json.Marshal(event.Payload); err == nil {
+			_ = json.Unmarshal(raw, &payload)
+		}
+		if payload.Slug == "" {
+			return nil
+		}
+		go func() {
+			rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := revalClient.Revalidate(rctx, payload.Slug); err != nil {
+				log.Error("ISR revalidation failed (fail-open, publish unaffected)", "error", err, "slug", payload.Slug)
+			}
+		}()
+		return nil
+	})
 
 	pluginManager := pluginsModule.NewManager(&pluginsModule.ManagerConfig{
 		PluginsDir: "plugins",
@@ -294,6 +401,9 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		PublisherSvc:       publisherSvc,
 		SeoEngineSvc:       seoengineSvc,
 		WorkflowSvc:        workflowSvc,
+		TranslationSvc:     translationSvc,
+		FreshnessSvc:       freshnessSvc,
+		EditorialBrainSvc:  editorialBrainSvc,
 		PluginManager:      pluginManager,
 		CasbinEnforcer:     enforcer,
 		RateLimits:         rateLimiter,

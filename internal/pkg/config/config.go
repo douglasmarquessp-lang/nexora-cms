@@ -20,6 +20,11 @@ type Config struct {
 	Storage   StorageConfig
 	Cache     CacheConfig
 	AI        AIConfig
+	SEO       SEOConfig
+	Research  ResearchConfig
+	Freshness FreshnessConfig
+	Editorial EditorialConfig
+	Revalidate RevalidateConfig
 	Debug     bool
 	LogLevel  string
 	LogFormat string
@@ -118,6 +123,76 @@ type AIConfig struct {
 	CBFailureThreshold int
 	CBRecoveryTimeout  time.Duration
 	CBHalfOpenMaxReqs  int
+}
+
+// SEOConfig controls the SEO Intelligence Engine behavior.
+type SEOConfig struct {
+	// MinPublishScore is the minimum audit score an article must reach
+	// before automatic publication is allowed. Set to 0 to disable the
+	// publish gate entirely.
+	MinPublishScore float64
+
+	// CompetitorDomains are domains that must never be linked as external
+	// references (direct competitors), e.g. "competitor.com".
+	CompetitorDomains []string
+
+	// InternalLinkMinScore is the minimum score an internal link candidate
+	// must reach to be selected (default 40).
+	InternalLinkMinScore int
+
+	// InternalLinkMax is the maximum number of internal links inserted
+	// per article (default 5).
+	InternalLinkMax int
+
+	// ExternalLinkMinReliability is the minimum reliability score (0-100)
+	// an external source must have to be linked (default 75).
+	ExternalLinkMinReliability int
+}
+
+// ResearchConfig controls the AI Research Intelligence behavior.
+type ResearchConfig struct {
+	// CacheTTL is how long a deep research result is reused before a new
+	// search runs for the same topic (default 24h). Set to 0 for the default.
+	CacheTTL time.Duration
+}
+
+// FreshnessConfig controls the Freshness Engine + News Intelligence behavior.
+type FreshnessConfig struct {
+	// SweepEnabled turns the once-per-day re-evaluation sweep on/off
+	// (default true).
+	SweepEnabled bool
+
+	// NewsMaxDays is the NEWS temporal window (max source age kept usable,
+	// default 30).
+	NewsMaxDays int
+
+	// NewsNeverOlderDays is the absolute NEWS cutoff — sources older than
+	// this are never used (default 90).
+	NewsNeverOlderDays int
+}
+
+// EditorialConfig controls the AI Editorial Brain behavior.
+type EditorialConfig struct {
+	// MinFinalScore is the minimum final editorial note (0-100) an article
+	// must reach to be published (default 90). Below it, the article returns
+	// automatically to review. Set to 0 to disable the editorial gate.
+	MinFinalScore float64
+}
+
+// RevalidateConfig controls the Next.js ISR revalidation webhook. The API
+// POSTs {site}/api/revalidate after every publish so the public site's ISR
+// cache is refreshed immediately (fail-open: broken revalidation never
+// blocks publishing).
+type RevalidateConfig struct {
+	// PublicURLs are the public site base URLs (comma separated, e.g.
+	// "https://blog.example.com,https://blog2.example.com").
+	PublicURLs []string
+	// Token must match SITE_REVALIDATE_TOKEN on the public site.
+	Token string
+	// Enabled toggles the webhook. Defaults to true (no-op without URLs).
+	Enabled bool
+	// Timeout bounds each POST (default 5s).
+	Timeout time.Duration
 }
 
 var errDefaultJWTSecret = fmt.Errorf("JWT_SECRET must be changed from the default value for security")
@@ -226,6 +301,33 @@ func Load() (*Config, error) {
 		CBHalfOpenMaxReqs:  getEnvInt("AI_CB_HALF_OPEN_MAX_REQS", 3),
 	}
 
+	cfg.SEO = SEOConfig{
+		MinPublishScore:          getEnvFloat("SEO_MIN_PUBLISH_SCORE", 80),
+		CompetitorDomains:        getEnvCSV("SEO_COMPETITOR_DOMAINS"),
+		InternalLinkMinScore:     getEnvInt("SEO_INTERNAL_LINK_MIN_SCORE", 40),
+		InternalLinkMax:          getEnvInt("SEO_INTERNAL_LINK_MAX", 5),
+		ExternalLinkMinReliability: getEnvInt("SEO_EXTERNAL_LINK_MIN_RELIABILITY", 75),
+	}
+
+	cfg.Research = ResearchConfig{
+		CacheTTL: getEnvDuration("RESEARCH_CACHE_TTL", 24*time.Hour),
+	}
+
+	cfg.Freshness = FreshnessConfig{
+		SweepEnabled:       getEnvBool("FRESHNESS_SWEEP_ENABLED", true),
+		NewsMaxDays:        getEnvInt("FRESHNESS_NEWS_MAX_DAYS", 30),
+		NewsNeverOlderDays: getEnvInt("FRESHNESS_NEWS_NEVER_OLDER_DAYS", 90),
+	}
+	cfg.Editorial = EditorialConfig{
+		MinFinalScore: getEnvFloat("EDITORIAL_MIN_FINAL_SCORE", 90),
+	}
+	cfg.Revalidate = RevalidateConfig{
+		PublicURLs: splitCSV(firstNonEmpty(os.Getenv("SITE_PUBLIC_URLS"), os.Getenv("SITE_PUBLIC_URL"))),
+		Token:      getEnv("SITE_REVALIDATE_TOKEN", ""),
+		Enabled:    getEnvBool("SITE_REVALIDATION_ENABLED", true),
+		Timeout:    getEnvDuration("SITE_REVALIDATE_TIMEOUT", 5*time.Second),
+	}
+
 	if cfg.Auth.JWTSecret == "change-me-to-a-random-64-char-string" {
 		return nil, errDefaultJWTSecret
 	}
@@ -257,6 +359,31 @@ func getEnvBool(key string, fallback bool) bool {
 	return fallback
 }
 
+func getEnvFloat(key string, fallback float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
+}
+
+// getEnvCSV parses a comma-separated environment variable into a trimmed list.
+func getEnvCSV(key string) []string {
+	val := os.Getenv(key)
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, strings.ToLower(p))
+		}
+	}
+	return out
+}
+
 func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	if val := os.Getenv(key); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
@@ -264,4 +391,27 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

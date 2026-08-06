@@ -926,8 +926,8 @@ func TestService_SetStatus_WithMockDB(t *testing.T) {
 		WithArgs(postID).
 		WillReturnRows(pgxmock.NewRows(nil))
 
-	mock.ExpectExec(`UPDATE posts SET status = \$1, published_at = COALESCE\(\$2, published_at\), updated_at = NOW\(\) WHERE id = \$3 AND site_id = \$4 AND deleted_at IS NULL`).
-		WithArgs("published", pgxmock.AnyArg(), postID, siteID).
+	mock.ExpectExec(`UPDATE posts SET status = \$1, published_at = COALESCE\(\$2, published_at\), scheduled_at = \$5, updated_at = NOW\(\) WHERE id = \$3 AND site_id = \$4 AND deleted_at IS NULL`).
+		WithArgs("published", pgxmock.AnyArg(), postID, siteID, pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	err := svc.SetStatus(context.Background(), siteID, postID, PostStatusPublished)
@@ -961,6 +961,44 @@ func TestService_SetStatus_NotFound(t *testing.T) {
 	}
 }
 
+func TestService_SetStatusScheduledAt(t *testing.T) {
+	svc, mock := setupMockDB(t)
+	defer mock.Close()
+
+	siteID := uuid.New()
+	postID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	inFuture := now.Add(24 * time.Hour)
+
+	getRows := pgxmock.NewRows([]string{"id", "site_id", "title", "slug", "content", "excerpt", "status", "author_id", "published_at", "scheduled_at", "post_meta", "metadata", "created_at", "updated_at", "deleted_at"}).
+		AddRow(postID, siteID, "To Schedule", "to-schedule", `[]`, "", "draft", uuid.New(), nil, nil, `{}`, `{}`, now, now, nil)
+
+	mock.ExpectQuery(`SELECT id, site_id, title, slug, COALESCE\(content::text, '\[\]'\)`).
+		WithArgs(postID, siteID).
+		WillReturnRows(getRows)
+
+	mock.ExpectQuery(`SELECT c.id, c.site_id, c.parent_id, c.name, c.slug, COALESCE\(c.description, ''\)`).
+		WithArgs(postID).
+		WillReturnRows(pgxmock.NewRows(nil))
+
+	mock.ExpectQuery(`SELECT t.id, t.site_id, t.name, t.slug, COALESCE\(t.color, ''\)`).
+		WithArgs(postID).
+		WillReturnRows(pgxmock.NewRows(nil))
+
+	mock.ExpectExec(`UPDATE posts SET status = \$1, published_at = COALESCE\(\$2, published_at\), scheduled_at = \$5, updated_at = NOW\(\) WHERE id = \$3 AND site_id = \$4 AND deleted_at IS NULL`).
+		WithArgs("scheduled", pgxmock.AnyArg(), postID, siteID, &inFuture).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	err := svc.SetStatusWithSchedule(context.Background(), siteID, postID, PostStatusScheduled, &inFuture)
+	if err != nil {
+		t.Fatalf("SetStatusWithSchedule failed: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
 func TestService_SetStatus_ToArchived(t *testing.T) {
 	svc, mock := setupMockDB(t)
 	defer mock.Close()
@@ -984,8 +1022,8 @@ func TestService_SetStatus_ToArchived(t *testing.T) {
 		WithArgs(postID).
 		WillReturnRows(pgxmock.NewRows(nil))
 
-	mock.ExpectExec(`UPDATE posts SET status = \$1, published_at = COALESCE\(\$2, published_at\), updated_at = NOW\(\) WHERE id = \$3 AND site_id = \$4 AND deleted_at IS NULL`).
-		WithArgs("archived", pgxmock.AnyArg(), postID, siteID).
+	mock.ExpectExec(`UPDATE posts SET status = \$1, published_at = COALESCE\(\$2, published_at\), scheduled_at = \$5, updated_at = NOW\(\) WHERE id = \$3 AND site_id = \$4 AND deleted_at IS NULL`).
+		WithArgs("archived", pgxmock.AnyArg(), postID, siteID, pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	err := svc.SetStatus(context.Background(), siteID, postID, PostStatusArchived)

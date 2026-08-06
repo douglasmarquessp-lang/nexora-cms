@@ -58,6 +58,10 @@ func (h *Handler) Publish(ctx *rest.Context) {
 			ctx.Error(http.StatusConflict, "CONFLICT", "duplicate slug for site")
 		} else if errors.Is(err, ErrInvalidVisibility) {
 			ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "invalid visibility")
+		} else if errors.Is(err, ErrSEOPublishBlocked) {
+			ctx.Error(http.StatusUnprocessableEntity, "SEO_SCORE_BELOW_MINIMUM", "seo score below minimum for publishing")
+		} else if errors.Is(err, ErrEditorialScoreBelowMinimum) {
+			ctx.Error(http.StatusUnprocessableEntity, "EDITORIAL_SCORE_BELOW_MINIMUM", "editorial score below minimum: article returned to review")
 		} else {
 			h.log.Error("failed to publish article", "error", err)
 			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to publish article")

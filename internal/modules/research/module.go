@@ -37,6 +37,7 @@ func (m *ResearchModule) Name() string {
 
 func (m *ResearchModule) Init(ctx context.Context) error {
 	m.service = NewService(m.cfg, m.log, m.db, m.cache)
+	m.service.SetCacheTTL(m.cfg.Research.CacheTTL)
 	m.log.Info("research module initialized")
 	return nil
 }

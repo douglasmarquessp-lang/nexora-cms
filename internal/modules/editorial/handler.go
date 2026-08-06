@@ -648,3 +648,115 @@ func (h *Handler) AIInsights(ctx *rest.Context) {
 		"status":   "coming_soon",
 	})
 }
+
+func (h *Handler) Pipeline(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	limit := 200
+	if raw := ctx.Request.URL.Query().Get("limit"); raw != "" {
+		if n, err := parseInt(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	resp, err := h.svc.GetPipeline(ctx.Request.Context(), siteID, limit)
+	if err != nil {
+		h.log.Error("failed to get pipeline", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to load pipeline")
+		return
+	}
+
+	ctx.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) PipelineStats(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	stats, err := h.svc.GetPipelineStats(ctx.Request.Context(), siteID)
+	if err != nil {
+		h.log.Error("failed to get pipeline stats", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to load pipeline stats")
+		return
+	}
+
+	ctx.JSON(http.StatusOK, stats)
+}
+
+func (h *Handler) ArticleReview(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	postID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid post ID")
+		return
+	}
+
+	review, err := h.svc.GetArticleReview(ctx.Request.Context(), siteID, postID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrPostNotFound):
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "post not found")
+		case errors.Is(err, ErrDatabaseNotAvail):
+			ctx.Error(http.StatusServiceUnavailable, "DB_UNAVAILABLE", err.Error())
+		default:
+			h.log.Error("failed to get article review", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to load article review")
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, review)
+}
+
+func (h *Handler) PublishReadiness(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+
+	postID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid post ID")
+		return
+	}
+
+	readiness, err := h.svc.GetPublishReadiness(ctx.Request.Context(), siteID, postID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrPostNotFound):
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "post not found")
+		case errors.Is(err, ErrDatabaseNotAvail):
+			ctx.Error(http.StatusServiceUnavailable, "DB_UNAVAILABLE", err.Error())
+		default:
+			h.log.Error("failed to get publish readiness", "error", err)
+			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to load publish readiness")
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, readiness)
+}
+
+func parseInt(raw string) (int, error) {
+	n := 0
+	for _, ch := range raw {
+		if ch < '0' || ch > '9' {
+			return 0, errors.New("not a number")
+		}
+		n = n*10 + int(ch-'0')
+	}
+	return n, nil
+}

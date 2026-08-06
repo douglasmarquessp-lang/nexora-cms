@@ -31,11 +31,30 @@ const (
 	EntityTypeKeyword    EntityType = "keyword"
 )
 
+// FactType enumerates the structured fact base dimensions.
+type FactType string
+
+const (
+	FactTypeCompany    FactType = "company"
+	FactTypeProduct    FactType = "product"
+	FactTypeVersion    FactType = "version"
+	FactTypePrice      FactType = "price"
+	FactTypeDate       FactType = "date"
+	FactTypeEvent      FactType = "event"
+	FactTypeTechnology FactType = "technology"
+	FactTypeNumber     FactType = "number"
+)
+
+// DefaultResearchCacheTTL is how long a deep research result is reused
+// before a new search is performed for the same topic.
+const DefaultResearchCacheTTL = 24 * time.Hour
+
 const (
 	EventResearchCreated   kernel.EventType = "research.created"
 	EventResearchUpdated   kernel.EventType = "research.updated"
 	EventResearchCompleted kernel.EventType = "research.completed"
 	EventResearchDeleted   kernel.EventType = "research.deleted"
+	EventResearchCached    kernel.EventType = "research.cached"
 )
 
 var (
@@ -45,6 +64,7 @@ var (
 	ErrDatabaseNotAvail       = errors.New("database not available")
 	ErrInvalidLanguage        = errors.New("language must be 'pt' or 'en'")
 	ErrTopicRequired          = errors.New("topic is required")
+	ErrCacheEntryNotFound     = errors.New("research cache entry not found")
 )
 
 type ResearchJob struct {
@@ -66,6 +86,9 @@ type ResearchSource struct {
 	ResearchJobID     uuid.UUID              `json:"research_job_id"`
 	Title             string                 `json:"title"`
 	URL               string                 `json:"url"`
+	Domain            string                 `json:"domain,omitempty"`
+	ReliabilityScore  int                    `json:"reliability_score"`
+	ReliabilityLabel  string                 `json:"reliability_label,omitempty"`
 	Language          string                 `json:"language,omitempty"`
 	Author            string                 `json:"author,omitempty"`
 	PublishedAt       *time.Time             `json:"published_at,omitempty"`
@@ -79,6 +102,56 @@ type ResearchSource struct {
 	RetrievedAt       *time.Time             `json:"retrieved_at,omitempty"`
 	GroundingMetadata map[string]interface{} `json:"grounding_metadata,omitempty"`
 	CreatedAt         time.Time              `json:"created_at"`
+}
+
+// FactBaseEntry is a single structured fact persisted to research_fact_base.
+type FactBaseEntry struct {
+	ID            uuid.UUID `json:"id"`
+	SiteID        uuid.UUID `json:"site_id"`
+	ResearchJobID uuid.UUID `json:"research_job_id"`
+	FactType      FactType  `json:"fact_type"`
+	Entity        string    `json:"entity"`
+	Value         string    `json:"value"`
+	SourceURL     string    `json:"source_url,omitempty"`
+	Confidence    int       `json:"confidence"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// ResearchBriefingDoc is the structured briefing produced by deep research.
+type ResearchBriefingDoc struct {
+	Topic       string   `json:"topic"`
+	Summary     string   `json:"summary"`
+	KeyPoints   []string `json:"key_points,omitempty"`
+	DataFound   []string `json:"data_found,omitempty"`
+	Statistics  []string `json:"statistics,omitempty"`
+	Dates       []string `json:"dates,omitempty"`
+	Companies   []string `json:"companies,omitempty"`
+	Products    []string `json:"products,omitempty"`
+	Conclusions []string `json:"conclusions,omitempty"`
+}
+
+// DeepResearchReport is the full output of a deep research run: the job,
+// the structured briefing, the fact base and the ranked sources.
+type DeepResearchReport struct {
+	ResearchJob
+	Briefing *ResearchBriefingDoc `json:"briefing,omitempty"`
+	Facts    []FactBaseEntry      `json:"facts,omitempty"`
+	Sources  []ResearchSource     `json:"sources,omitempty"`
+	Cached   bool                 `json:"cached,omitempty"`
+}
+
+// CachedResearch is a research_cache row: briefing + fact base + sources.
+type CachedResearch struct {
+	ID        uuid.UUID     `json:"id"`
+	SiteID    uuid.UUID     `json:"site_id"`
+	Topic     string        `json:"topic"`
+	Language  string        `json:"language"`
+	Briefing  ResearchBriefingDoc `json:"briefing"`
+	Facts     []FactBaseEntry     `json:"facts"`
+	Sources   []ResearchSource    `json:"sources"`
+	HitCount  int           `json:"hit_count"`
+	CreatedAt time.Time     `json:"created_at"`
+	ExpiresAt time.Time     `json:"expires_at"`
 }
 
 type ResearchEntity struct {

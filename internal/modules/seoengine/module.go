@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
 	"nexora/internal/pkg/cache"
@@ -65,6 +66,18 @@ func (m *SEOEngineModule) SetEventBus(bus *kernel.EventBus) {
 	}
 }
 
+func (m *SEOEngineModule) SetQualityChecker(qc ai.QualityChecker) {
+	if m.service != nil {
+		m.service.SetQualityChecker(qc)
+	}
+}
+
+func (m *SEOEngineModule) SetAIManager(aiSvc *ai.Manager) {
+	if m.service != nil {
+		m.service.SetAIManager(aiSvc)
+	}
+}
+
 func RegisterRoutes(r chi.Router, svc *Service, log *logger.Logger) {
 	h := NewHandler(svc, log)
 
@@ -76,6 +89,13 @@ func RegisterRoutes(r chi.Router, svc *Service, log *logger.Logger) {
 		r.Get("/orphans", rest.AdaptHandler(h.DetectOrphans))
 		r.Get("/cannibalization", rest.AdaptHandler(h.DetectCannibalization))
 		r.Get("/content-gaps", rest.AdaptHandler(h.DetectContentGaps))
+
+		r.Post("/analyze-eeat", rest.AdaptHandler(h.AnalyzeEEAT))
+		r.Post("/topic-authority", rest.AdaptHandler(h.TopicAuthority))
+		r.Post("/internal-links", rest.AdaptHandler(h.SelectInternalLinks))
+		r.Post("/external-links", rest.AdaptHandler(h.ExternalLinks))
+		r.Post("/content-gap", rest.AdaptHandler(h.ContentGap))
+		r.Post("/enhance", rest.AdaptHandler(h.EnhanceContent))
 
 		r.Post("/clusters", rest.AdaptHandler(h.CreateCluster))
 		r.Get("/clusters", rest.AdaptHandler(h.ListClusters))

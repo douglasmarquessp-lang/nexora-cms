@@ -18,11 +18,13 @@ import (
 )
 
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
+	cfg          *config.Config
+	log          *logger.Logger
+	db           *database.Database
+	cache        *cache.Cache
+	eventBus     *kernel.EventBus
+	auditLog     *audit.Logger
+	linkSuggestor LinkSuggestor
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -31,6 +33,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		pool = db.Pool
 	}
 	return &Service{
+		cfg:      cfg,
 		log:      log,
 		db:       db,
 		cache:    ch,

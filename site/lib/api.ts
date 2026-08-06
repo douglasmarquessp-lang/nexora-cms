@@ -74,7 +74,7 @@ async function fetchAPI<T>(
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
     ...init,
-    next: { revalidate: 60 },
+    next: { revalidate: 60, tags: ["articles"] },
     headers: {
       "Content-Type": "application/json",
       ...init?.headers,

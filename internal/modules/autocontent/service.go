@@ -61,6 +61,16 @@ func (s *Service) SetResearchSvc(svc *research.Service) {
 	s.researchSvc = svc
 }
 
+// researchFn returns a site-scoped deep research callback for the pipeline.
+func (s *Service) researchFn(siteID uuid.UUID) ai.ResearchFn {
+	if s.researchSvc == nil {
+		return nil
+	}
+	return func(ctx context.Context, topic, language string) (*ai.ResearchSummary, error) {
+		return s.researchSvc.DeepResearchSummary(ctx, siteID, topic, language)
+	}
+}
+
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
 	if s.eventBus != nil {
 		s.eventBus.EmitAsync(ctx, eventType, payload, siteID.String())
@@ -511,6 +521,10 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 	pe := ai.NewPipelineExecutor(s.aiManager)
 	input := buildPipelineInput(job)
 
+	if s.researchSvc != nil {
+		input.ResearchFn = s.researchFn(siteID)
+	}
+
 	// accumulateContent tracks the working draft across pipeline stages.
 	// Each mapped step's result content is passed to subsequent stages
 	// via input.Content so that SEO, quality, fact-check, etc. operate
@@ -592,6 +606,9 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		updatedJob, _ := s.GetJob(ctx, siteID, jobID)
 		if updatedJob != nil {
 			input = buildPipelineInput(updatedJob)
+			if s.researchSvc != nil {
+				input.ResearchFn = s.researchFn(siteID)
+			}
 			input.Content = accumulatedContent
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta

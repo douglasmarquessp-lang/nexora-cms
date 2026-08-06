@@ -458,4 +458,6 @@ const (
 	PromptTypeQualitySEO       = "quality_seo"
 	PromptTypeQualityReadability = "quality_readability"
 	PromptTypeQualityIntent    = "quality_intent"
+	PromptTypeDeepResearch     = "deep_research"
+	PromptTypeFactBase         = "fact_base"
 )

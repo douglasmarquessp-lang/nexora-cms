@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,39 @@ var stageNames = map[PipelineStage]string{
 	StageFactCheck:      "fact_check",
 }
 
+type ResearchFact struct {
+	Type        string `json:"type"`
+	Entity      string `json:"entity"`
+	Value       string `json:"value"`
+	Source      string `json:"source,omitempty"`
+	Confidence  int    `json:"confidence,omitempty"`
+}
+
+type ResearchSourceSummary struct {
+	Title            string `json:"title"`
+	URL              string `json:"url"`
+	Domain           string `json:"domain,omitempty"`
+	ReliabilityScore int    `json:"reliability_score,omitempty"`
+	ReliabilityLabel string `json:"reliability_label,omitempty"`
+}
+
+// ResearchSummary is the structured output of the research stage: a briefing
+// plus a fact base plus the ranked sources. It is produced by the research
+// module (DeepResearch) and consumed by downstream pipeline stages.
+type ResearchSummary struct {
+	Topic    string                  `json:"topic"`
+	Language string                  `json:"language"`
+	Briefing string                  `json:"briefing,omitempty"`
+	Facts    []ResearchFact          `json:"facts,omitempty"`
+	Sources  []ResearchSourceSummary `json:"sources,omitempty"`
+	Cached   bool                    `json:"cached,omitempty"`
+}
+
+// ResearchFn is injected by callers that own a research service (site-scoped).
+// It performs deep research with cache and returns nil summary + nil error when
+// no research is needed/possible (callers fall back to grounding-only).
+type ResearchFn func(ctx context.Context, topic, language string) (*ResearchSummary, error)
+
 type PipelineInput struct {
 	Title       string            `json:"title"`
 	ContentType string            `json:"content_type"`
@@ -50,6 +84,8 @@ type PipelineInput struct {
 	References        []string           `json:"references,omitempty"`
 	Entities          []string           `json:"entities,omitempty"`
 	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
+	Research          *ResearchSummary   `json:"research,omitempty"`
+	ResearchFn        ResearchFn         `json:"-"`
 }
 
 type PipelineResult struct {
@@ -58,6 +94,7 @@ type PipelineResult struct {
 	Error             error              `json:"error,omitempty"`
 	Duration          time.Duration      `json:"duration,omitempty"`
 	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
+	Research          *ResearchSummary   `json:"research,omitempty"`
 }
 
 type PipelineExecutor struct {
@@ -122,6 +159,29 @@ func (pe *PipelineExecutor) ExecuteFull(ctx context.Context, input PipelineInput
 }
 
 func (pe *PipelineExecutor) runResearch(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
+	// Preferred path: a research service is wired (deep research with cache).
+	if input.Research != nil {
+		return &PipelineResult{
+			Stage:    StageResearchGen,
+			Content:  formatResearchSummary(input.Research),
+			Research: input.Research,
+		}, nil
+	}
+	if input.ResearchFn != nil {
+		summary, err := input.ResearchFn(ctx, input.Topic, input.Language)
+		if err != nil {
+			return nil, err
+		}
+		if summary != nil {
+			return &PipelineResult{
+				Stage:    StageResearchGen,
+				Content:  formatResearchSummary(summary),
+				Research: summary,
+			}, nil
+		}
+	}
+
+	// Fallback path: grounding-only research via the AI provider.
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeResearch, map[string]string{
 		"topic": input.Topic,
 	})
@@ -152,7 +212,95 @@ func (pe *PipelineExecutor) runResearch(ctx context.Context, input PipelineInput
 		pipelineResult.GroundingMetadata = result.GroundingMetadata
 	}
 
+	// Build a deterministic summary from the grounding sources so downstream
+	// stages still receive a structured fact base + ranked sources.
+	if summary := summaryFromGrounding(input.Topic, input.Language, result.GroundingMetadata); summary != nil {
+		pipelineResult.Research = summary
+	}
+
 	return pipelineResult, nil
+}
+
+// summaryFromGrounding builds a ResearchSummary deterministically from
+// grounding metadata (no AI call). Returns nil when no sources exist.
+func summaryFromGrounding(topic, language string, gm *GroundingMetadata) *ResearchSummary {
+	if gm == nil || len(gm.Sources) == 0 {
+		return nil
+	}
+	summary := &ResearchSummary{
+		Topic:    topic,
+		Language: language,
+		Briefing: "",
+	}
+	var parts []string
+	for _, gs := range gm.Sources {
+		domain := ExtractDomain(gs.URI)
+		score, label := ReliabilityOfDomain(domain)
+		summary.Sources = append(summary.Sources, ResearchSourceSummary{
+			Title:            gs.Title,
+			URL:              gs.URI,
+			Domain:           domain,
+			ReliabilityScore: score,
+			ReliabilityLabel: label,
+		})
+		if gs.Title != "" {
+			parts = append(parts, fmt.Sprintf("- %s (%s)", gs.Title, domain))
+		}
+	}
+	if len(parts) > 0 {
+		summary.Briefing = fmt.Sprintf("Sources for topic '%s':\n%s", topic, strings.Join(parts, "\n"))
+	}
+	return summary
+}
+
+// formatResearchSummary renders a ResearchSummary as prompt-ready text.
+func formatResearchSummary(s *ResearchSummary) string {
+	if s == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Research Summary\n")
+	b.WriteString("Topic: ")
+	b.WriteString(s.Topic)
+	b.WriteString("\nLanguage: ")
+	b.WriteString(s.Language)
+	if s.Cached {
+		b.WriteString("\nCached: true")
+	}
+	if s.Briefing != "" {
+		b.WriteString("\n\nBriefing:\n")
+		b.WriteString(s.Briefing)
+	}
+	if len(s.Facts) > 0 {
+		b.WriteString("\n\nFact Base:")
+		for _, f := range s.Facts {
+			fmt.Fprintf(&b, "\n- %s: %s (%s)", f.Entity, f.Value, f.Type)
+			if f.Source != "" {
+				fmt.Fprintf(&b, " [%s]", f.Source)
+			}
+		}
+	}
+	if len(s.Sources) > 0 {
+		b.WriteString("\n\nSources:")
+		for _, src := range s.Sources {
+			fmt.Fprintf(&b, "\n- %s | %s | reliability %d (%s)", src.Title, src.URL, src.ReliabilityScore, src.ReliabilityLabel)
+		}
+	}
+	return b.String()
+}
+
+// researchContext appends the fact base to a stage's briefing text so drafts
+// and briefings are grounded in real data (dates, numbers, versions).
+func researchContext(input PipelineInput) string {
+	if input.Research == nil || len(input.Research.Facts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nFact Base (use these verified facts; do not invent new ones):")
+	for _, f := range input.Research.Facts {
+		fmt.Fprintf(&b, "\n- %s | %s | %s", f.Entity, f.Value, f.Type)
+	}
+	return b.String()
 }
 
 func (pe *PipelineExecutor) runBriefing(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
@@ -163,7 +311,7 @@ func (pe *PipelineExecutor) runBriefing(ctx context.Context, input PipelineInput
 
 	req, err := pe.manager.Prompts().Build(ctx, promptID, map[string]string{
 		"topic":   input.Topic,
-		"sources": input.Briefing,
+		"sources": input.Briefing + researchContext(input),
 	})
 	if err != nil {
 		return nil, err
@@ -225,7 +373,7 @@ func (pe *PipelineExecutor) runDraft(ctx context.Context, input PipelineInput) (
 		"word_count":   fmt.Sprintf("%d", input.WordCount),
 		"keywords":     keywords,
 		"instructions": styleGuide,
-		"briefing":     input.Briefing,
+		"briefing":     input.Briefing + researchContext(input),
 		"outline":      input.Outline,
 		"tone":         input.Tone,
 		"audience":     input.Audience,

@@ -140,7 +140,8 @@ type PostSummary struct {
 }
 
 type SetStatusRequest struct {
-	Status PostStatus `json:"status"`
+	Status      PostStatus `json:"status"`
+	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
 }
 
 type AutosaveRequest struct {

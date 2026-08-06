@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
+	"nexora/internal/modules/publisher"
 	"nexora/internal/pkg/logger"
 )
 
@@ -659,4 +661,199 @@ func (h *Handler) GetMetrics(ctx *rest.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, metrics)
+}
+
+// --- EEAT / Topic Authority / Linking ---
+
+type AnalyzeEEATRequest struct {
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	Keyword   string `json:"keyword"`
+	Language  string `json:"language"`
+	AuthorName string `json:"author_name,omitempty"`
+}
+
+func (h *Handler) AnalyzeEEAT(ctx *rest.Context) {
+	var req AnalyzeEEATRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "content is required")
+		return
+	}
+	if req.Language == "" {
+		req.Language = "pt"
+	}
+	report := AnalyzeEEAT(ArticleAnalysisInput{
+		Title:      req.Title,
+		Content:    req.Content,
+		Keyword:    req.Keyword,
+		Language:   req.Language,
+		AuthorName: req.AuthorName,
+	})
+	ctx.JSON(http.StatusOK, report)
+}
+
+type TopicAuthorityRequest struct {
+	Topic string `json:"topic"`
+}
+
+func (h *Handler) TopicAuthority(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+	var req TopicAuthorityRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Topic) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "topic is required")
+		return
+	}
+	report, err := h.svc.TopicAuthority(ctx.Request.Context(), siteID, req.Topic)
+	if err != nil {
+		h.log.Error("failed to compute topic authority", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to compute topic authority")
+		return
+	}
+	ctx.JSON(http.StatusOK, report)
+}
+
+type InternalLinksRequest struct {
+	Title     string   `json:"title"`
+	Content   string   `json:"content"`
+	Keyword   string   `json:"keyword"`
+	Category  string   `json:"category"`
+	PostID    *uuid.UUID `json:"post_id,omitempty"`
+	MinScore  int      `json:"min_score,omitempty"`
+	MaxLinks  int      `json:"max_links,omitempty"`
+}
+
+func (h *Handler) SelectInternalLinks(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+	var req InternalLinksRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "title is required")
+		return
+	}
+	links, err := h.svc.SelectInternalLinks(ctx.Request.Context(), siteID, req.PostID, req.Title, req.Content, req.Keyword, req.Category, req.MinScore, req.MaxLinks)
+	if err != nil {
+		h.log.Error("failed to select internal links", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to select internal links")
+		return
+	}
+	if links == nil {
+		links = []InternalLinkCandidate{}
+	}
+	ctx.JSON(http.StatusOK, map[string]interface{}{"links": links, "total": len(links)})
+}
+
+type ExternalLinksRequest struct {
+	Topic    string `json:"topic"`
+	MinReliability int `json:"min_reliability,omitempty"`
+	MaxLinks int    `json:"max_links,omitempty"`
+}
+
+func (h *Handler) ExternalLinks(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+	var req ExternalLinksRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Topic) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "topic is required")
+		return
+	}
+	links, err := h.svc.SelectExternalLinks(ctx.Request.Context(), siteID, req.Topic, req.MinReliability, req.MaxLinks)
+	if err != nil {
+		h.log.Error("failed to select external links", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to select external links")
+		return
+	}
+	if links == nil {
+		links = []ExternalLinkCandidate{}
+	}
+	ctx.JSON(http.StatusOK, map[string]interface{}{"links": links, "total": len(links)})
+}
+
+type ContentGapRequest struct {
+	Content string `json:"content"`
+	Topic   string `json:"topic"`
+	// Fact-filled markers are derived automatically; AI additions optional.
+	WithAI bool `json:"with_ai,omitempty"`
+}
+
+func (h *Handler) ContentGap(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+	var req ContentGapRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "content is required")
+		return
+	}
+	report := DetectContentGaps(req.Content)
+	if req.WithAI {
+		report = h.svc.FillContentGapsAI(ctx.Request.Context(), siteID, req.Topic, report)
+	}
+	ctx.JSON(http.StatusOK, report)
+}
+
+func (h *Handler) EnhanceContent(ctx *rest.Context) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return
+	}
+	var req InternalLinksRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "title is required")
+		return
+	}
+	enh, err := h.svc.EnhanceBeforePublish(ctx.Request.Context(), publisher.ContentEnhancerInput{
+		SiteID:   siteID,
+		PostID:   req.PostID,
+		Title:    req.Title,
+		Content:  req.Content,
+		Keyword:  req.Keyword,
+		Category: req.Category,
+	})
+	if err != nil {
+		h.log.Error("failed to enhance content", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to enhance content")
+		return
+	}
+	if enh == nil {
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to enhance content")
+		return
+	}
+	ctx.JSON(http.StatusOK, enh)
 }

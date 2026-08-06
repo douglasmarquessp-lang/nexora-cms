@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"nexora/internal/ai"
 	"nexora/internal/kernel"
+	"nexora/internal/modules/publisher"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
@@ -18,12 +22,25 @@ import (
 	"nexora/internal/pkg/logger"
 )
 
+func fnv64(s string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum64()
+}
+
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
+	log           *logger.Logger
+	db            *database.Database
+	cache         *cache.Cache
+	eventBus      *kernel.EventBus
+	auditLog       *audit.Logger
+	qualityChecker ai.QualityChecker
+	aiManager     *ai.Manager
+
+	competitorDomains          []string
+	internalLinkMinScore       int
+	internalLinkMax            int
+	externalLinkMinReliability int
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -31,16 +48,40 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 	if db != nil {
 		pool = db.Pool
 	}
-	return &Service{
+	s := &Service{
 		log:      log,
 		db:       db,
 		cache:    ch,
 		auditLog: audit.New(pool, log),
 	}
+	if cfg != nil {
+		s.competitorDomains = cfg.SEO.CompetitorDomains
+		s.internalLinkMinScore = cfg.SEO.InternalLinkMinScore
+		s.internalLinkMax = cfg.SEO.InternalLinkMax
+		s.externalLinkMinReliability = cfg.SEO.ExternalLinkMinReliability
+	}
+	if s.internalLinkMinScore == 0 {
+		s.internalLinkMinScore = 40
+	}
+	if s.internalLinkMax == 0 {
+		s.internalLinkMax = 5
+	}
+	if s.externalLinkMinReliability == 0 {
+		s.externalLinkMinReliability = 75
+	}
+	return s
 }
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
+}
+
+func (s *Service) SetQualityChecker(qc ai.QualityChecker) {
+	s.qualityChecker = qc
+}
+
+func (s *Service) SetAIManager(m *ai.Manager) {
+	s.aiManager = m
 }
 
 func (s *Service) fireEvent(ctx context.Context, eventType kernel.EventType, payload interface{}, siteID uuid.UUID) {
@@ -351,70 +392,23 @@ func (s *Service) RunFullAudit(ctx context.Context, siteID, projectID uuid.UUID)
 		return nil, fmt.Errorf("failed to update project status: %w", err)
 	}
 
-	titleScore := simScore(60, 95)
-	metaScore := simScore(55, 90)
-	headingScore := simScore(50, 95)
-	readabilityScore := simScore(40, 95)
-	slugScore := simScore(50, 90)
+	input := s.buildAnalysisInput(ctx, p, project)
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	issuesJSON, _ := json.Marshal(analysis.Suggestions)
+	headingJSON, _ := json.Marshal(filterIssues(analysis.Suggestions, "headings", "heading"))
+	imageJSON, _ := json.Marshal(filterIssues(analysis.Suggestions, "image_alt", "images"))
+	schemaJSON, _ := json.Marshal(filterIssues(analysis.Suggestions, "schema"))
+	eeatIssuesJSON, _ := json.Marshal(filterIssues(analysis.Suggestions, "eeat"))
+	freshnessIssuesJSON, _ := json.Marshal(filterIssues(analysis.Suggestions, "freshness"))
+	slugIssues := issueMessages(filterIssues(analysis.Suggestions, "slug"))
+	titleIssues := issueMessages(filterIssues(analysis.Suggestions, "title"))
+	metaIssues := issueMessages(filterIssues(analysis.Suggestions, "meta"))
 
-	headingIssues := []AuditIssue{}
-	if headingScore < 80 {
-		headingIssues = append(headingIssues, AuditIssue{
-			Field: "headings", Issue: "Missing H1 tag or multiple H1 tags detected",
-			Suggestion: "Ensure each page has exactly one H1 tag matching the primary keyword",
-			Score: headingScore, Priority: "high",
-		})
-	}
-
-	imageIssues := []AuditIssue{}
-	if simScore(0, 100) < 70 {
-		imageIssues = append(imageIssues, AuditIssue{
-			Field: "images", Issue: "Images missing ALT attributes",
-			Suggestion: "Add descriptive ALT text to all images including target keywords where relevant",
-			Score: 60, Priority: "medium",
-		})
-	}
-
-	schemaIssues := []AuditIssue{}
-	if simScore(0, 100) < 60 {
-		schemaIssues = append(schemaIssues, AuditIssue{
-			Field: "schema", Issue: "No structured data markup detected",
-			Suggestion: "Implement Article schema, BreadcrumbList, and FAQ schema as applicable",
-			Score: 40, Priority: "high",
-		})
-	}
-
-	titleIssues := []string{}
-	if titleScore < 80 {
-		titleIssues = append(titleIssues, "Title tag should be 50-60 characters and include primary keyword")
-	}
-
-	metaIssues := []string{}
-	if metaScore < 80 {
-		metaIssues = append(metaIssues, "Meta description should be 150-160 characters with keyword and CTA")
-	}
-
-	slugIssues := []string{}
-	if slugScore < 80 {
-		slugIssues = append(slugIssues, "URL slug should be short, keyword-rich, and use hyphens")
-	}
-
-	eeatScore := simScore(30, 90)
-	freshnessScore := simScore(30, 95)
-	duplicateScore := simScore(70, 100)
-	overallScore := (titleScore + metaScore + headingScore + readabilityScore + slugScore + eeatScore + freshnessScore + duplicateScore) / 8
-
-	auditID := uuid.New()
-	issuesJSON, _ := json.Marshal([]AuditIssue{})
-	headingJSON, _ := json.Marshal(headingIssues)
-	imageJSON, _ := json.Marshal(imageIssues)
-	schemaJSON, _ := json.Marshal(schemaIssues)
+	checklistItems := buildChecklist(analysis)
+	checklistJSON, _ := json.Marshal(checklistItems)
 	linkJSON, _ := json.Marshal([]LinkSuggestion{})
 
-	checklistItems := s.buildChecklist(titleScore, metaScore, headingScore, readabilityScore, slugScore, eeatScore, freshnessScore, duplicateScore)
-	checklistJSON, _ := json.Marshal(checklistItems)
-	eeatIssuesJSON, _ := json.Marshal([]AuditIssue{})
-	freshnessIssuesJSON, _ := json.Marshal([]AuditIssue{})
+	auditID := uuid.New()
 
 	_, err = p.Exec(ctx,
 		`INSERT INTO seo_audits (id, site_id, seo_project_id, post_id, url,
@@ -428,9 +422,9 @@ func (s *Service) RunFullAudit(ctx context.Context, siteID, projectID uuid.UUID)
 		 $18,$19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25,$26,$27,
 		 $28::jsonb,$29::jsonb,$30::jsonb,$31::jsonb,$32,$33,$34,$34)`,
 		auditID, siteID, &projectID, project.PostID, project.TargetURL,
-		titleScore, metaScore, headingScore, simScore(50, 90), readabilityScore,
-		simScore(50, 90), simScore(50, 90), duplicateScore, overallScore,
-		eeatScore, freshnessScore, slugScore,
+		analysis.TitleScore, analysis.MetaScore, analysis.HeadingScore, analysis.ParagraphScore, analysis.ReadabilityScore,
+		analysis.PassiveVoiceScore, analysis.SentenceVariationScore, analysis.DuplicateScore, analysis.OverallScore,
+		analysis.EEATScore, analysis.FreshnessScore, analysis.SlugScore,
 		false, false, false,
 		string(issuesJSON), string(headingJSON), string(imageJSON), string(schemaJSON),
 		slugIssues, titleIssues, metaIssues,
@@ -447,8 +441,8 @@ func (s *Service) RunFullAudit(ctx context.Context, siteID, projectID uuid.UUID)
 		 eeat_score = $3, freshness_score = $4, technical_score = $5,
 		 checklist = $6::jsonb, completed_at = $7, updated_at = $7
 		 WHERE id = $8`,
-		overallScore, readabilityScore, eeatScore, freshnessScore,
-		(titleScore+metaScore+slugScore+headingScore)/4,
+		analysis.OverallScore, analysis.ReadabilityScore, analysis.EEATScore, analysis.FreshnessScore,
+		round2((analysis.TitleScore+analysis.MetaScore+analysis.SlugScore+analysis.HeadingScore+analysis.SchemaScore)/5),
 		string(checklistJSON), now, projectID,
 	)
 
@@ -459,54 +453,136 @@ func (s *Service) RunFullAudit(ctx context.Context, siteID, projectID uuid.UUID)
 		 schema_score, image_score, slug_score, heading_score, multilingual_score,
 		 language, scored_at, created_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)`,
-		uuid.New(), siteID, &projectID, project.PostID, overallScore,
-		simScore(30, 90), simScore(40, 90), simScore(40, 90), simScore(30, 90), readabilityScore,
-		(metaScore+titleScore)/2, eeatScore, freshnessScore, simScore(30, 80),
-		float64(len(schemaIssues)), float64(len(imageIssues)), slugScore, headingScore,
-		simScore(0, 100), project.Language, now, now,
+		uuid.New(), siteID, &projectID, project.PostID, analysis.OverallScore,
+		analysis.KeywordScore,
+		round2((analysis.ReadabilityScore+analysis.EEATScore+analysis.FreshnessScore+analysis.KeywordScore)/4),
+		round2((analysis.TitleScore+analysis.MetaScore+analysis.SlugScore+analysis.HeadingScore+analysis.SchemaScore)/5),
+		round2((analysis.InternalLinksScore+analysis.ExternalLinksScore)/2),
+		analysis.ReadabilityScore,
+		round2((analysis.MetaScore+analysis.TitleScore)/2),
+		analysis.EEATScore, analysis.FreshnessScore, analysis.TopicalAuthorityScore,
+		analysis.SchemaScore, analysis.ImagesScore, analysis.SlugScore, analysis.HeadingScore,
+		50, project.Language, now, now,
 	)
+
+	if project.PostID != nil {
+		_, _ = p.Exec(ctx,
+			`UPDATE posts SET seo_score = $1, seo_analyzed_at = $2, seo_issues = $3::jsonb, updated_at = $2
+			 WHERE id = $4 AND site_id = $5`,
+			analysis.OverallScore, now, string(issuesJSON), project.PostID, siteID,
+		)
+	}
 
 	s.fireEvent(ctx, EventSEOAuditCompleted, map[string]interface{}{
 		"project_id":    projectID.String(),
 		"audit_id":      auditID.String(),
-		"overall_score": overallScore,
+		"overall_score": analysis.OverallScore,
 	}, siteID)
 
 	s.fireEvent(ctx, EventSEOProjectCompleted, map[string]interface{}{
 		"project_id": projectID.String(),
-		"score":      overallScore,
+		"score":      analysis.OverallScore,
 	}, siteID)
 
 	return s.getAuditByID(ctx, p, auditID, siteID)
 }
 
-func (s *Service) buildChecklist(titleScore, metaScore, headingScore, readabilityScore, slugScore, eeatScore, freshnessScore, duplicateScore float64) []ChecklistItem {
+// buildAnalysisInput assembles the analyzer input from the project and, when
+// available, the linked post content.
+func (s *Service) buildAnalysisInput(ctx context.Context, p database.Pool, project *SEOProject) ArticleAnalysisInput {
+	input := ArticleAnalysisInput{
+		Title:           project.Title,
+		MetaDescription: project.MetaDescriptionTarget,
+		Slug:            project.SlugTarget,
+		Content:         "",
+		Keyword:         deriveKeyword(project.Title),
+		Language:        project.Language,
+	}
+	if input.Language == "" {
+		input.Language = "pt"
+	}
+
+	if project.PostID == nil {
+		return input
+	}
+
+	var contentText string
+	var slug, excerpt, metaDesc string
+	err := p.QueryRow(ctx,
+		`SELECT COALESCE(slug,''), COALESCE(content::text,'[]'), COALESCE(excerpt,''),
+		        COALESCE(metadata->>'meta_description','')
+		 FROM posts WHERE id = $1 AND site_id = $2`,
+		project.PostID, project.SiteID,
+	).Scan(&slug, &contentText, &excerpt, &metaDesc)
+	if err != nil {
+		s.log.Warn("seo audit: failed to load post content", "post_id", project.PostID, "error", err)
+		return input
+	}
+
+	if input.Slug == "" {
+		input.Slug = slug
+	}
+	if input.MetaDescription == "" {
+		input.MetaDescription = excerpt
+		if input.MetaDescription == "" {
+			input.MetaDescription = metaDesc
+		}
+	}
+	input.Content = extractContentText([]byte(contentText))
+	return input
+}
+
+func filterIssues(issues []AuditIssue, fields ...string) []AuditIssue {
+	filtered := []AuditIssue{}
+	for _, iss := range issues {
+		for _, f := range fields {
+			if iss.Field == f {
+				filtered = append(filtered, iss)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
+func issueMessages(issues []AuditIssue) []string {
+	msgs := make([]string, 0, len(issues))
+	for _, iss := range issues {
+		msgs = append(msgs, iss.Issue)
+	}
+	return msgs
+}
+
+func buildChecklist(analysis *ArticleAnalysis) []ChecklistItem {
 	items := []ChecklistItem{}
-	if titleScore < 80 {
-		items = append(items, ChecklistItem{Category: CategoryTitle, Issue: "Title tag needs optimization", Suggestion: "Optimize title tag to 50-60 chars with primary keyword", Priority: PriorityHigh, Score: titleScore})
+	categoryForField := map[string]ImprovementCategory{
+		"title":            CategoryTitle,
+		"meta":             CategoryMeta,
+		"slug":             CategorySlug,
+		"headings":         CategoryHeading,
+		"readability":      CategoryReadability,
+		"eeat":             CategoryEEAT,
+		"freshness":        CategoryFreshness,
+		"internal_link":    CategoryLink,
+		"external_link":    CategoryLink,
+		"image_alt":        CategoryImage,
+		"schema":           CategorySchema,
+		"passive_voice":    CategoryReadability,
+		"sentence_variation": CategoryReadability,
 	}
-	if metaScore < 80 {
-		items = append(items, ChecklistItem{Category: CategoryMeta, Issue: "Meta description needs optimization", Suggestion: "Write compelling meta description (150-160 chars) with keyword and CTA", Priority: PriorityHigh, Score: metaScore})
+	for _, iss := range analysis.Suggestions {
+		cat, ok := categoryForField[iss.Field]
+		if !ok {
+			cat = CategoryTitle
+		}
+		items = append(items, ChecklistItem{
+			Category:   cat,
+			Issue:      iss.Issue,
+			Suggestion: iss.Suggestion,
+			Priority:   ImprovementPriority(iss.Priority),
+			Score:      iss.Score,
+		})
 	}
-	if slugScore < 80 {
-		items = append(items, ChecklistItem{Category: CategorySlug, Issue: "URL slug needs optimization", Suggestion: "Use short, keyword-rich slug with hyphens", Priority: PriorityMedium, Score: slugScore})
-	}
-	if headingScore < 80 {
-		items = append(items, ChecklistItem{Category: CategoryHeading, Issue: "Heading structure issues", Suggestion: "Fix heading hierarchy: one H1, logical H2/H3 structure", Priority: PriorityHigh, Score: headingScore})
-	}
-	if readabilityScore < 60 {
-		items = append(items, ChecklistItem{Category: CategoryReadability, Issue: "Content readability needs improvement", Suggestion: "Use shorter sentences, simpler words, and improve paragraph structure", Priority: PriorityMedium, Score: readabilityScore})
-	}
-	if eeatScore < 50 {
-		items = append(items, ChecklistItem{Category: CategoryEEAT, Issue: "EEAT signals are weak", Suggestion: "Add author bios, expert citations, and authoritative references", Priority: PriorityHigh, Score: eeatScore})
-	}
-	if freshnessScore < 50 {
-		items = append(items, ChecklistItem{Category: CategoryFreshness, Issue: "Content freshness needs improvement", Suggestion: "Update outdated statistics, dates, and references", Priority: PriorityMedium, Score: freshnessScore})
-	}
-	if duplicateScore < 60 {
-		items = append(items, ChecklistItem{Category: CategoryDuplicate, Issue: "Duplicate content detected", Suggestion: "Rewrite or consolidate similar content", Priority: PriorityCritical, Score: duplicateScore})
-	}
-	items = append(items, ChecklistItem{Category: CategorySchema, Issue: "Schema markup review", Suggestion: "Ensure Article, Breadcrumb, and FAQ schema are implemented", Priority: PriorityMedium, Score: simScore(40, 80)})
 	return items
 }
 
@@ -1014,11 +1090,14 @@ func (s *Service) GenerateChecklist(ctx context.Context, siteID, projectID uuid.
 		return nil, err
 	}
 
-	items := s.buildChecklist(
-		simScore(60, 95), simScore(55, 90), simScore(50, 95),
-		simScore(40, 95), simScore(50, 90), simScore(30, 90),
-		simScore(30, 95), simScore(70, 100),
-	)
+	project, err := s.GetProject(ctx, siteID, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	input := s.buildAnalysisInput(ctx, p, project)
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	items := buildChecklist(analysis)
 
 	checklistJSON, _ := json.Marshal(items)
 	_, _ = p.Exec(ctx,
@@ -1042,19 +1121,52 @@ func (s *Service) GetInternalLinkingSuggestions(ctx context.Context, siteID, pro
 		return nil, err
 	}
 
-	suggestions := []LinkSuggestion{
-		{
-			SourceURL:  project.TargetURL,
-			TargetURL:  "/related-content",
-			AnchorText: "related content about " + project.Title,
-			Relevance:  simScore(50, 90),
-		},
-		{
-			SourceURL:  "/pillar-content",
+	keyword := deriveKeyword(project.Title)
+
+	rows, err := p.Query(ctx,
+		`SELECT id, COALESCE(title,''), COALESCE(slug,'') FROM posts
+		 WHERE site_id = $1 AND deleted_at IS NULL AND id <> COALESCE($2, '00000000-0000-0000-0000-000000000000')
+		 ORDER BY created_at DESC LIMIT 25`,
+		siteID, project.PostID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list posts for linking suggestions: %w", err)
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		postID    uuid.UUID
+		title     string
+		slug      string
+		relevance float64
+	}
+	candidates := []candidate{}
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.postID, &c.title, &c.slug); err != nil {
+			return nil, fmt.Errorf("failed to scan linking candidate: %w", err)
+		}
+		c.relevance = keywordCoverage(c.title+" "+c.slug, keyword) * 100
+		candidates = append(candidates, c)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].relevance > candidates[j].relevance
+	})
+
+	suggestions := []LinkSuggestion{}
+	for _, c := range candidates {
+		if c.relevance < 40 || c.slug == "" {
+			continue
+		}
+		suggestions = append(suggestions, LinkSuggestion{
+			SourceURL:  "/" + c.slug,
 			TargetURL:  project.TargetURL,
-			AnchorText: project.Title,
-			Relevance:  simScore(60, 95),
-		},
+			AnchorText: c.title,
+			Relevance:  round2(c.relevance),
+		})
+		if len(suggestions) >= 5 {
+			break
+		}
 	}
 
 	linkJSON, _ := json.Marshal(suggestions)
@@ -1130,18 +1242,57 @@ func (s *Service) DetectOrphanArticles(ctx context.Context, siteID uuid.UUID) ([
 // --- Duplicate Content ---
 
 func (s *Service) DetectDuplicates(ctx context.Context, siteID, projectID uuid.UUID) ([]DuplicateContent, error) {
-	_, err := s.pool()
+	p, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
 
-	duplicates := []DuplicateContent{
-		{
-			PostID1:    uuid.New(),
-			PostID2:    uuid.New(),
-			Similarity: 78.5,
-			Issue:      "High similarity detected between two articles about the same topic",
-		},
+	project, err := s.GetProject(ctx, siteID, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := p.Query(ctx,
+		`SELECT id, COALESCE(title,''), COALESCE(content::text,'[]') FROM posts
+		 WHERE site_id = $1 AND deleted_at IS NULL AND id <> COALESCE($2, '00000000-0000-0000-0000-000000000000')
+		 ORDER BY created_at DESC LIMIT 20`,
+		siteID, project.PostID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list posts for duplicate detection: %w", err)
+	}
+	defer rows.Close()
+
+	type postText struct {
+		id   uuid.UUID
+		text string
+	}
+	posts := []postText{}
+	for rows.Next() {
+		var pt postText
+		if err := rows.Scan(&pt.id, &pt.text); err != nil {
+			return nil, fmt.Errorf("failed to scan post for duplicates: %w", err)
+		}
+		pt.text = extractContentText([]byte(pt.text))
+		posts = append(posts, pt)
+	}
+
+	duplicates := []DuplicateContent{}
+	for i := 0; i < len(posts); i++ {
+		for j := i + 1; j < len(posts); j++ {
+			sim := shingleSimilarity(posts[i].text, posts[j].text)
+			if sim >= 0.6 {
+				duplicates = append(duplicates, DuplicateContent{
+					PostID1:    posts[i].id,
+					PostID2:    posts[j].id,
+					Similarity: round2(sim * 100),
+					Issue:      "High similarity detected between two articles about the same topic",
+				})
+			}
+		}
+	}
+	if duplicates == nil {
+		duplicates = []DuplicateContent{}
 	}
 
 	return duplicates, nil
@@ -1232,43 +1383,49 @@ func (s *Service) AnalyzeKeywords(ctx context.Context, siteID uuid.UUID, req Key
 
 	keywords := []SEOKeyword{}
 	for _, kw := range req.Keywords {
+		if strings.TrimSpace(kw) == "" {
+			continue
+		}
 		keywords = append(keywords, SEOKeyword{
 			ID:                 uuid.New(),
 			SiteID:             siteID,
 			Keyword:            kw,
 			KeywordType:        "primary",
 			SearchIntent:       req.Intent,
-			Volume:             int(simScore(100, 10000)),
-			Difficulty:         simScore(10, 90),
-			Density:            simScore(0, 5),
-			Frequency:          int(simScore(1, 20)),
-			Prominence:         simScore(0, 100),
-			CannibalizationScore: simScore(0, 100),
-			ContentGapScore:    simScore(0, 100),
-			TopicalRelevance:   simScore(30, 95),
+			Volume:             100 + int(stableScore(kw+":volume")*9900),
+			Difficulty:         round2(stableScore(kw+":difficulty") * 100),
+			Density:            round2(stableScore(kw+":density") * 5),
+			Frequency:          1 + int(stableScore(kw+":frequency")*19),
+			Prominence:         round2(stableScore(kw+":prominence") * 100),
+			CannibalizationScore: 0,
+			ContentGapScore:    round2(stableScore(kw+":gap") * 100),
+			TopicalRelevance:   round2(stableScore(kw+":relevance")*65 + 30),
 			Language:           req.Language,
 		})
 	}
 
 	clusters := []SEOCluster{
 		{
-			ID:                   uuid.New(),
-			SiteID:               siteID,
-			Name:                 req.Language + " Content Cluster",
-			Keywords:             req.Keywords,
-			TopicalAuthorityScore: simScore(30, 80),
-			SemanticEntities:     []string{"entity1", "entity2"},
+			ID:                    uuid.New(),
+			SiteID:                siteID,
+			Name:                  req.Language + " Content Cluster",
+			Keywords:              req.Keywords,
+			TopicalAuthorityScore: round2(avgKeywordScore(keywords)),
+			SemanticEntities:      []string{},
 		},
 	}
 
 	cannibalization := []CannibalizationIssue{}
-	for _, kw := range req.Keywords {
-		if simScore(0, 100) > 70 {
-			cannibalization = append(cannibalization, CannibalizationIssue{
-				Keyword:    kw,
-				Score:      simScore(50, 95),
-				Suggestion: fmt.Sprintf("Consolidate pages targeting '%s'", kw),
-			})
+	if len(req.Keywords) > 1 {
+		primary := strings.ToLower(req.Keywords[0])
+		for _, kw := range req.Keywords[1:] {
+			if strings.Contains(strings.ToLower(kw), primary) || strings.Contains(primary, strings.ToLower(kw)) {
+				cannibalization = append(cannibalization, CannibalizationIssue{
+					Keyword:    kw,
+					Score:      70,
+					Suggestion: fmt.Sprintf("Consolidate pages targeting '%s' into a single authoritative article", kw),
+				})
+			}
 		}
 	}
 	if cannibalization == nil {
@@ -1277,11 +1434,14 @@ func (s *Service) AnalyzeKeywords(ctx context.Context, siteID uuid.UUID, req Key
 
 	contentGaps := []ContentGapIssue{}
 	for _, kw := range req.Keywords {
-		if simScore(0, 100) > 60 {
+		if strings.TrimSpace(kw) == "" {
+			continue
+		}
+		if stableScore(kw+":gap") > 0.6 {
 			contentGaps = append(contentGaps, ContentGapIssue{
 				Topic:    kw + " guide",
 				Cluster:  req.Language + " Content Cluster",
-				Volume:   int(simScore(500, 5000)),
+				Volume:   100 + int(stableScore(kw+":gapvolume")*4900),
 				Priority: "high",
 			})
 		}
@@ -1301,100 +1461,61 @@ func (s *Service) AnalyzeKeywords(ctx context.Context, siteID uuid.UUID, req Key
 // --- Content Analysis ---
 
 func (s *Service) AnalyzeContent(ctx context.Context, siteID, projectID uuid.UUID) (*ContentAnalysisResult, error) {
-	_, err := s.pool()
+	p, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
 
-	readabilityScore := simScore(40, 95)
-	eeatScore := simScore(30, 90)
-	freshnessScore := simScore(30, 95)
+	project, err := s.GetProject(ctx, siteID, projectID)
+	if err != nil {
+		return nil, err
+	}
 
-	issues := []AuditIssue{}
-	if readabilityScore < 60 {
-		issues = append(issues, AuditIssue{
-			Field: "readability", Issue: "Content is too complex",
-			Suggestion: "Use shorter sentences and simpler vocabulary",
-			Score: readabilityScore, Priority: "medium",
-		})
-	}
-	if eeatScore < 50 {
-		issues = append(issues, AuditIssue{
-			Field: "eeat", Issue: "Low EEAT signals",
-			Suggestion: "Add author credentials, expert quotes, and cite authoritative sources",
-			Score: eeatScore, Priority: "high",
-		})
-	}
-	if freshnessScore < 50 {
-		issues = append(issues, AuditIssue{
-			Field: "freshness", Issue: "Content may be outdated",
-			Suggestion: "Update statistics, dates, and references to current information",
-			Score: freshnessScore, Priority: "medium",
-		})
-	}
+	input := s.buildAnalysisInput(ctx, p, project)
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+
+	issues := filterIssues(analysis.Suggestions, "readability", "eeat", "freshness", "passive_voice", "sentence_variation")
 	if issues == nil {
 		issues = []AuditIssue{}
 	}
 
-	checklist := s.buildChecklist(
-		simScore(60, 95), simScore(55, 90), simScore(50, 95),
-		readabilityScore, simScore(50, 90), eeatScore, freshnessScore, simScore(70, 100),
-	)
-
 	return &ContentAnalysisResult{
-		ReadabilityScore: readabilityScore,
-		EEATScore:        eeatScore,
-		FreshnessScore:   freshnessScore,
+		ReadabilityScore: analysis.ReadabilityScore,
+		EEATScore:        analysis.EEATScore,
+		FreshnessScore:   analysis.FreshnessScore,
 		Issues:           issues,
-		Checklist:        checklist,
+		Checklist:        buildChecklist(analysis),
 	}, nil
 }
 
 // --- Technical Analysis ---
 
 func (s *Service) AnalyzeTechnical(ctx context.Context, siteID, projectID uuid.UUID) (*TechnicalAnalysisResult, error) {
-	_, err := s.pool()
+	p, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
 
-	titleScore := simScore(60, 95)
-	metaScore := simScore(55, 90)
-	slugScore := simScore(50, 90)
-	headingScore := simScore(50, 95)
-	imageScore := simScore(40, 85)
-	schemaScore := simScore(30, 80)
+	project, err := s.GetProject(ctx, siteID, projectID)
+	if err != nil {
+		return nil, err
+	}
 
-	issues := []AuditIssue{}
-	if titleScore < 80 {
-		issues = append(issues, AuditIssue{Field: "title", Issue: "Title tag needs optimization", Suggestion: "Keep title 50-60 chars with primary keyword", Score: titleScore, Priority: "high"})
-	}
-	if metaScore < 80 {
-		issues = append(issues, AuditIssue{Field: "meta", Issue: "Meta description needs optimization", Suggestion: "Write compelling meta description 150-160 chars", Score: metaScore, Priority: "high"})
-	}
-	if slugScore < 80 {
-		issues = append(issues, AuditIssue{Field: "slug", Issue: "URL slug needs optimization", Suggestion: "Use short keyword-rich slug", Score: slugScore, Priority: "medium"})
-	}
-	if headingScore < 80 {
-		issues = append(issues, AuditIssue{Field: "heading", Issue: "Heading structure issues", Suggestion: "Fix H1/H2/H3 hierarchy", Score: headingScore, Priority: "high"})
-	}
-	if imageScore < 70 {
-		issues = append(issues, AuditIssue{Field: "images", Issue: "Missing image ALT attributes", Suggestion: "Add descriptive ALT text to all images", Score: imageScore, Priority: "medium"})
-	}
-	if schemaScore < 50 {
-		issues = append(issues, AuditIssue{Field: "schema", Issue: "Missing structured data", Suggestion: "Implement schema markup", Score: schemaScore, Priority: "high"})
-	}
+	input := s.buildAnalysisInput(ctx, p, project)
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+
+	issues := filterIssues(analysis.Suggestions, "title", "meta", "slug", "headings", "image_alt", "schema")
 	if issues == nil {
 		issues = []AuditIssue{}
 	}
 
 	return &TechnicalAnalysisResult{
-		TitleScore:   titleScore,
-		MetaScore:    metaScore,
-		SlugScore:    slugScore,
-		HeadingScore: headingScore,
-		ImageScore:   imageScore,
-		SchemaScore:  schemaScore,
+		TitleScore:   analysis.TitleScore,
+		MetaScore:    analysis.MetaScore,
+		SlugScore:    analysis.SlugScore,
+		HeadingScore: analysis.HeadingScore,
+		ImageScore:   analysis.ImagesScore,
+		SchemaScore:  analysis.SchemaScore,
 		Issues:       issues,
 	}, nil
 }
@@ -1571,10 +1692,60 @@ func (s *Service) GetMetrics(ctx context.Context, siteID uuid.UUID) (*SEOMetrics
 	return metrics, nil
 }
 
+// --- Publish Gate ---
+
+// CheckPublishScore implements publisher.PublishGate. It returns the last
+// stored audit score for the linked post, or evaluates the content inline
+// (deterministically) when no stored audit exists.
+func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGateInput) (float64, error) {
+	if in.PostID != nil {
+		p, err := s.pool()
+		if err == nil {
+			var score float64
+			qerr := p.QueryRow(ctx,
+				`SELECT seo_score FROM posts WHERE id = $1 AND site_id = $2 AND seo_analyzed_at IS NOT NULL`,
+				in.PostID, in.SiteID,
+			).Scan(&score)
+			if qerr == nil {
+				return score, nil
+			}
+			if qerr != pgx.ErrNoRows {
+				s.log.Warn("publish gate: failed to read stored seo score", "error", qerr)
+			}
+		}
+	}
+
+	input := ArticleAnalysisInput{
+		Title:    in.Title,
+		Content:  in.Content,
+		Keyword:  deriveKeyword(in.Title),
+		Language: in.Language,
+	}
+	if input.Language == "" {
+		input.Language = "pt"
+	}
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	return analysis.OverallScore, nil
+}
+
 // --- Helper ---
 
-func simScore(min, max float64) float64 {
-	return min + (max-min)*0.5
+// stableScore returns a deterministic value in [0,1] derived from the input
+// string (stable pseudo-random, no math/rand).
+func stableScore(key string) float64 {
+	h := fnv64(key)
+	return float64(h%1000) / 1000.0
+}
+
+func avgKeywordScore(keywords []SEOKeyword) float64 {
+	if len(keywords) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, k := range keywords {
+		sum += k.TopicalRelevance
+	}
+	return sum / float64(len(keywords))
 }
 
 

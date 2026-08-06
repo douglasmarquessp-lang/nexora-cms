@@ -284,7 +284,7 @@ func (h *Handler) SetStatus(ctx *rest.Context) {
 		return
 	}
 
-	err = h.svc.SetStatus(ctx.Request.Context(), siteID, postID, req.Status)
+	err = h.svc.SetStatusWithSchedule(ctx.Request.Context(), siteID, postID, req.Status, req.ScheduledAt)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrPostNotFound):

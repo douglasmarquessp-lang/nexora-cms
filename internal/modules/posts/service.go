@@ -596,6 +596,10 @@ func (s *Service) Delete(ctx context.Context, siteID, postID uuid.UUID) error {
 }
 
 func (s *Service) SetStatus(ctx context.Context, siteID, postID uuid.UUID, status PostStatus) error {
+	return s.SetStatusWithSchedule(ctx, siteID, postID, status, nil)
+}
+
+func (s *Service) SetStatusWithSchedule(ctx context.Context, siteID, postID uuid.UUID, status PostStatus, scheduledAt *time.Time) error {
 	if !isValidStatus(status) {
 		return ErrInvalidPostStatus
 	}
@@ -617,8 +621,8 @@ func (s *Service) SetStatus(ctx context.Context, siteID, postID uuid.UUID, statu
 	}
 
 	_, err = p.Exec(ctx,
-		`UPDATE posts SET status = $1, published_at = COALESCE($2, published_at), updated_at = NOW() WHERE id = $3 AND site_id = $4 AND deleted_at IS NULL`,
-		string(status), publishedAt, postID, siteID,
+		`UPDATE posts SET status = $1, published_at = COALESCE($2, published_at), scheduled_at = $5, updated_at = NOW() WHERE id = $3 AND site_id = $4 AND deleted_at IS NULL`,
+		string(status), publishedAt, postID, siteID, scheduledAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set post status: %w", err)
