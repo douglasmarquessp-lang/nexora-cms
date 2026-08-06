@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -11,18 +12,20 @@ import {
   Settings,
   Bot,
   BarChart3,
+  ClipboardList,
 } from "lucide-react";
 
 interface NavItem {
   label: string;
   path: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   soon?: boolean;
 }
 
 const mainNav: NavItem[] = [
   { label: "Dashboard", path: "/admin/dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { label: "Conteúdo", path: "/admin/posts", icon: <FileText className="h-4 w-4" />, soon: true },
+  { label: "Editorial", path: "/admin/editorial", icon: <ClipboardList className="h-4 w-4" /> },
   { label: "Categorias", path: "/admin/categories", icon: <Tags className="h-4 w-4" />, soon: true },
   { label: "Mídia", path: "/admin/media", icon: <Image className="h-4 w-4" /> },
 ];

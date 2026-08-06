@@ -4,6 +4,8 @@ import { DashboardPage } from "@/pages/Dashboard";
 import { MediaLibraryPage } from "@/pages/MediaLibrary";
 import { PluginsPage } from "@/pages/Plugins";
 import { WorkflowDashboardPage } from "@/pages/workflow/Dashboard";
+import { EditorialDashboardPage } from "@/pages/editorial/Dashboard";
+import { EditorialReviewPage } from "@/pages/editorial/Review";
 import { NotFoundPage } from "@/pages/NotFound";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
@@ -17,6 +19,8 @@ function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="media" element={<MediaLibraryPage />} />
         <Route path="workflow" element={<WorkflowDashboardPage />} />
+        <Route path="editorial" element={<EditorialDashboardPage />} />
+        <Route path="editorial/review/:id" element={<EditorialReviewPage />} />
         <Route path="plugins" element={<PluginsPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

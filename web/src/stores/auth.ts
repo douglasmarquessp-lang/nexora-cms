@@ -29,6 +29,7 @@ interface AuthState {
 type LoginResponse =
   | { status: "mfa_required" }
   | {
+      status: "ok";
       access_token: string;
       refresh_token: string;
       token_type: string;

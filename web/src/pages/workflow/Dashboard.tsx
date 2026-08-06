@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { cn, formatDate, formatRelativeTime } from "@/lib/utils";
 import { useCurrentSiteId, siteQueryKey } from "@/lib/queryKeys";
-import { Bell, CheckCheck, ExternalLink } from "lucide-react";
+import { CheckCheck, ExternalLink } from "lucide-react";
 
 interface Dashboard {
   total_jobs: number;
@@ -158,7 +158,6 @@ export function WorkflowDashboardPage() {
 
   const tabs = ["overview", "jobs", "queue", "notifications"];
 
-  const runningJobs = (jobs || []).filter((j) => j.status === "running");
   const notifUnread = notificationsData?.unread ?? 0;
 
   return (

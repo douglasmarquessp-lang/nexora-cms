@@ -38,7 +38,12 @@ globalThis.fetch = mockFetch;
 
 // Mock window.location
 Object.defineProperty(window, "location", {
-  value: { origin: "http://localhost:3000", href: "http://localhost:3000/admin/dashboard" },
+  value: {
+    origin: "http://localhost:3000",
+    href: "http://localhost:3000/admin/dashboard",
+    pathname: "/admin/dashboard",
+    search: "",
+  },
   writable: true,
 });
 
@@ -62,8 +67,8 @@ describe("API Client", () => {
 
     await api.get("/test");
 
-    const callUrl = mockFetch.mock.calls[0][0];
-    const callHeaders = mockFetch.mock.calls[0][1].headers;
+    const callUrl = mockFetch.mock.calls[0]![0];
+    const callHeaders = mockFetch.mock.calls[0]![1].headers;
 
     expect(callHeaders["Authorization"]).toBe("Bearer test-access-token");
     expect(callUrl).toContain("/api/v1/test");
@@ -80,7 +85,7 @@ describe("API Client", () => {
 
     await api.get("/test");
 
-    const callHeaders = mockFetch.mock.calls[0][1].headers;
+    const callHeaders = mockFetch.mock.calls[0]![1].headers;
     expect(callHeaders["X-Site-ID"]).toBe("test-site-id");
   });
 
@@ -95,7 +100,7 @@ describe("API Client", () => {
 
     await api.post("/test", { foo: "bar" });
 
-    const callHeaders = mockFetch.mock.calls[0][1].headers;
+    const callHeaders = mockFetch.mock.calls[0]![1].headers;
     expect(callHeaders["Content-Type"]).toBe("application/json");
   });
 
@@ -113,7 +118,7 @@ describe("API Client", () => {
 
     await api.post("/upload", formData, { formData: true });
 
-    const callHeaders = mockFetch.mock.calls[0][1].headers;
+    const callHeaders = mockFetch.mock.calls[0]![1].headers;
     expect(callHeaders["Content-Type"]).toBeUndefined();
   });
 
@@ -183,7 +188,12 @@ describe("API Client", () => {
     expect(window.location.href).toBe("/admin/login?redirect=%2Fadmin%2Fdashboard%3Fpage%3D2");
 
     Object.defineProperty(window, "location", {
-      value: { href: originalHref },
+      value: {
+        origin: "http://localhost:3000",
+        href: originalHref,
+        pathname: "/admin/dashboard",
+        search: "",
+      },
       writable: true,
     });
   });
@@ -201,7 +211,7 @@ describe("API Client", () => {
     const result = await api.getBlob("/media/123/file");
 
     expect(result).toBe(fakeBlob);
-    const callUrl = mockFetch.mock.calls[0][0];
+    const callUrl = mockFetch.mock.calls[0]![0];
     expect(callUrl).toContain("/api/v1/media/123/file");
   });
 
@@ -245,7 +255,12 @@ describe("API Client", () => {
     expect(localStorageMock.getItem("access_token")).toBeNull();
 
     Object.defineProperty(window, "location", {
-      value: { href: originalHref },
+      value: {
+        origin: "http://localhost:3000",
+        href: originalHref,
+        pathname: "/admin/dashboard",
+        search: "",
+      },
       writable: true,
     });
   });
@@ -264,9 +279,10 @@ describe("API Client", () => {
       expect.unreachable("Should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(ApiError);
-      expect((err as ApiError).status).toBe(400);
-      expect((err as ApiError).code).toBe("INVALID_INPUT");
-      expect((err as ApiError).message).toBe("Invalid email");
+      const apiErr = err as InstanceType<typeof ApiError>;
+      expect(apiErr.status).toBe(400);
+      expect(apiErr.code).toBe("INVALID_INPUT");
+      expect(apiErr.message).toBe("Invalid email");
     }
   });
 
@@ -281,7 +297,7 @@ describe("API Client", () => {
 
     await api.get("/search", { params: { q: "test", page: "1" } });
 
-    const callUrl = mockFetch.mock.calls[0][0];
+    const callUrl = mockFetch.mock.calls[0]![0];
     expect(callUrl).toContain("q=test");
     expect(callUrl).toContain("page=1");
   });

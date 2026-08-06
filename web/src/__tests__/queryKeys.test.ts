@@ -45,10 +45,17 @@ describe("siteQueryKey", () => {
 
   it("keeps resource-name prefix invalidation working", async () => {
     const client = new QueryClient();
-    client.setQueryData(siteQueryKey(["media"], "site-a"), [{ id: "m1" }]);
-    client.setQueryData(siteQueryKey(["media"], "site-b"), [{ id: "m2" }]);
-    const count = await client.invalidateQueries({ queryKey: ["media"] });
-    expect(count).toBe(2);
+    const keyA = siteQueryKey(["media"], "site-a");
+    const keyB = siteQueryKey(["media"], "site-b");
+    client.setQueryData(keyA, [{ id: "m1" }]);
+    client.setQueryData(keyB, [{ id: "m2" }]);
+    await client.invalidateQueries({ queryKey: ["media"] });
+    const invalidated = client
+      .getQueryCache()
+      .findAll({ queryKey: ["media"] })
+      .filter((q) => q.state.isInvalidated);
+    expect(invalidated.length).toBe(2);
+    expect(client.getQueryCache().findAll({ queryKey: ["media"] }).length).toBe(2);
   });
 
   it("does not share cached data between Site A and Site B", () => {

@@ -212,7 +212,7 @@ describe("Workflow notifications tab", () => {
       if (path === "/workflow/notifications") {
         return Promise.resolve(notificationsList([]));
       }
-      return Promise.resolve({});
+      return Promise.resolve(path === "/workflow" || path === "/workflow/queue" ? [] : {});
     });
 
     render(
@@ -233,7 +233,7 @@ describe("Workflow notifications tab", () => {
       if (path === "/workflow/notifications") {
         return Promise.reject(new Error("network down"));
       }
-      return Promise.resolve({});
+      return Promise.resolve(path === "/workflow" || path === "/workflow/queue" ? [] : {});
     });
 
     render(
@@ -250,7 +250,7 @@ describe("Workflow notifications tab", () => {
       if (path === "/workflow/notifications") {
         return Promise.resolve(notificationsList([notification("n1", { title: "Recuperado" })]));
       }
-      return Promise.resolve({});
+      return Promise.resolve(path === "/workflow" || path === "/workflow/queue" ? [] : {});
     });
 
     fireEvent.click(screen.getByRole("button", { name: /tentar novamente/i }));
@@ -314,7 +314,7 @@ describe("Workflow notifications tab", () => {
           notification("n1", { title: "Perigoso", action_url: "javascript:alert(1)" }),
         ]));
       }
-      return Promise.resolve({});
+      return Promise.resolve(path === "/workflow" || path === "/workflow/queue" ? [] : {});
     });
 
     render(
@@ -339,7 +339,7 @@ describe("Workflow notifications tab", () => {
           notification("n1", { title: "Com link", action_url: "https://example.com/jobs/1" }),
         ]));
       }
-      return Promise.resolve({});
+      return Promise.resolve(path === "/workflow" || path === "/workflow/queue" ? [] : {});
     });
 
     render(

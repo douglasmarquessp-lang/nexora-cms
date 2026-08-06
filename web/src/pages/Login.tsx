@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export function LoginPage() {
     }
   }, [isLoading, isAuthenticated, navigate, searchParams]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -41,7 +41,7 @@ export function LoginPage() {
     }
   };
 
-  const handleMfaSubmit = async (e: React.FormEvent) => {
+  const handleMfaSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
 

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, type ChangeEvent, type DragEvent } from "react";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,6 @@ import {
   Trash2,
   Copy,
   Pencil,
-  FolderPlus,
   Folder,
   ChevronRight,
   X,
@@ -217,14 +216,14 @@ export function MediaLibraryPage() {
   });
 
   const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    (e: ChangeEvent<HTMLInputElement>) => {
       if (e.target.files?.length) uploadMutation.mutate(e.target.files);
     },
     [uploadMutation],
   );
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer.files.length) uploadMutation.mutate(e.dataTransfer.files);
     },

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { queryClient } from "@/lib/queryClient";
 import { useSiteStore } from "@/stores/site";
+import { useAuthStore } from "@/stores/auth";
 
 // Mock api client
 vi.mock("@/api/client", () => ({
@@ -48,6 +49,11 @@ describe("AuthStore", () => {
   beforeEach(async () => {
     localStorageMock.clear();
     vi.clearAllMocks();
+    useAuthStore.setState({
+      user: null,
+      isAuthenticated: false,
+      isLoading: true,
+    });
     useSiteStore.setState({
       sites: [],
       currentSite: null,

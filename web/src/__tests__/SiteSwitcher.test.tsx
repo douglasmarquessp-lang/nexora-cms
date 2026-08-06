@@ -1,31 +1,50 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { SiteSwitcher } from "@/components/SiteSwitcher";
+
+const { useSiteStoreMock, selectBridge } = vi.hoisted(() => ({
+  useSiteStoreMock: vi.fn(),
+  selectBridge: { onValueChange: (_v: string) => {} },
+}));
 
 // Mock site store
 vi.mock("@/stores/site", () => ({
-  useSiteStore: vi.fn(),
+  useSiteStore: useSiteStoreMock,
 }));
 
 // Mock Radix Select (it needs a portal for rendering)
 vi.mock("@radix-ui/react-select", () => ({
-  Root: ({ children, value, onValueChange }: any) => (
-    <div data-testid="select-root">
-      <select
-        data-testid="select-native"
-        value={value}
-        onChange={(e) => onValueChange?.(e.target.value)}
-      >
-        {children}
-      </select>
+  Root: ({ children, onValueChange }: any) => {
+    selectBridge.onValueChange = onValueChange;
+    return <div data-testid="select-root">{children}</div>;
+  },
+  Group: ({ children }: any) => <>{children}</>,
+  Trigger: ({ children }: any) => (
+    <button type="button" data-testid="select-trigger">
+      {children}
+    </button>
+  ),
+  Value: ({ placeholder }: any) => <span>{placeholder}</span>,
+  Icon: () => null,
+  Content: ({ children }: any) => <div data-testid="select-content">{children}</div>,
+  Portal: ({ children }: any) => <>{children}</>,
+  Viewport: ({ children }: any) => <>{children}</>,
+  ScrollUpButton: () => null,
+  ScrollDownButton: () => null,
+  Label: ({ children }: any) => <>{children}</>,
+  Item: ({ children, value }: any) => (
+    <div
+      role="option"
+      data-testid={`option-${value}`}
+      onClick={() => selectBridge.onValueChange(value)}
+    >
+      {children}
     </div>
   ),
-  Trigger: ({ children }: any) => <button>{children}</button>,
-  Value: ({ placeholder }: any) => <span>{placeholder}</span>,
-  Content: ({ children }: any) => <div>{children}</div>,
-  Item: ({ children, value }: any) => <option value={value}>{children}</option>,
-  Icon: () => null,
-  Portal: ({ children }: any) => <div>{children}</div>,
+  ItemIndicator: ({ children }: any) => <>{children}</>,
+  ItemText: ({ children }: any) => <>{children}</>,
+  Separator: () => null,
 }));
 
 function mockSite(id: string, name = id) {
@@ -53,15 +72,13 @@ describe("SiteSwitcher", () => {
       clearCurrentSite: vi.fn(),
     };
 
-    const { useSiteStore } = require("@/stores/site");
-    useSiteStore.mockImplementation((selector?: any) => {
+    useSiteStoreMock.mockImplementation((selector?: any) => {
       if (selector) return selector(siteStoreMock);
       return siteStoreMock;
     });
   });
 
   function renderSwitcher() {
-    const { SiteSwitcher } = require("@/components/SiteSwitcher");
     return render(
       <QueryClientProvider client={queryClient}>
         <SiteSwitcher />
@@ -151,7 +168,7 @@ describe("SiteSwitcher", () => {
 
     renderSwitcher();
 
-    fireEvent.change(screen.getByTestId("select-native"), { target: { value: "site-2" } });
+    fireEvent.click(screen.getByTestId("option-site-2"));
     expect(siteStoreMock.setCurrentSite).toHaveBeenCalledWith(siteStoreMock.sites[1]);
   });
 });

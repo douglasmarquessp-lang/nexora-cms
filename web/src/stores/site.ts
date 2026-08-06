@@ -87,8 +87,10 @@ export const useSiteStore = create<SiteState>((set, get) => {
       localStorage.setItem(STORAGE_KEY, persisted.id);
       set({ sites, currentSite: persisted });
     } else if (sites.length > 0) {
-      localStorage.setItem(STORAGE_KEY, sites[0].id);
-      set({ sites, currentSite: sites[0] });
+      const firstSite = sites[0];
+      if (!firstSite) return;
+      localStorage.setItem(STORAGE_KEY, firstSite.id);
+      set({ sites, currentSite: firstSite });
     } else {
       localStorage.removeItem(STORAGE_KEY);
       set({ sites: [], currentSite: null });

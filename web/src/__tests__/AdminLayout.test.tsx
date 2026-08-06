@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { AdminLayout } from "@/components/AdminLayout";
 
 const { authStoreMock } = vi.hoisted(() => ({ authStoreMock: vi.fn() }));
 const { siteStoreMock } = vi.hoisted(() => ({ siteStoreMock: vi.fn() }));
@@ -52,7 +53,6 @@ describe("AdminLayout site load banner", () => {
       ...siteState,
     });
 
-    const { AdminLayout } = require("@/components/AdminLayout");
     return render(
       <MemoryRouter initialEntries={["/admin"]}>
         <Routes>

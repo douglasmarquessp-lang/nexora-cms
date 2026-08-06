@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+const { useAuthStoreMock, useSiteStoreMock } = vi.hoisted(() => ({
+  useAuthStoreMock: vi.fn(),
+  useSiteStoreMock: vi.fn(),
+}));
+
 // Mock all store dependencies
 vi.mock("@/stores/auth", () => ({
-  useAuthStore: vi.fn(),
+  useAuthStore: useAuthStoreMock,
 }));
 
 vi.mock("@/stores/site", () => ({
-  useSiteStore: vi.fn(),
+  useSiteStore: useSiteStoreMock,
 }));
 
 vi.mock("@/api/client", () => ({
@@ -51,15 +56,12 @@ describe("ProtectedRoute", () => {
       clearCurrentSite: vi.fn(),
     };
 
-    const { useAuthStore } = require("@/stores/auth");
-    const { useSiteStore } = require("@/stores/site");
-
-    useAuthStore.mockImplementation((selector?: any) => {
+    useAuthStoreMock.mockImplementation((selector?: any) => {
       if (selector) return selector(authStore);
       return authStore;
     });
 
-    useSiteStore.mockImplementation((selector?: any) => {
+    useSiteStoreMock.mockImplementation((selector?: any) => {
       if (selector) return selector(siteStore);
       return siteStore;
     });
