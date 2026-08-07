@@ -193,7 +193,7 @@ func (s *Service) SaveVersion(ctx context.Context, siteID uuid.UUID, v VersionRe
 	diff, _ := json.Marshal(v.Diff)
 	sources, _ := json.Marshal(v.Sources)
 	_, err = p.Exec(ctx, `
-INSERT INTO article_versions (site_id, publication_id, version, intent, changes, diff, sources, created_at)
+INSERT INTO publication_versions (site_id, publication_id, version, intent, changes, diff, sources, created_at)
 VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,NOW())`,
 		siteID, v.PublicationID, v.Version, string(v.Intent),
 		string(changes), string(diff), string(sources))
@@ -212,7 +212,7 @@ func (s *Service) ListVersions(ctx context.Context, siteID, pubID uuid.UUID) ([]
 	}
 	rows, err := p.Query(ctx,
 		`SELECT version, intent, changes, diff, sources, created_at
-		 FROM article_versions WHERE site_id=$1 AND publication_id=$2
+		 FROM publication_versions WHERE site_id=$1 AND publication_id=$2
 		 ORDER BY created_at DESC`, siteID, pubID)
 	if err != nil {
 		return nil, err

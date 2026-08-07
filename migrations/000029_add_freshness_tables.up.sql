@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS source_freshness_scores (
 );
 CREATE INDEX IF NOT EXISTS idx_source_freshness_job ON source_freshness_scores(research_job_id);
 
-CREATE TABLE IF NOT EXISTS article_versions (
+CREATE TABLE IF NOT EXISTS publication_versions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     publication_id UUID,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS article_versions (
     sources JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_article_versions_pub ON article_versions(publication_id, version);
+CREATE INDEX IF NOT EXISTS idx_publication_versions_pub ON publication_versions(publication_id, version);
 
 CREATE TABLE IF NOT EXISTS news_dedup (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS freshness_sweeps (
 
 ALTER TABLE news_intents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE source_freshness_scores ENABLE ROW LEVEL SECURITY;
-ALTER TABLE article_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE publication_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE news_dedup ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content_updates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE freshness_sweeps ENABLE ROW LEVEL SECURITY;
@@ -97,7 +97,7 @@ CREATE POLICY news_intents_isolation ON news_intents
     USING (site_id = current_setting('app.current_site_id')::UUID);
 CREATE POLICY source_freshness_scores_isolation ON source_freshness_scores
     USING (site_id = current_setting('app.current_site_id')::UUID);
-CREATE POLICY article_versions_isolation ON article_versions
+CREATE POLICY publication_versions_isolation ON publication_versions
     USING (site_id = current_setting('app.current_site_id')::UUID);
 CREATE POLICY news_dedup_isolation ON news_dedup
     USING (site_id = current_setting('app.current_site_id')::UUID);

@@ -139,7 +139,7 @@ func TestSaveAndListVersions(t *testing.T) {
 	siteID := uuid.New()
 	pubID := uuid.New()
 
-	m.ExpectExec(`INSERT INTO article_versions`).
+	m.ExpectExec(`INSERT INTO publication_versions`).
 		WithArgs(siteID, pubID, "v2", "update", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
