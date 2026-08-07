@@ -23,6 +23,11 @@ dist/
 build/
 .next/
 
+# Placeholder mantido no repo para o go:embed do Admin SPA compilar
+# sem precisar de um build Node local (o Docker injeta os arquivos reais).
+!internal/webui/dist/
+!internal/webui/dist/.gitkeep
+
 # Dados locais
 data/
 data/

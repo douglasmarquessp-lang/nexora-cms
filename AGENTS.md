@@ -1174,3 +1174,29 @@
 - `web/vitest.config.ts` — testTimeout 30000 / hookTimeout 20000 (Protectorled18s under full parallel load).
 
 **Validation:** EXECUTED: `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 26 packages ok (6 known pre-existing `internal/ai` failures: network Gemini ×2 + Sprint 3.9 grammar/syllable ×4); `npx tsc -b` (0), `npx vitest run` = **12 files, 95/95 pass**, `npm run lint` (0 errors, 45 pre-existing warnings), `npm run build` (0, pre-existing chunk warning). No commit made.
+
+### Sprint 6.1 — Railway 404 na raiz: serviço único (API + Admin SPA) (2026-08-07)
+
+**Problema:** No Railway, `GET /` respondia 404. Causa raiz: a API Go era o único serviço deployado e o chi router **não tinha nenhuma rota na raiz** (nem `/` nem `/admin`). O frontend admin (`web/`) existe no repo, mas o Dockerfile de produção (`deploy/Dockerfile`) só compilava os binários Go — `deploy/Dockerfile.admin` e `deploy/Dockerfile.site` são **só dev** (`npm run dev`, sem build/serve) e nunca entraram no Railway. Nixpacks (Go) tampouco serviria o SPA.
+
+**Arquitetura escolhida: um único serviço.** A API embute o Admin SPA compilado no binário via `go:embed` e serve tudo na mesma origem: `GET /` → painel, `/admin*` → fallback SPA para `index.html`, `/api/v1/*` inalterado, `/ping` intacto. Sem CORS, sem proxy, sem segundo serviço. O client admin já usa caminhos relativos (`API_BASE = "/api/v1"`), então nenhuma `VITE_API_URL`/`NEXT_PUBLIC_API_URL` é necessária em produção.
+
+**Novo pacote `internal/webui/`:**
+- `webui.go` — `//go:embed all:dist`; `SPAHandler()` = `NewSPAHandler(mustSub(distFS, "dist"))`; handler: GET/HEAD apenas (405 com JSON), path `api*` → JSON 404 (nunca cai no SPA), arquivo real ou fallback `index.html` (history-API), Content-Type por extensão, `Cache-Control: public, max-age=31536000, immutable` para `/assets/*`, `no-cache` no resto
+- `dist/.gitkeep` (commitado) — garante `go build`/`go test`/CI sem build Node; o Docker injeta os arquivos reais antes do `go build`
+- `webui_test.go` (7 testes, embed de `testdata/dist`) — raiz serve index, fallback SPA para `/admin`/`/admin/login`/deep paths, asset com cache header + JS mime, `/api/*` nunca cai no SPA (JSON NOT_FOUND), 405 para POST/PUT/DELETE, HEAD sem corpo, FS vazio → 404
+- **Nota chi:** paths desconhecidos DENTRO de `/api/v1` são respondidos pelo NotFound do subrouter (404 texto puro, comportamento pré-existente); o handler SPA só recebe `/api/*` fora do grupo
+
+**Mudanças:**
+- `internal/api/routes.go` — `router.Handle("/*", webui.SPAHandler())` após o grupo `/api/v1` (última rota; `/api/v1/*` e `/ping` mantêm precedência); import `nexora/internal/webui`
+- `Dockerfile` (NOVO, raiz) — canônico para Railway: stage `web-builder` (node:22-alpine, `npm ci` + `npm run build` em `web/`), stage `builder` (Go 1.26; `COPY --from=web-builder /build/web/dist ./internal/webui/dist/` ANTES do `go build`, mantém o .gitkeep), stages `dev` (air, para compose) e `prod` (alpine + binaries + migrations)
+- `deploy/docker-compose.yml` — serviços `api` e `migrate` apontam para o `Dockerfile` raiz (target dev)
+- `deploy/Dockerfile` — REMOVIDO (substituído pelo Dockerfile raiz; Railway detecta automaticamente)
+- `.gitignore` — negação `!internal/webui/dist/` + `!internal/webui/dist/.gitkeep` (o padrão global `dist/` ignoraria o placeholder do embed)
+- `web/public/favicon.svg` (NOVO) — o index.html referenciava `/favicon.svg` sem arquivo (public/ não existia)
+- `web/.env.example` — documentado: produção = mesma origem, sem variável de API URL
+- `README.md` — seção "Deploy no Railway (um único serviço)": builder Dockerfile, variáveis de ambiente (backend NÃO lê `DATABASE_URL` — usar `DATABASE_HOST/PORT/USER/PASSWORD/NAME/SSLMODE`; `SERVER_PORT` tem prioridade, senão `PORT` do Railway), passo 1: `POST /api/v1/setup/install` antes do primeiro login, rotas esperadas
+
+**Validação:** EXECUTADO: `npm run build` em `web/` (0, warning de chunk >500kB pré-existente); `go build ./...` (0); `go vet ./...` (0); `go test ./internal/webui/... ./internal/api/...` (0); smoke test real: boot do binário com o dist embutido → `GET /` 200 text/html, `GET /admin` 200, `GET /admin/login` serve index.html do React, `GET /api/v1/health` JSON ok (db conectado), `GET /assets/index-*.js` 200 com `Cache-Control immutable` + JS mime. Nenhum commit feito. (gofmt: arquivos novos formatados; repo tem muitos pré-existentes fora do gofmt — não tocados.)
+
+**Passos restantes no Railway (documentados no README):** trocar builder do serviço para Dockerfile (ou limpar "Dockerfile Path" se apontava para deploy/Dockerfile), garantir env vars, rodar setup/install, acessar `https://SEU-SERVICO.up.railway.app/admin`. Site público Next.js (`site/`) permanece serviço separado opcional (Vercel via vercel.json ou 2º serviço Railway).

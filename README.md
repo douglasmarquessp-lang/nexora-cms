@@ -106,6 +106,69 @@ make docker-down    # Parar containers
 
 ---
 
+## Deploy no Railway (um único serviço)
+
+A arquitetura de produção entrega **só a API Go**, e ela própria serve o
+Admin SPA compilado (`web/` → Vite → `go:embed` em `internal/webui`). Um
+único domínio expõe tudo na mesma origem — **sem CORS, sem proxy, sem
+segundo serviço**:
+
+| Rota | Resposta |
+|------|----------|
+| `/` | Painel admin (SPA) |
+| `/admin`, `/admin/login` | App (fallback do SPA para `index.html`) |
+| `/api/v1/*` | API (inalterada) |
+| `/ping` | Heartbeat do chi |
+
+### Passos no Railway
+
+1. **Build:** o repositório tem um `Dockerfile` na raiz → Railway o detecta
+   automaticamente (builder de contêiner). Se o serviço já existir como
+   Nixpacks/Go, troque em *Service → Settings → Build → Builder* para
+   **Dockerfile** (path deixa em branco para usar a raiz).
+
+2. **Variáveis de ambiente** (o backend não lê `DATABASE_URL`; use o mesmo
+   conjunto do `.env.example`):
+   `SERVER_HOST=0.0.0.0`, `DATABASE_HOST/PORT/USER/PASSWORD/NAME/SSLMODE`,
+   `JWT_SECRET` (obrigatório, não pode ser o valor padrão), `REDIS_HOST`
+   (se usar), `AI_ENABLED`/`AI_GEMINI_API_KEY` (opcional).
+   `SERVER_PORT` tem prioridade; se ausente, o **`PORT`** do Railway é
+   usado automaticamente.
+
+3. **Registrar no domínio público**: o Railway expõe
+   `https://SEU-SERVICO.up.railway.app`. O 404 da raiz desaparece: `GET /`
+   abre o painel e, sem sessão, o app redireciona para `GET /admin/login`.
+
+4. **Primeiro acesso** (sem ele o login dá `401 INVALID_CREDENTIALS`):
+   ```bash
+   curl https://SEU-SERVICO.up.railway.app/api/v1/setup/status
+   curl -X POST https://SEU-SERVICO.up.railway.app/api/v1/setup/install \
+     -H "Content-Type: application/json" \
+     -d '{"admin_name":"Administrador","admin_email":"admin@exemplo.com",
+          "password":"SenhaForte@2026","site_name":"Meu Site",
+          "language":"pt-BR","timezone":"America/Sao_Paulo"}'
+   ```
+   
+5. Acesse `https://SEU-SERVICO.up.railway.app/admin` para a tela de login.
+
+### Por que funciona sem CORS e sem `VITE_API_URL`
+
+- O client admin (`web/src/api/client.ts`) chama caminhos **relativos**
+  (`/api/v1`), resolvidos na própria origem.
+- Em desenvolvimento o Vite proxy `/api → :8080` (só dev); em produção o
+  mesmo domínio faz API e static.
+- Não existem cookies de sessão — JWT no `localStorage` com refresh
+  rotation; sem configuração extra de cookies.
+
+### Site público (Next.js, `site/`)
+
+O frontend público é um serviço **separado** e opcional (pode ir para
+Vercel, como já previsto em `vercel.json`, ou um segundo serviço Railway
+usando `NEXT_PUBLIC_API_URL` + `API_PROXY_TARGET` apontando para a API).
+Ele não é necessário para o painel admin.
+
+---
+
 ## Primeiro Acesso (criar o usuário administrador)
 
 O Nexora não possui usuário padrão: o **primeiro usuário (super_admin) é criado pelo

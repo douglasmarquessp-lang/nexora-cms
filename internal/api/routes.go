@@ -7,36 +7,37 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	aiModule "nexora/internal/ai"
 	"nexora/internal/api/health"
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
+	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
 	autocontentModule "nexora/internal/modules/autocontent"
 	categoriesModule "nexora/internal/modules/categories"
-	mediaModule "nexora/internal/modules/media"
-	pluginsModule "nexora/internal/plugins"
-	editorialModule "nexora/internal/modules/editorial"
-	postsModule "nexora/internal/modules/posts"
-	researchModule "nexora/internal/modules/research"
-	setupModule "nexora/internal/modules/setup"
-	writerModule "nexora/internal/modules/writer"
-	editorialEngineModule "nexora/internal/modules/editorialengine"
 	generatorModule "nexora/internal/modules/contentgenerator"
-	aiModule "nexora/internal/ai"
-	articlepipelineModule "nexora/internal/modules/articlepipeline"
+	editorialModule "nexora/internal/modules/editorial"
+	editorialbrainModule "nexora/internal/modules/editorialbrain"
+	editorialEngineModule "nexora/internal/modules/editorialengine"
+	freshnessModule "nexora/internal/modules/freshness"
 	humanwriterModule "nexora/internal/modules/humanwriter"
+	mediaModule "nexora/internal/modules/media"
+	postsModule "nexora/internal/modules/posts"
 	publisherModule "nexora/internal/modules/publisher"
+	researchModule "nexora/internal/modules/research"
 	seoengineModule "nexora/internal/modules/seoengine"
+	setupModule "nexora/internal/modules/setup"
 	siteModule "nexora/internal/modules/site"
+	tagsModule "nexora/internal/modules/tags"
 	translationModule "nexora/internal/modules/translation"
 	workflowModule "nexora/internal/modules/workflow"
-	freshnessModule "nexora/internal/modules/freshness"
-	editorialbrainModule "nexora/internal/modules/editorialbrain"
-	tagsModule "nexora/internal/modules/tags"
+	writerModule "nexora/internal/modules/writer"
 	casbinPkg "nexora/internal/pkg/casbin"
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/ratelimit"
+	pluginsModule "nexora/internal/plugins"
+	"nexora/internal/webui"
 )
 
 type dbExecutor interface {
@@ -46,35 +47,35 @@ type dbExecutor interface {
 type pingFunc func(ctx context.Context) error
 
 type Dependencies struct {
-	Log              *logger.Logger
-	DBPing           pingFunc
-	DBExec           dbExecutor
-	AuthSvc          *authModule.Service
-	SetupSvc         *setupModule.Service
-	SiteSvc          *siteModule.Service
-	PostsSvc         *postsModule.Service
-	CategoriesSvc    *categoriesModule.Service
-	TagsSvc          *tagsModule.Service
-	AssetsSvc        *assetsModule.Service
-	MediaSvc         *mediaModule.Service
-	EditorialSvc     *editorialModule.Service
-	ResearchSvc      *researchModule.Service
-	WriterSvc        *writerModule.Service
+	Log                *logger.Logger
+	DBPing             pingFunc
+	DBExec             dbExecutor
+	AuthSvc            *authModule.Service
+	SetupSvc           *setupModule.Service
+	SiteSvc            *siteModule.Service
+	PostsSvc           *postsModule.Service
+	CategoriesSvc      *categoriesModule.Service
+	TagsSvc            *tagsModule.Service
+	AssetsSvc          *assetsModule.Service
+	MediaSvc           *mediaModule.Service
+	EditorialSvc       *editorialModule.Service
+	ResearchSvc        *researchModule.Service
+	WriterSvc          *writerModule.Service
 	EditorialEngineSvc *editorialEngineModule.Service
-	GeneratorSvc          *generatorModule.Service
-	AutocontentSvc        *autocontentModule.Service
-	HumanWriterSvc        *humanwriterModule.Service
-	ArticlePipelineSvc    *articlepipelineModule.Service
-	PublisherSvc          *publisherModule.Service
-	SeoEngineSvc          *seoengineModule.Service
-	WorkflowSvc           *workflowModule.Service
-	TranslationSvc        *translationModule.Service
-	FreshnessSvc          *freshnessModule.Service
-	EditorialBrainSvc     *editorialbrainModule.Service
-	AIManager             *aiModule.Manager
+	GeneratorSvc       *generatorModule.Service
+	AutocontentSvc     *autocontentModule.Service
+	HumanWriterSvc     *humanwriterModule.Service
+	ArticlePipelineSvc *articlepipelineModule.Service
+	PublisherSvc       *publisherModule.Service
+	SeoEngineSvc       *seoengineModule.Service
+	WorkflowSvc        *workflowModule.Service
+	TranslationSvc     *translationModule.Service
+	FreshnessSvc       *freshnessModule.Service
+	EditorialBrainSvc  *editorialbrainModule.Service
+	AIManager          *aiModule.Manager
 	PluginManager      *pluginsModule.Manager
-	CasbinEnforcer   *casbinPkg.Enforcer
-	RateLimits       *ratelimit.Limiter
+	CasbinEnforcer     *casbinPkg.Enforcer
+	RateLimits         *ratelimit.Limiter
 }
 
 func SetupRoutes(router *rest.Router, deps *Dependencies) {
@@ -148,6 +149,11 @@ func SetupRoutes(router *rest.Router, deps *Dependencies) {
 			registerContentRoutes(r, deps)
 		})
 	})
+
+	// Serve the embedded Admin SPA last, so /api/v1/* and /ping keep
+	// precedence. GET / opens the panel and unknown /admin/* paths fall
+	// back to index.html (React Router handles the rest).
+	router.Handle("/*", webui.SPAHandler())
 }
 
 func registerContentRoutes(r chi.Router, deps *Dependencies) {

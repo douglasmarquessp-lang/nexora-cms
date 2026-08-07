@@ -1,0 +1,8 @@
+This directory carries the compiled Admin SPA (Vite output, web/dist).
+
+- In the production Docker build, the contents of web/dist are copied over
+  this directory right before `go build`, and `//go:embed all:dist` packs the
+  files into the API binary.
+- This .gitkeep is committed so `go build`/`go test` succeed without a Node
+  build (empty embedded FS).
+- Do not commit real build artifacts here.

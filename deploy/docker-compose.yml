@@ -32,7 +32,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
       target: dev
     container_name: nexora-api
     restart: unless-stopped
@@ -65,7 +65,7 @@ services:
   migrate:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
       target: dev
     container_name: nexora-migrate
     restart: "no"
