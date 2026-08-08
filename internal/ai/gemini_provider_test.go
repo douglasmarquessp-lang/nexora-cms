@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewGeminiProvider(t *testing.T) {
@@ -322,5 +323,114 @@ func TestGeminiProvider_AuthHeader(t *testing.T) {
 	_, err := p.Generate(ctx, CompletionRequest{Prompt: "Hello"})
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
+	}
+}
+
+func TestGeminiProvider_AutoRecovery_Generate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models/gemini-2.0-flash"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"name":"models/gemini-2.0-flash"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":generateContent"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":5}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	p := NewGeminiProvider("gemini", "gemini-2.0-flash", "test-secret-key", server.URL)
+	p.client = server.Client()
+	ctx := context.Background()
+
+	p.setUnhealthy()
+
+	if _, err := p.Generate(ctx, CompletionRequest{Prompt: "Hi"}); err != ErrProviderUnavailable {
+		t.Fatalf("expected ErrProviderUnavailable within cooldown, got %v", err)
+	}
+
+	p.lastUnhealthyAt = time.Now().Add(-healthRecheckInterval - 1*time.Second)
+
+	result, err := p.Generate(ctx, CompletionRequest{Prompt: "Hi"})
+	if err != nil {
+		t.Fatalf("expected recovery after cooldown, got %v", err)
+	}
+	if result.Content != "ok" {
+		t.Errorf("expected content 'ok', got %q", result.Content)
+	}
+
+	status, err := p.Health(ctx)
+	if err != nil {
+		t.Fatalf("expected healthy after recovery, got %v", err)
+	}
+	if status.State != ProviderHealthy {
+		t.Errorf("expected healthy state, got %s", status.State)
+	}
+}
+
+func TestGeminiProvider_Health_AutoRecovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models/gemini-2.0-flash") {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"name":"models/gemini-2.0-flash"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := NewGeminiProvider("gemini", "gemini-2.0-flash", "test-secret-key", server.URL)
+	p.client = server.Client()
+	ctx := context.Background()
+
+	p.setUnhealthy()
+
+	if _, err := p.Health(ctx); err != ErrHealthCheckFailed {
+		t.Fatalf("expected ErrHealthCheckFailed within cooldown, got %v", err)
+	}
+
+	p.lastUnhealthyAt = time.Now().Add(-healthRecheckInterval - 1*time.Second)
+
+	status, err := p.Health(ctx)
+	if err != nil {
+		t.Fatalf("expected health recovery after cooldown, got %v", err)
+	}
+	if status.State != ProviderHealthy {
+		t.Errorf("expected healthy state, got %s", status.State)
+	}
+}
+
+func TestGeminiProvider_Health_StillDownAfterRecheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	p := NewGeminiProvider("gemini", "gemini-2.0-flash", "test-secret-key", server.URL)
+	p.client = server.Client()
+	ctx := context.Background()
+
+	p.setUnhealthy()
+	p.lastUnhealthyAt = time.Now().Add(-healthRecheckInterval - 1*time.Second)
+
+	status, err := p.Health(ctx)
+	if err != nil {
+		t.Fatalf("Health should report degraded without error for 5xx, got %v", err)
+	}
+	if status.State != ProviderDegraded {
+		t.Errorf("expected degraded state for 5xx probe, got %s", status.State)
+	}
+
+	if err := p.checkHealth(ctx); err != ErrProviderUnavailable {
+		t.Fatalf("expected ErrProviderUnavailable from checkHealth, got %v", err)
+	}
+
+	p.mu.RLock()
+	s := p.healthy
+	p.mu.RUnlock()
+	if s {
+		t.Error("provider should remain unhealthy after failed probe")
 	}
 }

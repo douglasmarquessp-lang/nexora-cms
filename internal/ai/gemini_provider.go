@@ -13,15 +13,21 @@ import (
 )
 
 type GeminiProvider struct {
-	mu       sync.RWMutex
-	name     string
-	model    string
-	apiKey   string
-	baseURL  string
-	client   *http.Client
-	healthy  bool
-	latency  time.Duration
+	mu              sync.RWMutex
+	name            string
+	model           string
+	apiKey          string
+	baseURL         string
+	client          *http.Client
+	healthy         bool
+	latency         time.Duration
+	lastUnhealthyAt time.Time
 }
+
+// healthRecheckInterval is the cooldown before an unhealthy provider is
+// allowed to probe the API again. Without it a single transient failure
+// would keep the provider unusable until the process restarts.
+const healthRecheckInterval = 30 * time.Second
 
 type geminiContent struct {
 	Parts []geminiPart `json:"parts"`
@@ -39,16 +45,16 @@ type geminiTool struct {
 type geminiGoogleSearch struct{}
 
 type geminiGenerateReq struct {
-	Contents         []geminiContent    `json:"contents"`
-	SystemInstruction *geminiContent    `json:"systemInstruction,omitempty"`
-	GenerationConfig *geminiGenConfig   `json:"generationConfig,omitempty"`
-	Tools            []geminiTool       `json:"tools,omitempty"`
+	Contents          []geminiContent  `json:"contents"`
+	SystemInstruction *geminiContent   `json:"systemInstruction,omitempty"`
+	GenerationConfig  *geminiGenConfig `json:"generationConfig,omitempty"`
+	Tools             []geminiTool     `json:"tools,omitempty"`
 }
 
 type geminiGenConfig struct {
-	Temperature      float64  `json:"temperature,omitempty"`
-	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
-	StopSequences    []string `json:"stopSequences,omitempty"`
+	Temperature     float64  `json:"temperature,omitempty"`
+	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	StopSequences   []string `json:"stopSequences,omitempty"`
 }
 
 type geminiGenerateResp struct {
@@ -65,7 +71,7 @@ type geminiCandidate struct {
 }
 
 type geminiGroundingMetadata struct {
-	SearchEntryPoint *geminiSearchEntryPoint `json:"searchEntryPoint,omitempty"`
+	SearchEntryPoint  *geminiSearchEntryPoint  `json:"searchEntryPoint,omitempty"`
 	GroundingSupports []geminiGroundingSupport `json:"groundingSupports,omitempty"`
 	GroundingChunks   []geminiGroundingChunk   `json:"groundingChunks,omitempty"`
 	WebSearchQueries  []string                 `json:"webSearchQueries,omitempty"`
@@ -86,9 +92,9 @@ type geminiWebChunk struct {
 }
 
 type geminiGroundingSupport struct {
-	Segment       *geminiSegment `json:"segment,omitempty"`
-	GroundingChunkIndices []int  `json:"groundingChunkIndices,omitempty"`
-	ConfidenceScores      []float64 `json:"confidenceScores,omitempty"`
+	Segment               *geminiSegment `json:"segment,omitempty"`
+	GroundingChunkIndices []int          `json:"groundingChunkIndices,omitempty"`
+	ConfidenceScores      []float64      `json:"confidenceScores,omitempty"`
 }
 
 type geminiSegment struct {
@@ -160,7 +166,7 @@ func (p *GeminiProvider) doRequest(ctx context.Context, method, path string, bod
 }
 
 func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
-	if err := p.checkHealth(); err != nil {
+	if err := p.checkHealth(ctx); err != nil {
 		return nil, err
 	}
 
@@ -226,7 +232,7 @@ func (p *GeminiProvider) Generate(ctx context.Context, req CompletionRequest) (*
 }
 
 func (p *GeminiProvider) GenerateStream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error) {
-	if err := p.checkHealth(); err != nil {
+	if err := p.checkHealth(ctx); err != nil {
 		return nil, err
 	}
 
@@ -296,7 +302,7 @@ func (p *GeminiProvider) GenerateStream(ctx context.Context, req CompletionReque
 }
 
 func (p *GeminiProvider) Embeddings(ctx context.Context, input string) (*EmbeddingResult, error) {
-	if err := p.checkHealth(); err != nil {
+	if err := p.checkHealth(ctx); err != nil {
 		return nil, err
 	}
 	if !p.hasCapability(CapEmbeddings) {
@@ -408,9 +414,13 @@ func (p *GeminiProvider) Classify(ctx context.Context, req ClassifyRequest) (*Cl
 func (p *GeminiProvider) Health(ctx context.Context) (*HealthStatus, error) {
 	p.mu.RLock()
 	healthy := p.healthy
+	lastUnhealthy := p.lastUnhealthyAt
 	p.mu.RUnlock()
 
-	if !healthy {
+	// A provider marked unhealthy only reports the stale state while the
+	// cooldown window is still open; afterwards Health() probes the API for
+	// real, which lets a transient failure recover without a restart.
+	if !healthy && time.Since(lastUnhealthy) < healthRecheckInterval {
 		return &HealthStatus{
 			Provider: p.name,
 			State:    ProviderUnhealthy,
@@ -442,6 +452,7 @@ func (p *GeminiProvider) Health(ctx context.Context) (*HealthStatus, error) {
 		}, nil
 	}
 
+	p.setHealthy()
 	return &HealthStatus{
 		Provider: p.name,
 		State:    ProviderHealthy,
@@ -512,12 +523,37 @@ func (p *GeminiProvider) parseError(statusCode int, body []byte) error {
 	}
 }
 
-func (p *GeminiProvider) checkHealth() error {
+func (p *GeminiProvider) checkHealth(ctx context.Context) error {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if !p.healthy {
+	healthy := p.healthy
+	lastUnhealthy := p.lastUnhealthyAt
+	p.mu.RUnlock()
+
+	if healthy {
+		return nil
+	}
+
+	// Allow one real re-probe once the cooldown has elapsed, so a
+	// temporarily-failed provider can recover without a restart.
+	if time.Since(lastUnhealthy) < healthRecheckInterval {
 		return ErrProviderUnavailable
 	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := p.doRequest(probeCtx, http.MethodGet, fmt.Sprintf("/models/%s", p.model), nil)
+	if err != nil {
+		p.setUnhealthy()
+		return ErrProviderUnavailable
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		p.setUnhealthy()
+		return ErrProviderUnavailable
+	}
+
+	p.setHealthy()
 	return nil
 }
 
@@ -525,6 +561,13 @@ func (p *GeminiProvider) setUnhealthy() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.healthy = false
+	p.lastUnhealthyAt = time.Now()
+}
+
+func (p *GeminiProvider) setHealthy() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.healthy = true
 }
 
 func (p *GeminiProvider) setLatency(d time.Duration) {
