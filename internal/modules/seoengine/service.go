@@ -1716,10 +1716,11 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 	}
 
 	input := ArticleAnalysisInput{
-		Title:    in.Title,
-		Content:  in.Content,
-		Keyword:  deriveKeyword(in.Title),
-		Language: in.Language,
+		Title:           in.Title,
+		MetaDescription: in.MetaDescription,
+		Content:         in.Content,
+		Keyword:         deriveKeyword(in.Title),
+		Language:        in.Language,
 	}
 	if input.Language == "" {
 		input.Language = "pt"

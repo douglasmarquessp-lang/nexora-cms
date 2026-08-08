@@ -108,7 +108,7 @@ func TestSelectExternalLinks_OnlyHighReliability(t *testing.T) {
 		AddRow("https://www.gov.br/pesquisa", "Estudo oficial", "gov.br", 95).
 		AddRow("https://rival.com/blog", "Blog do concorrente", "rival.com", 90).
 		AddRow("https://unknown.net/page", "Blog desconhecido", "unknown.net", 10)
-	m.ExpectQuery(`SELECT COALESCE\(url,''\), COALESCE\(title,''\), COALESCE\(domain,''\), COALESCE\(reliability_score,0\) FROM research_sources`).
+	m.ExpectQuery(`SELECT COALESCE\(rs\.url,''\), COALESCE\(rs\.title,''\), COALESCE\(rs\.domain,''\), COALESCE\(rs\.reliability_score,0\) FROM research_sources rs JOIN research_jobs rj ON rj\.id = rs\.research_job_id WHERE rj\.site_id = \$1`).
 		WithArgs(siteID).
 		WillReturnRows(rows)
 

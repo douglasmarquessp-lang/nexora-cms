@@ -206,10 +206,11 @@ func (s *Service) SelectExternalLinks(ctx context.Context, siteID uuid.UUID, top
 	}
 
 	rows, err := p.Query(ctx,
-		`SELECT COALESCE(url,''), COALESCE(title,''), COALESCE(domain,''), COALESCE(reliability_score,0)
-		 FROM research_sources
-		 WHERE site_id = $1 AND COALESCE(url,'') <> ''
-		 ORDER BY COALESCE(reliability_score,0) DESC, created_at DESC LIMIT 50`,
+		`SELECT COALESCE(rs.url,''), COALESCE(rs.title,''), COALESCE(rs.domain,''), COALESCE(rs.reliability_score,0)
+		 FROM research_sources rs
+		 JOIN research_jobs rj ON rj.id = rs.research_job_id
+		 WHERE rj.site_id = $1 AND COALESCE(rs.url,'') <> ''
+		 ORDER BY COALESCE(rs.reliability_score,0) DESC, rs.created_at DESC LIMIT 50`,
 		siteID,
 	)
 	if err != nil {

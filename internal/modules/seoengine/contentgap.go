@@ -115,9 +115,10 @@ func (s *Service) GetFactBase(ctx context.Context, siteID uuid.UUID, topic strin
 	}
 
 	rows, err := p.Query(ctx,
-		`SELECT COALESCE(title,''), COALESCE(snippet,'') FROM research_sources
-		 WHERE site_id = $1 AND COALESCE(title,'') <> ''
-		 ORDER BY created_at DESC LIMIT $2`,
+		`SELECT COALESCE(rs.title,''), COALESCE(rs.summary,'') FROM research_sources rs
+		 JOIN research_jobs rj ON rj.id = rs.research_job_id
+		 WHERE rj.site_id = $1 AND COALESCE(rs.title,'') <> ''
+		 ORDER BY rs.created_at DESC LIMIT $2`,
 		siteID, limit,
 	)
 	if err != nil {

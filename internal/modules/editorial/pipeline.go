@@ -193,15 +193,15 @@ FROM (
 
   UNION ALL
   -- published: most recent 30 published posts (board stays focused)
-  SELECT p.id, p.title, p.slug, 'published' AS stage, 'posts' AS engine,
-         COALESCE(p.post_meta->>'language', 'pt'),
-         (SELECT c.id FROM post_categories pc JOIN categories c ON c.id = pc.category_id
-          WHERE pc.post_id = p.id LIMIT 1),
-         p.author_id, p.seo_score, NULL::numeric,
-         p.status, p.scheduled_at, p.updated_at
-  FROM posts p
-  WHERE p.site_id = $1 AND p.status = 'published' AND p.deleted_at IS NULL
-  ORDER BY p.published_at DESC LIMIT 30
+  (SELECT p.id, p.title, p.slug, 'published' AS stage, 'posts' AS engine,
+          COALESCE(p.post_meta->>'language', 'pt'),
+          (SELECT c.id FROM post_categories pc JOIN categories c ON c.id = pc.category_id
+           WHERE pc.post_id = p.id LIMIT 1),
+          p.author_id, p.seo_score, NULL::numeric,
+          p.status, p.scheduled_at, p.updated_at
+   FROM posts p
+   WHERE p.site_id = $1 AND p.status = 'published' AND p.deleted_at IS NULL
+   ORDER BY p.published_at DESC LIMIT 30)
 ) u
 ORDER BY u.updated_at DESC
 LIMIT $2

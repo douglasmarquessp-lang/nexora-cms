@@ -132,7 +132,7 @@ func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *
 	return out.Content
 }
 
-func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang string) error {
+func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang, metaDescription string) error {
 	if s.publishGate == nil || s.minPublishScore <= 0 {
 		return nil
 	}
@@ -140,11 +140,12 @@ func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID
 		return nil
 	}
 	score, err := s.publishGate.CheckPublishScore(ctx, PublishGateInput{
-		SiteID:   siteID,
-		PostID:   postID,
-		Title:    title,
-		Content:  content,
-		Language: lang,
+		SiteID:          siteID,
+		PostID:          postID,
+		Title:           title,
+		Content:         content,
+		Language:        lang,
+		MetaDescription: metaDescription,
 	})
 	if err != nil {
 		s.log.Warn("publish gate evaluation failed, allowing publish", "error", err)
@@ -250,7 +251,7 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	}
 
 	if req.PostID != nil {
-		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
+		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang, req.MetaDescription); err != nil {
 			return nil, err
 		}
 		if err := s.checkEditorialGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
@@ -357,7 +358,7 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	}
 	keyword := deriveKeyword(req.Title)
 	pubReq.Content = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)
-	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {
+	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, pubReq.MetaDescription); err != nil {
 		return nil, err
 	}
 	if err := s.checkEditorialGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {

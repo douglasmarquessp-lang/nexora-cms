@@ -1299,3 +1299,37 @@
 **Validação (EXECUTADA, ambiente real):**
 - `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 32 pacotes ok, apenas as 6 falhas pré-existentes de `internal/ai`.
 - E2E real: binário + Postgres local — INSERT manual em `workflow_dashboard` com `data` jsonb real (`{"uptime":"1h","workers":[{"id":1}]}`) → `GET /api/v1/workflow/dashboard` responde **200** com `data` parseado como objeto JSON (antes: erro idêntico ao do Railway).
+
+### Sprint 6.3d — Fixes E2E: audit FKs, gate meta description, research JOINs, pipeline UNION (2026-08-08)
+
+**Contexto:** Erros reais descobertos rodando contra Postgres real (mesma máquina do E2E 6.3/6.3b/6.3c). Quatro correções, validadas E2E + testes. Nenhum commit feito.
+
+**1. Audit logger: uuid.Nil e payload nil quebravam o INSERT (`internal/pkg/audit/audit.go`):**
+- `audit_log.user_id` tem FK `REFERENCES users(id)` (nullable) — fluxos de sistema que logam com `uuid.Nil` (ex.: `research/deep` cria job com `userID = uuid.Nil`) violavam a FK → `SQLSTATE 23503` + "failed to write audit log" a cada execução (o erro era ignorado e o log perdido).
+- `audit_log.payload` é `JSONB NOT NULL` — `LogUserAction(..., nil)` (login/logout/MFA) inseria NULL → `SQLSTATE 23502`.
+- **Fix:** em `Logger.Log`: `UserID == uuid.Nil` → `nil`; `SiteID == uuid.Nil` → `nil` (mesma classe de risco, FK `sites`); `Payload == nil` → `map[string]interface{}{}` (normalização defensiva; nenhum caller alterado).
+- **Testes (3 novos, `audit_test.go`):** `TestLog_NilUserIDConvertedWhenUUIDNil`, `TestLog_NilSiteIDConvertedWhenUUIDNil`, `TestLog_NilPayloadNormalized` (pgxmock, WithArgs com `nil`/map vazio).
+
+**2. SEO gate: `MetaDescription` chegava vazia ao solver inline:**
+- `internal/modules/publisher/gate.go` — `PublishGateInput` ganhou campo `MetaDescription`.
+- `internal/modules/publisher/service.go` — `checkPublishGate(ctx, siteID, postID, title, content, lang, metaDescription)` (7º parâmetro); `PublishArticle` passa `req.MetaDescription`, `PublishGeneratedArticle` passa `pubReq.MetaDescription`.
+- `internal/modules/seoengine/service.go` — `CheckPublishScore` (caminho inline) agora preenche `ArticleAnalysisInput.MetaDescription` (a análise de meta description passa a pontuar de verdade).
+- **Teste (1 novo, `gate_test.go`):** `TestCheckPublishGate_ForwardsMetaDescription`; assinaturas dos testes existentes atualizadas para o 7º arg.
+
+**3. SEO queries em `research_sources` usavam `site_id` inexistente (`internal/modules/seoengine/`):**
+- A tabela `research_sources` NÃO tem coluna `site_id` (migração 000010: pertence a `research_jobs` via FK) — `WHERE site_id = $1` falhava no Postgres real com `SQLSTATE 42703 column "site_id" does not exist`.
+- **Fix:** `linking.go` `SelectExternalLinks` e `contentgap.go` `GetFactBase` agora fazem `JOIN research_jobs rj ON rj.id = rs.research_job_id` + `WHERE rj.site_id = $1` (colunas qualificadas `rs.`).
+- `intelligence_service_test.go` — regex de expectativa do `SelectExternalLinks` atualizada para o novo JOIN.
+
+**4. Pipeline editorial: `ORDER BY` dentro de branch `UNION ALL` sem parênteses (`internal/modules/editorial/pipeline.go`):**
+- O branch `published` tinha `ORDER BY p.published_at DESC LIMIT 30` direto na cláusula `UNION ALL` — em Postgres isso é erro de sintaxe (`syntax error at or near "ORDER"`); o tabuleiro inteiro morria com 500.
+- **Fix:** branch envolta em parênteses: `(SELECT ... ORDER BY ... LIMIT 30)` — as demais branches não têm ORDER/LIMIT no nível da branch (só dentro de subqueries LATERAL, permitido).
+
+**Validação (EXECUTADA, Postgres real local, migrations v35):**
+- `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 33 pacotes ok, apenas as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4).
+- E2E real (binário compilado com o dist embutido + Postgres local, login `cont@nexora.test` criado só localmente):
+  - `GET /editorial/pipeline` + `/editorial/pipeline/stats` → **200** com itens (antes: 500 syntax error na UNION).
+  - `POST /seoengine/internal-links`, `/external-links`, `/content-gap`, `/topic-authority` → **200**; `external-links` retorna apenas fonte oficial (rel 95 ≥ 75), exclui fonte não confiável (rel 30) e consultou via JOIN sem 42703; `content-gap` com seed de research_sources roda e lista os 8 gaps determinísticos.
+  - `POST /research/deep` → **201**; `audit_log` recebe `research.created` com `user_id NULL` (antes: 23503 a cada execução); `user.login` após login real grava com payload `{}` (antes: 23502 null payload).
+  - Log do servidor: **zero** "failed to write audit log" / 23503 / 23502 após os fixes.
+- Ainda pendente (fora de escopo, pré-existente): label `low` em domínios fora do allowlist mesmo com reliability 95 gravado no banco (o label é derivado de `ai.ReliabilityOfDomain(url)` independendo do valor persistido).

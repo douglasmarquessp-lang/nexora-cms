@@ -56,11 +56,26 @@ func (l *Logger) Log(ctx context.Context, entry Entry) {
 		return
 	}
 
+	userID := entry.UserID
+	if userID != nil && *userID == uuid.Nil {
+		userID = nil
+	}
+
+	siteID := entry.SiteID
+	if siteID != nil && *siteID == uuid.Nil {
+		siteID = nil
+	}
+
+	payload := entry.Payload
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+
 	_, err := l.pool.Exec(ctx,
 		`INSERT INTO audit_log (user_id, site_id, action, entity_type, entity_id, payload, ip_address)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		entry.UserID, entry.SiteID, string(entry.Action),
-		entry.EntityType, entry.EntityID, entry.Payload, entry.IPAddress,
+		userID, siteID, string(entry.Action),
+		entry.EntityType, entry.EntityID, payload, entry.IPAddress,
 	)
 	if err != nil {
 		l.log.Error("failed to write audit log",

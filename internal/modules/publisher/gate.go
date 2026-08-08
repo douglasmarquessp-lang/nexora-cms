@@ -10,11 +10,12 @@ import (
 // PublishGateInput carries the information a publish gate needs to evaluate
 // whether content may be published.
 type PublishGateInput struct {
-	SiteID   uuid.UUID
-	PostID   *uuid.UUID
-	Title    string
-	Content  string
-	Language string
+	SiteID          uuid.UUID
+	PostID          *uuid.UUID
+	Title           string
+	Content         string
+	Language        string
+	MetaDescription string
 }
 
 // PublishGate is implemented by the SEO engine. It returns the content's SEO
