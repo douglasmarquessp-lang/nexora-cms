@@ -427,7 +427,7 @@ mock.ExpectExec(`INSERT INTO workflow_jobs`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	}
-	mock.ExpectExec(`INSERT INTO generation_pipeline_logs`).
+	mock.ExpectExec(`INSERT INTO workflow_logs`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
@@ -470,7 +470,7 @@ mock.ExpectExec(`INSERT INTO workflow_jobs`).
 	mock.ExpectExec(`INSERT INTO workflow_history`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
-	mock.ExpectExec(`INSERT INTO generation_pipeline_logs`).
+	mock.ExpectExec(`INSERT INTO workflow_logs`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
@@ -514,5 +514,20 @@ func TestValidatePriority(t *testing.T) {
 	}
 	if svc.ValidatePriority(11) {
 		t.Error("11 should not be valid")
+	}
+}
+
+func TestAddLog_WritesToWorkflowLogsTable(t *testing.T) {
+	svc, mock := setupMockDB(t)
+	jobID := uuid.New()
+
+	mock.ExpectExec(`INSERT INTO workflow_logs \(id, site_id, workflow_job_id, step, level, message, details, duration_ms, created_at\)`).
+		WithArgs(pgxmock.AnyArg(), jobID, pgxmock.AnyArg(), "info", "workflow job created", pgxmock.AnyArg(), int64(0), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	svc.addLog(context.Background(), svc.db.Pool, jobID, "", "info", "workflow job created", nil, 0)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("addLog did not write to workflow_logs: %v", err)
 	}
 }

@@ -1257,3 +1257,22 @@
 - `internal/modules/workflow/repository.go:807` — `addWorkflowLog` insere em `generation_pipeline_logs` (FK p/ `generation_jobs`) com o job ID do workflow → viola FK `generation_pipeline_logs_generation_job_id_fkey` a cada log (23503). Tudo pré-existente (Sprint 3.x), não-fatal — workflow continua funcionando, só polui o log e a auditoria. Requer migration própria (workflow_logs) para resolver direito.
 
 **Validação:** `go build ./...` (0), `go vet ./...` (0), `go test ./...` (32 pacotes ok; as 6 falhas pré-existentes de `internal/ai` — rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4); test public `GET /api/v1/articles` OK. Usuário/credenciais de teste: `e2e@nexora.test` (só local, criado via INSERT — NÃO existe na prod). Nenhum commit feito.
+
+### Sprint 6.3b — Fix FK 23503: tabela própria workflow_logs (2026-08-08)
+
+**Causa raiz:** `workflow/repository.go:807` `addLog` gravava em `generation_pipeline_logs` (migração 000013) — tabela do módulo contentgenerator com FK `generation_job_id → generation_jobs(id)`. Jobs de workflow não são `generation_jobs`, então todo INSERT de log violava a FK → `SQLSTATE 23503` + `"failed to add workflow log"` a cada CreateJob/StartJob/cancel/retry/step (o erro era ignorado e o log perdido). Não era possível reusar a tabela existente sem remover a FK (proibido) — o workflow não tinha tabela de logs própria.
+
+**Solução adotada (mínima):**
+- `migrations/000035_add_workflow_logs.{up,down}.sql` (NOVO) — tabela `workflow_logs` dedicada: `id`, `site_id UUID NOT NULL REFERENCES sites` (padrão RLS do módulo workflow, como `workflow_history`), `workflow_job_id UUID NOT NULL REFERENCES workflow_jobs(id) ON DELETE CASCADE` (FK correta), `step`, `level`, `message`, `details JSONB`, `duration_ms`, `created_at` + 4 índices (`idx_wflogs_job/site/level/created`) + `ENABLE ROW LEVEL SECURITY` + policy `workflow_logs_isolation` (mesmo shape das demais policies do módulo: `site_id = app.current_site_id` OR owner/siteadmin). Down: drop policy → disable RLS → drop indexes → drop table.
+- `internal/modules/workflow/repository.go` — `addLog` agora faz `INSERT INTO workflow_logs (id, site_id, workflow_job_id, step, level, message, details, duration_ms, created_at) SELECT $1, site_id, $2, $3, $4, $5, $6::jsonb, $7, $8 FROM workflow_jobs WHERE id = $2` — `site_id` derivado do próprio job (nenhum caller alterado; assinatura intacta; RLS satisfeito pois o job pertence ao site da requisição).
+
+**Testes:**
+- `internal/modules/workflow/service_test.go` — 2 expectativas de mock trocadas `INSERT INTO generation_pipeline_logs` → `INSERT INTO workflow_logs` (TestExecuteAction_GenerateArticle_AutoStart); novo `TestAddLog_WritesToWorkflowLogsTable` (garante insert em `workflow_logs` com job_id/level/message corretos).
+
+**Validação (EXECUTADA em ambiente real, Postgres local):**
+- Migration UP manual → tabela + índices + RLS + policy criados (`workflow_logs_isolation`, `relrowsecurity=t`); DOWN manual → tudo removido corretamente; reinício da API → migrador oficial aplicou v35 (`version=35 dirty=false`) e recriou a tabela.
+- E2E real via API: CreateJob + StartJob → `workflow_logs` com 2 linhas (`workflow job created`, `workflow job started` com step `research`); `grep 23503` no log do servidor → **zero ocorrências de "failed to add workflow log"** (único 23503 restante é de `audit_log`/`research.created` — pré-existente, fora do escopo).
+- Isolamento multi-tenant: todas as queries do módulo workflow mantêm `AND site_id = $N` (verificado em repository.go — jobs/queue/notifications/dashboard); policy RLS presente e ativa (`row_security_active` = f apenas para o owner do banco — comportamento padrão do Postgres, igual às demais tabelas RLS; ativa para roles não-owner).
+- `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 32 pacotes ok, apenas as 6 falhas pré-existentes conhecidas de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4).
+
+**Nota:** `executeWorkflowAsync` (auto-start via ExecuteAction) não chama `onStepCompleted`/`onStepFailed` — grava direto por UPDATE nos steps; portanto só `CreateJob`/`StartJob` emitem logs no caminho automático (comportamento pré-existente, não alterado). Nenhum commit feito.

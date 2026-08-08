@@ -804,8 +804,9 @@ func (s *Service) getNextQueueItem(ctx context.Context, p database.Pool, siteID 
 func (s *Service) addLog(ctx context.Context, p database.Pool, jobID uuid.UUID, step, level, message string, details map[string]interface{}, durationMs int64) {
 	detailsJSON, _ := json.Marshal(details)
 	_, err := p.Exec(ctx,
-		`INSERT INTO generation_pipeline_logs (id, generation_job_id, stage, level, message, details, duration_ms, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,
+		`INSERT INTO workflow_logs (id, site_id, workflow_job_id, step, level, message, details, duration_ms, created_at)
+		 SELECT $1, site_id, $2, $3, $4, $5, $6::jsonb, $7, $8
+		 FROM workflow_jobs WHERE id = $2`,
 		uuid.New(), jobID, step, level, message, string(detailsJSON), durationMs, time.Now(),
 	)
 	if err != nil {
