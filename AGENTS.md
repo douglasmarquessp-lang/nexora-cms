@@ -1276,3 +1276,26 @@
 - `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 32 pacotes ok, apenas as 6 falhas pré-existentes conhecidas de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4).
 
 **Nota:** `executeWorkflowAsync` (auto-start via ExecuteAction) não chama `onStepCompleted`/`onStepFailed` — grava direto por UPDATE nos steps; portanto só `CreateJob`/`StartJob` emitem logs no caminho automático (comportamento pré-existente, não alterado). Nenhum commit feito.
+
+### Sprint 6.3c — Fix Railway: dashboard scan `data` jsonb→map (2026-08-08)
+
+**Erro real no Railway:** `GET /api/v1/workflow/dashboard` → `failed to get dashboard: can't scan into dest[17]: cannot scan text (OID 25) in text format into *map[string]interface {}`. Resto do sistema inicia normal (migrations v35 dirty=false, AI provider_count=1, auth/sites/queue/metrics/notifications ok).
+
+**Causa raiz (dest[17] = coluna `data`):**
+- `internal/modules/workflow/repository.go:609` (`getDashboard`) — o SELECT convertia a coluna com `COALESCE(data::text,'{}')` e o `Scan` (linha 619) apontava `&d.Data` (tipo `map[string]interface{}`, model.go:227).
+- A coluna `workflow_dashboard.data` é **JSONB** (migração 000021). Com o cast `::text` o pgx entrega OID 25 (text) e **recusa** scan direto em `*map[string]interface{}` — é um limite do codec do pgx (text→map não existe).
+- Os demais scans do módulo (steps, history — repository.go:200/483) já usavam o padrão correto: escanear `::text` em variável `string` local + `json.Unmarshal` no map. Só o dashboard escaneava direto no map.
+
+**Fix (mínimo, segue o padrão existente do arquivo):**
+- `internal/modules/workflow/repository.go` — `getDashboard`: declara `var dataStr string`, o Scan agora escreve em `&dataStr` no lugar de `&d.Data`; depois `json.Unmarshal([]byte(dataStr), &d.Data)` quando não-vazio; `d.Data = make(map[string]interface{})` quando nil (preserva `data` omitempty/JSONB `{}`).
+- **Nenhuma migration necessária**: coluna já é JSONB corretamente; o bug era só o scan Go.
+
+**Testes (3 novos em `service_test.go`):**
+- `TestGetDashboard_JSONDataColumn` — row com `data` JSON aninhado (`{"uptime":"1h","workers":[...]}`) → verifica `TotalJobs` e `Data["workers"]` parseado.
+- `TestGetDashboard_JSONDataEmpty` — `data` = `{}` → `Data` não-nil.
+- `TestGetDashboard_JSONDataNull` — COALESCE `'{}'` → `Data` não-nil.
+- (pgxmock: regex `SELECT .+ FROM workflow_dashboard WHERE` cobre a query real; células int64 para contagens e float64 para numerics.)
+
+**Validação (EXECUTADA, ambiente real):**
+- `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 32 pacotes ok, apenas as 6 falhas pré-existentes de `internal/ai`.
+- E2E real: binário + Postgres local — INSERT manual em `workflow_dashboard` com `data` jsonb real (`{"uptime":"1h","workers":[{"id":1}]}`) → `GET /api/v1/workflow/dashboard` responde **200** com `data` parseado como objeto JSON (antes: erro idêntico ao do Railway).

@@ -531,3 +531,116 @@ func TestAddLog_WritesToWorkflowLogsTable(t *testing.T) {
 		t.Errorf("addLog did not write to workflow_logs: %v", err)
 	}
 }
+
+func TestGetDashboard_JSONDataColumn(t *testing.T) {
+	svc, mock := setupMockDB(t)
+	siteID := uuid.New()
+	dashID := uuid.New()
+	ts := now()
+
+	dashRow := pgxmock.NewRows([]string{
+		"id", "site_id", "total_jobs", "running_jobs", "completed_jobs", "failed_jobs",
+		"paused_jobs", "queue_size", "stalled_queue", "pending_review",
+		"scheduled_publications", "recent_publications", "avg_execution_ms", "success_rate",
+		"failure_rate", "throughput_hourly", "worker_utilization", "data", "snapshot_at",
+		"created_at", "updated_at",
+	}).AddRow(dashID, siteID, int64(12), int64(3), int64(7), int64(2),
+		int64(0), int64(4), int64(1), int64(2),
+		int64(1), int64(0), float64(1234.5), float64(58.33),
+		float64(16.67), float64(12.0), float64(45.0),
+		`{"uptime":"1h","workers":[{"id":1}]}`, ts,
+		ts, ts)
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_dashboard WHERE`).
+		WithArgs(siteID).
+		WillReturnRows(dashRow)
+
+	dash, err := svc.getDashboard(context.Background(), svc.db.Pool, siteID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dash == nil {
+		t.Fatal("expected dashboard, got nil")
+	}
+	if dash.TotalJobs != 12 {
+		t.Errorf("expected TotalJobs 12, got %d", dash.TotalJobs)
+	}
+	if _, ok := dash.Data["workers"].([]interface{}); !ok {
+		t.Errorf("expected parsed data.workers array, got %#v", dash.Data["workers"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestGetDashboard_JSONDataEmpty(t *testing.T) {
+	svc, mock := setupMockDB(t)
+	siteID := uuid.New()
+	dashID := uuid.New()
+	ts := now()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "site_id", "total_jobs", "running_jobs", "completed_jobs", "failed_jobs",
+		"paused_jobs", "queue_size", "stalled_queue", "pending_review",
+		"scheduled_publications", "recent_publications", "avg_execution_ms", "success_rate",
+		"failure_rate", "throughput_hourly", "worker_utilization", "data", "snapshot_at",
+		"created_at", "updated_at",
+	}).AddRow(dashID, siteID, int64(0), int64(0), int64(0), int64(0),
+		int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		float64(0), float64(0), float64(0), float64(0), float64(0),
+		`{}`, ts, ts, ts)
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_dashboard WHERE`).
+		WithArgs(siteID).
+		WillReturnRows(rows)
+
+	dash, err := svc.getDashboard(context.Background(), svc.db.Pool, siteID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dash == nil {
+		t.Fatal("expected dashboard, got nil")
+	}
+	if dash.Data == nil {
+		t.Error("expected non-nil empty data map")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestGetDashboard_JSONDataNull(t *testing.T) {
+	svc, mock := setupMockDB(t)
+	siteID := uuid.New()
+	dashID := uuid.New()
+	ts := now()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "site_id", "total_jobs", "running_jobs", "completed_jobs", "failed_jobs",
+		"paused_jobs", "queue_size", "stalled_queue", "pending_review",
+		"scheduled_publications", "recent_publications", "avg_execution_ms", "success_rate",
+		"failure_rate", "throughput_hourly", "worker_utilization", "data", "snapshot_at",
+		"created_at", "updated_at",
+	}).AddRow(dashID, siteID, int64(1), int64(0), int64(1), int64(0),
+		int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		float64(0), float64(100), float64(0), float64(0), float64(0),
+		`{}`, ts, ts, ts)
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_dashboard WHERE`).
+		WithArgs(siteID).
+		WillReturnRows(rows)
+
+	dash, err := svc.getDashboard(context.Background(), svc.db.Pool, siteID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dash == nil {
+		t.Fatal("expected dashboard, got nil")
+	}
+	if dash.Data == nil {
+		t.Error("expected non-nil data map")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}

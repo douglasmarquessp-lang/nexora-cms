@@ -598,6 +598,7 @@ func (s *Service) markAllNotificationsRead(ctx context.Context, p database.Pool,
 
 func (s *Service) getDashboard(ctx context.Context, p database.Pool, siteID uuid.UUID) (*Dashboard, error) {
 	var d Dashboard
+	var dataStr string
 	err := p.QueryRow(ctx,
 		`SELECT id, site_id,
 		        COALESCE(total_jobs,0), COALESCE(running_jobs,0), COALESCE(completed_jobs,0),
@@ -616,12 +617,18 @@ func (s *Service) getDashboard(ctx context.Context, p database.Pool, siteID uuid
 		&d.ScheduledPublications, &d.RecentPublications,
 		&d.AvgExecutionMs, &d.SuccessRate, &d.FailureRate,
 		&d.ThroughputHourly, &d.WorkerUtilization,
-		&d.Data, &d.SnapshotAt, &d.CreatedAt, &d.UpdatedAt)
+		&dataStr, &d.SnapshotAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get dashboard: %w", err)
+	}
+	if len(dataStr) > 0 {
+		_ = json.Unmarshal([]byte(dataStr), &d.Data)
+	}
+	if d.Data == nil {
+		d.Data = make(map[string]interface{})
 	}
 	return &d, nil
 }
