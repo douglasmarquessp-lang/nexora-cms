@@ -1200,3 +1200,60 @@
 **Validação:** EXECUTADO: `npm run build` em `web/` (0, warning de chunk >500kB pré-existente); `go build ./...` (0); `go vet ./...` (0); `go test ./internal/webui/... ./internal/api/...` (0); smoke test real: boot do binário com o dist embutido → `GET /` 200 text/html, `GET /admin` 200, `GET /admin/login` serve index.html do React, `GET /api/v1/health` JSON ok (db conectado), `GET /assets/index-*.js` 200 com `Cache-Control immutable` + JS mime. Nenhum commit feito. (gofmt: arquivos novos formatados; repo tem muitos pré-existentes fora do gofmt — não tocados.)
 
 **Passos restantes no Railway (documentados no README):** trocar builder do serviço para Dockerfile (ou limpar "Dockerfile Path" se apontava para deploy/Dockerfile), garantir env vars, rodar setup/install, acessar `https://SEU-SERVICO.up.railway.app/admin`. Site público Next.js (`site/`) permanece serviço separado opcional (Vercel via vercel.json ou 2º serviço Railway).
+
+### Sprint 6.2 — Workflow publicável: auto-start, publish antes do completed, {post_id} no publisher (2026-08-08)
+
+**Fase 1 da automação de geração de artigos** (todos os 8 todos concluídos e validados). Backend + Admin SPA. Nenhum commit feito.
+
+**Backend:**
+- `migrations/000033_add_workflow_publication_id.{up,down}.sql` (NOVO) — `ALTER TABLE workflow_jobs ADD COLUMN publication_id UUID REFERENCES publications(id) ON DELETE SET NULL` + índice `idx_wf_jobs_publication`
+- `internal/modules/workflow/model.go` — `PublicationID *uuid.UUID` em `WorkflowJob` (após `SourceJobID`, antes de `ScheduledFor`)
+- `internal/modules/workflow/repository.go` — `getJobByID` e `listJobs`: SELECT/Scan agora incluem `publication_id` (entre source_job_id e scheduled_for)
+- `internal/modules/workflow/service.go` — `ExecuteAction`: `generate_article` e `generate_pt_en` agora chamam `CreateJob()` seguido de `StartJob()` (auto-start; job retorna `running`); `coalesceStr` para Title; `executeWorkflowAsync` reordenado: **publish ocorre ANTES do UPDATE completed** — em caso de erro de publish: `UPDATE workflow_jobs SET status='failed', error_message=$1 WHERE id=$2 AND status='running'` + history `running→failed` com a mensagem real e `return` (sem completed_at); em sucesso: grava `publication_id` e `completed` + `progress=100` + `completed_at`
+- `internal/api/routes.go` — `registerResearchRoutes(r, deps)` e `registerWriterRoutes(r, deps)` agora são de fato registrados (removidos `//nolint:unused` dos builders e adicionada a chamada)
+- `internal/modules/publisher/repository.go` — `PostRecord` (ID, Title, Content, Excerpt, Slug, Language, PostMeta, DeletedAt) + helper `postBlocksToText` (blocos heading `# text` e text, `\n\n`) + `GetPostForPublish(ctx, siteID, postID)` (SELECT com `COALESCE(content::text,'[]')`, `post_meta->>'language'`, `post_meta::text`; `ErrPostNotFound` em `pgx.ErrNoRows`)
+- `internal/modules/publisher/model.go` — `ErrPostNotFound` adicionado
+- `internal/modules/publisher/service.go` — `PublishArticle`: quando `req.Title=="" && req.PostID!=nil`, carrega via `GetPostForPublish` e preenche Title/Content/Excerpt/Slug/Language (e copia meta_title/meta_description/featured_image_url do PostMeta quando vazios); `ErrTitleRequired` permanece apenas se title continua vazio
+- `internal/modules/publisher/handler.go` — `Publish` aceita `{post_id}` sem título (validação `Title=="" && PostID==nil` → 400) e mapeia `ErrPostNotFound` → 404 NOT_FOUND
+
+**Frontend (`web/src/pages/workflow/Dashboard.tsx`):**
+- `WorkflowJob` com `error_message?`, `publication_id?`, `created_at`; jobs query com `refetchInterval: 5000` quando qualquer job está `running`
+- Coluna Actions na tabela: Start (draft/paused/failed/cancelled), Pause/Cancel (running), "Concluído" (completed); botões com `data-testid` `job-start-{id}`/`job-pause-{id}`/`job-cancel-{id}`
+- `jobControlMutation` (`api.post(/workflow/{id}/{action})`, invalida workflow-jobs/dashboard/metrics; erro → toast com `ApiError.message`)
+- `error_message` visível em vermelho sob o título; link "Artigo publicado: {id.slice(0,8)}…" com `data-testid="job-publication-{id}"` quando `publication_id` presente
+- `actionMutation` (criar job) mostra "Job criado e iniciado! Acompanhe…" quando o retorno tem `status === "running"` e invalida jobs/metrics
+
+**Validação:** EXECUTADO: `go build ./...` (0), `go vet ./...` (0), `go test ./...` (0 — apenas as 6 falhas pré-existentes de `internal/ai`: rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4); `go test` workflow/publisher/api OK; `npx tsc -b` (0); `npx vitest run` 12 arquivos/95 testes passando; `npm run lint` (0 erros, 45 warnings pré-existentes); `npm run build` (0, warning de chunk pré-existente).
+
+**Nota pgxmock (debug):** `TestExecuteAction_GenerateArticle_AutoStart` foi depurado com testes temporários (removidos). Duas armadilhas: (1) `rowSets` compartilhado entre duas `ExpectQuery` — a 2ª consulta varre um rowset já esgotado → `pgx.ErrNoRows` → `ErrJobNotFound`; cada SELECT precisa de rowset próprio; (2) células com tipo "errado" (ex.: `0` int para coluna float, `uuid.UUID` para `*uuid.UUID`, string para `JobStatus`) fazem o Scan falhar silenciosamente e devolver zero — usar `float64(0)`, `&userID`, `JobStatus("draft")` etc. Msg de erro resultante: "workflow job not found" ou status vazio.
+
+### Sprint 6.3 — E2E real local: migrations + workflow + publisher (2026-08-08)
+
+**Objetivo:** Rodar o sistema real (Postgres local + binário, com MockProvider — igual ao Railway sem `AI_GEMINI_*`) e validar ponta a ponta: bootstrap da API com migrations, start do workflow `generate_article`, pipeline AI mock, SEO gate e publisher com `{post_id}`. 2 bugs reais encontrados e corrigidos; validação completa executada.
+
+**Ambiente:** Postgres local (via migrador embutido do `cmd/api`), usuário admin criado via SQL (hash argon2id replicado — sem bcrypt; auth usa argon2.IDKey m=65536,t=3,p=4, v=19), site `meu-site` pré-existente.
+
+**E2E executado (cenário principal):**
+- `POST /workflow/actions {action:"generate_article", title:"Teste Nexora — GTA 6 últimas notícias"}` → job `running`, auto-start validado
+- 6 steps mapeados completaram (research, writer, editorial_engine, seo_engine, quality_check, finished); human_writer/publisher `skipped` (por design já documentado)
+- Progress parou em 75 e job `failed` com `error_message="seo score below minimum for publishing: seo score 39.61 below minimum 80.00"` — **MockProvider NÃO publica**: o SEO gate bloqueia conteúdo mock (fail-open correto; 422 no manual, failed no job)
+- `publications` count permaneceu 0 após o job mock — nenhuma publicação falsa no banco
+
+**E2E (publisher `{post_id}`):**
+- Post criado via `POST /posts`; `POST /publisher/publish {"post_id": ...}` sem title → 422 `SEO_SCORE_BELOW_MINIMUM` (inline score < 80) — caminho `GetPostForPublish` validado (sem 400 ErrTitleRequired)
+- Depois de `UPDATE posts SET seo_score=92.5, seo_analyzed_at=NOW()` → publish 200, publication criada, visível em `GET /articles` público com hreflang/OG/JSON-LD
+- **Negativo:** publish de post inexistente → `404 NOT_FOUND "post not found"` (ErrPostNotFound)
+
+**BUG 1 REAL ENCONTRADO E CORRIGIDO — migrations 000026 duplicado (versão duplicada):**
+- O par 000026 (session_metadata + post_seo_columns) do Sprint 5.10: o golang-migrate trata como version 26 e o post_seo_columns **nunca foi aplicado em nenhum ambiente** (Railway também sofreria o mesmo; `posts.seo_score` inexistia → toda chamada ao stored-score path do SEO gate falhava com `SQLSTATE 42703 column "seo_score" does not exist`)
+- **Fix:** renomeado `migrations/000026_add_post_seo_columns.{up,down}.sql` → `000034_add_post_seo_columns.{up,down}.sql` (versão nova se aplica): aplicado no boot seguinte (v33 → v34, dirty=false), colunas `seo_score`/`seo_analyzed_at`/`seo_issues` agora existem e o stored path do gate funciona
+- Importante para Railway: mesmo fix é necessário (o banco prod vai v33; o 000026 da lista não aplicou lá — renomear no repo já resolve no próximo deploy)
+
+**BUG 2 REAL ENCONTRADO — corrigido: `CreatePublication` SQL mismatch:**
+- `internal/modules/publisher/repository.go` INSERT usava `$33,$34,$34` (colunas 34/34/35) → `"mismatched param and argument count"` em TODA publicação (500 INTERNAL). Simples: último placeholder duplicado.
+- Fix: `$33,$34,$35` — toda publicação estava quebrada por isso; um `go test ./internal/modules/publisher/...` (ok) e o E2E positivo rodou 200.
+
+**Achado menor (pré-existente, NÃO corrigido):**
+- `internal/modules/workflow/repository.go:807` — `addWorkflowLog` insere em `generation_pipeline_logs` (FK p/ `generation_jobs`) com o job ID do workflow → viola FK `generation_pipeline_logs_generation_job_id_fkey` a cada log (23503). Tudo pré-existente (Sprint 3.x), não-fatal — workflow continua funcionando, só polui o log e a auditoria. Requer migration própria (workflow_logs) para resolver direito.
+
+**Validação:** `go build ./...` (0), `go vet ./...` (0), `go test ./...` (32 pacotes ok; as 6 falhas pré-existentes de `internal/ai` — rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4); test public `GET /api/v1/articles` OK. Usuário/credenciais de teste: `e2e@nexora.test` (só local, criado via INSERT — NÃO existe na prod). Nenhum commit feito.

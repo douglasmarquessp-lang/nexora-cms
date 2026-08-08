@@ -58,14 +58,14 @@ const (
 type WorkflowStep string
 
 const (
-	StepResearch         WorkflowStep = "research"
-	StepWriter           WorkflowStep = "writer"
-	StepHumanWriter      WorkflowStep = "human_writer"
-	StepEditorialEngine  WorkflowStep = "editorial_engine"
-	StepSEOEngine        WorkflowStep = "seo_engine"
-	StepQualityCheck     WorkflowStep = "quality_check"
-	StepPublisher        WorkflowStep = "publisher"
-	StepFinished         WorkflowStep = "finished"
+	StepResearch        WorkflowStep = "research"
+	StepWriter          WorkflowStep = "writer"
+	StepHumanWriter     WorkflowStep = "human_writer"
+	StepEditorialEngine WorkflowStep = "editorial_engine"
+	StepSEOEngine       WorkflowStep = "seo_engine"
+	StepQualityCheck    WorkflowStep = "quality_check"
+	StepPublisher       WorkflowStep = "publisher"
+	StepFinished        WorkflowStep = "finished"
 )
 
 var AllWorkflowSteps = []WorkflowStep{
@@ -113,6 +113,7 @@ type WorkflowJob struct {
 	Keywords       []string   `json:"keywords,omitempty"`
 	StyleSlug      string     `json:"style_slug,omitempty"`
 	SourceJobID    *uuid.UUID `json:"source_job_id,omitempty"`
+	PublicationID  *uuid.UUID `json:"publication_id,omitempty"`
 	ScheduledFor   *time.Time `json:"scheduled_for,omitempty"`
 	ErrorMessage   string     `json:"error_message,omitempty"`
 	RetryCount     int        `json:"retry_count"`
@@ -148,30 +149,30 @@ type Step struct {
 }
 
 type QueueItem struct {
-	ID               uuid.UUID  `json:"id"`
-	SiteID           uuid.UUID  `json:"site_id"`
-	WorkflowJobID    *uuid.UUID `json:"workflow_job_id,omitempty"`
-	Title            string     `json:"title"`
-	Content          string     `json:"content,omitempty"`
-	Excerpt          string     `json:"excerpt,omitempty"`
-	Language         string     `json:"language"`
+	ID               uuid.UUID   `json:"id"`
+	SiteID           uuid.UUID   `json:"site_id"`
+	WorkflowJobID    *uuid.UUID  `json:"workflow_job_id,omitempty"`
+	Title            string      `json:"title"`
+	Content          string      `json:"content,omitempty"`
+	Excerpt          string      `json:"excerpt,omitempty"`
+	Language         string      `json:"language"`
 	Status           QueueStatus `json:"status"`
-	Priority         int        `json:"priority"`
-	ScheduledFor     *time.Time `json:"scheduled_for,omitempty"`
-	IsPaused         bool       `json:"is_paused"`
-	RetryCount       int        `json:"retry_count"`
-	MaxRetries       int        `json:"max_retries"`
-	MetaTitle        string     `json:"meta_title,omitempty"`
-	MetaDescription  string     `json:"meta_description,omitempty"`
-	Slug             string     `json:"slug,omitempty"`
-	FeaturedImageURL string     `json:"featured_image_url,omitempty"`
-	Tags             []string   `json:"tags,omitempty"`
-	Categories       []string   `json:"categories,omitempty"`
-	PublishedAt      *time.Time `json:"published_at,omitempty"`
-	PublishedBy      *uuid.UUID `json:"published_by,omitempty"`
-	ErrorMessage     string     `json:"error_message,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	Priority         int         `json:"priority"`
+	ScheduledFor     *time.Time  `json:"scheduled_for,omitempty"`
+	IsPaused         bool        `json:"is_paused"`
+	RetryCount       int         `json:"retry_count"`
+	MaxRetries       int         `json:"max_retries"`
+	MetaTitle        string      `json:"meta_title,omitempty"`
+	MetaDescription  string      `json:"meta_description,omitempty"`
+	Slug             string      `json:"slug,omitempty"`
+	FeaturedImageURL string      `json:"featured_image_url,omitempty"`
+	Tags             []string    `json:"tags,omitempty"`
+	Categories       []string    `json:"categories,omitempty"`
+	PublishedAt      *time.Time  `json:"published_at,omitempty"`
+	PublishedBy      *uuid.UUID  `json:"published_by,omitempty"`
+	ErrorMessage     string      `json:"error_message,omitempty"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 type HistoryEntry struct {
@@ -206,27 +207,27 @@ type Notification struct {
 }
 
 type Dashboard struct {
-	ID                   uuid.UUID              `json:"id"`
-	SiteID               uuid.UUID              `json:"site_id"`
-	TotalJobs            int64                  `json:"total_jobs"`
-	RunningJobs          int64                  `json:"running_jobs"`
-	CompletedJobs        int64                  `json:"completed_jobs"`
-	FailedJobs           int64                  `json:"failed_jobs"`
-	PausedJobs           int64                  `json:"paused_jobs"`
-	QueueSize            int64                  `json:"queue_size"`
-	StalledQueue         int64                  `json:"stalled_queue"`
-	PendingReview        int64                  `json:"pending_review"`
-	ScheduledPublications int64                 `json:"scheduled_publications"`
-	RecentPublications   int64                  `json:"recent_publications"`
-	AvgExecutionMs       float64                `json:"avg_execution_ms"`
-	SuccessRate          float64                `json:"success_rate"`
-	FailureRate          float64                `json:"failure_rate"`
-	ThroughputHourly     float64                `json:"throughput_hourly"`
-	WorkerUtilization    float64                `json:"worker_utilization"`
-	Data                 map[string]interface{} `json:"data,omitempty"`
-	SnapshotAt           time.Time              `json:"snapshot_at"`
-	CreatedAt            time.Time              `json:"created_at"`
-	UpdatedAt            time.Time              `json:"updated_at"`
+	ID                    uuid.UUID              `json:"id"`
+	SiteID                uuid.UUID              `json:"site_id"`
+	TotalJobs             int64                  `json:"total_jobs"`
+	RunningJobs           int64                  `json:"running_jobs"`
+	CompletedJobs         int64                  `json:"completed_jobs"`
+	FailedJobs            int64                  `json:"failed_jobs"`
+	PausedJobs            int64                  `json:"paused_jobs"`
+	QueueSize             int64                  `json:"queue_size"`
+	StalledQueue          int64                  `json:"stalled_queue"`
+	PendingReview         int64                  `json:"pending_review"`
+	ScheduledPublications int64                  `json:"scheduled_publications"`
+	RecentPublications    int64                  `json:"recent_publications"`
+	AvgExecutionMs        float64                `json:"avg_execution_ms"`
+	SuccessRate           float64                `json:"success_rate"`
+	FailureRate           float64                `json:"failure_rate"`
+	ThroughputHourly      float64                `json:"throughput_hourly"`
+	WorkerUtilization     float64                `json:"worker_utilization"`
+	Data                  map[string]interface{} `json:"data,omitempty"`
+	SnapshotAt            time.Time              `json:"snapshot_at"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 type WorkflowMetrics struct {
@@ -281,18 +282,18 @@ type CreateJobRequest struct {
 }
 
 type UpdateJobRequest struct {
-	Title          *string     `json:"title,omitempty"`
-	ContentType    *string     `json:"content_type,omitempty"`
-	TargetLanguage *string     `json:"target_language,omitempty"`
-	Priority       *int        `json:"priority,omitempty"`
-	WordCount      *int        `json:"word_count,omitempty"`
-	Tone           *string     `json:"tone,omitempty"`
-	Audience       *string     `json:"audience,omitempty"`
-	Keywords       *[]string   `json:"keywords,omitempty"`
-	StyleSlug      *string     `json:"style_slug,omitempty"`
-	ScheduledFor   *time.Time  `json:"scheduled_for,omitempty"`
-	GeneratePT     *bool       `json:"generate_pt,omitempty"`
-	GenerateEN     *bool       `json:"generate_en,omitempty"`
+	Title          *string    `json:"title,omitempty"`
+	ContentType    *string    `json:"content_type,omitempty"`
+	TargetLanguage *string    `json:"target_language,omitempty"`
+	Priority       *int       `json:"priority,omitempty"`
+	WordCount      *int       `json:"word_count,omitempty"`
+	Tone           *string    `json:"tone,omitempty"`
+	Audience       *string    `json:"audience,omitempty"`
+	Keywords       *[]string  `json:"keywords,omitempty"`
+	StyleSlug      *string    `json:"style_slug,omitempty"`
+	ScheduledFor   *time.Time `json:"scheduled_for,omitempty"`
+	GeneratePT     *bool      `json:"generate_pt,omitempty"`
+	GenerateEN     *bool      `json:"generate_en,omitempty"`
 }
 
 type QueueRequest struct {

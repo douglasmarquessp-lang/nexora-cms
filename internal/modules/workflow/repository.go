@@ -58,7 +58,7 @@ func (s *Service) getJobByID(ctx context.Context, p database.Pool, siteID, jobID
 		        language, COALESCE(target_language,''), status, COALESCE(current_step,''),
 		        COALESCE(progress,0), priority, COALESCE(word_count,0), COALESCE(tone,''),
 		        COALESCE(audience,''), COALESCE(keywords,'{}'), COALESCE(style_slug,''),
-		        source_job_id, scheduled_for, COALESCE(error_message,''), COALESCE(retry_count,0),
+		        source_job_id, publication_id, scheduled_for, COALESCE(error_message,''), COALESCE(retry_count,0),
 		        COALESCE(max_retries,3), generate_pt, generate_en, started_at, completed_at,
 		        cancelled_at, created_by, created_at, updated_at
 		 FROM workflow_jobs WHERE id = $1 AND site_id = $2`,
@@ -66,7 +66,7 @@ func (s *Service) getJobByID(ctx context.Context, p database.Pool, siteID, jobID
 	).Scan(&j.ID, &j.SiteID, &j.UserID, &j.Title, &j.ContentType,
 		&j.Language, &j.TargetLanguage, &j.Status, &j.CurrentStep,
 		&j.Progress, &j.Priority, &j.WordCount, &j.Tone, &j.Audience, &j.Keywords,
-		&j.StyleSlug, &j.SourceJobID, &j.ScheduledFor, &j.ErrorMessage, &j.RetryCount,
+		&j.StyleSlug, &j.SourceJobID, &j.PublicationID, &j.ScheduledFor, &j.ErrorMessage, &j.RetryCount,
 		&j.MaxRetries, &j.GeneratePT, &j.GenerateEN, &j.StartedAt, &j.CompletedAt,
 		&j.CancelledAt, &j.CreatedBy, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *Service) listJobs(ctx context.Context, p database.Pool, siteID uuid.UUI
 		        language, COALESCE(target_language,''), status, COALESCE(current_step,''),
 		        COALESCE(progress,0), priority, COALESCE(word_count,0), COALESCE(tone,''),
 		        COALESCE(audience,''), COALESCE(keywords,'{}'), COALESCE(style_slug,''),
-		        source_job_id, scheduled_for, COALESCE(error_message,''), COALESCE(retry_count,0),
+		        source_job_id, publication_id, scheduled_for, COALESCE(error_message,''), COALESCE(retry_count,0),
 		        COALESCE(max_retries,3), generate_pt, generate_en, started_at, completed_at,
 		        cancelled_at, created_by, created_at, updated_at
 		 FROM workflow_jobs WHERE %s ORDER BY priority ASC, created_at DESC LIMIT $%d OFFSET $%d`,
@@ -131,7 +131,7 @@ func (s *Service) listJobs(ctx context.Context, p database.Pool, siteID uuid.UUI
 		if err := rows.Scan(&j.ID, &j.SiteID, &j.UserID, &j.Title, &j.ContentType,
 			&j.Language, &j.TargetLanguage, &j.Status, &j.CurrentStep,
 			&j.Progress, &j.Priority, &j.WordCount, &j.Tone, &j.Audience, &j.Keywords,
-			&j.StyleSlug, &j.SourceJobID, &j.ScheduledFor, &j.ErrorMessage, &j.RetryCount,
+			&j.StyleSlug, &j.SourceJobID, &j.PublicationID, &j.ScheduledFor, &j.ErrorMessage, &j.RetryCount,
 			&j.MaxRetries, &j.GeneratePT, &j.GenerateEN, &j.StartedAt, &j.CompletedAt,
 			&j.CancelledAt, &j.CreatedBy, &j.CreatedAt, &j.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan workflow job: %w", err)

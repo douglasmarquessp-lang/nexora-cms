@@ -10,22 +10,22 @@ import (
 
 	"nexora/internal/ai"
 	"nexora/internal/kernel"
+	"nexora/internal/modules/publisher"
+	"nexora/internal/modules/research"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
-	"nexora/internal/modules/publisher"
-	"nexora/internal/modules/research"
 )
 
 type Service struct {
-	log         *logger.Logger
-	db          *database.Database
-	cache       *cache.Cache
-	eventBus    *kernel.EventBus
-	auditLog    *audit.Logger
-	aiManager   *ai.Manager
+	log          *logger.Logger
+	db           *database.Database
+	cache        *cache.Cache
+	eventBus     *kernel.EventBus
+	auditLog     *audit.Logger
+	aiManager    *ai.Manager
 	publisherSvc *publisher.Service
 	researchSvc  *research.Service
 }
@@ -701,11 +701,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		}
 	}
 
-	_, _ = p.Exec(ctx,
-		`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
-		 WHERE id = $1 AND status = 'running'`,
-		jobID,
-	)
+	var publicationID *uuid.UUID
 
 	if s.publisherSvc != nil && accumulatedContent != "" {
 		pubReq := publisher.PublishGeneratedRequest{
@@ -719,16 +715,43 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			pubReq.Tags = job.Keywords
 		}
 		pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, pubReq)
-		if pubErr == nil && pub != nil && groundingMeta != nil && s.researchSvc != nil {
-			sources := research.ArticleSourcesFromGrounding(siteID, pub.ID, uuid.Nil, jobID, uuid.Nil, groundingMeta)
-			if len(sources) > 0 {
-				_, _ = s.researchSvc.SaveArticleSources(ctx, sources)
+		if pubErr == nil && pub != nil {
+			publicationID = &pub.ID
+			if groundingMeta != nil && s.researchSvc != nil {
+				sources := research.ArticleSourcesFromGrounding(siteID, pub.ID, uuid.Nil, jobID, uuid.Nil, groundingMeta)
+				if len(sources) > 0 {
+					_, _ = s.researchSvc.SaveArticleSources(ctx, sources)
+				}
 			}
 		}
 		if pubErr != nil {
 			s.log.Error("auto-publish failed", "job_id", jobID, "error", pubErr)
+			_, _ = p.Exec(ctx,
+				`UPDATE workflow_jobs SET status = 'failed', error_message = $1, completed_at = NULL, updated_at = NOW()
+				 WHERE id = $2 AND status = 'running'`,
+				pubErr.Error(), jobID,
+			)
+			s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.completed", "job", &jobID,
+				string(JobStatusRunning), string(JobStatusFailed), nil, pubErr.Error(), &siteID, 0)
+			return
 		}
+	} else if s.publisherSvc == nil {
+		s.log.Warn("workflow publisher service not wired, job completed without publishing", "job_id", jobID)
 	}
+
+	if publicationID != nil {
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET publication_id = $1, updated_at = NOW()
+			 WHERE id = $2`,
+			*publicationID, jobID,
+		)
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'running'`,
+		jobID,
+	)
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error) {
@@ -1269,18 +1292,26 @@ func (s *Service) addHistory(ctx context.Context, p database.Pool, siteID uuid.U
 func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, action AutomationAction) (*WorkflowJob, error) {
 	switch action.Action {
 	case "generate_article":
-		return s.CreateJob(ctx, siteID, userID, CreateJobRequest{
+		job, err := s.CreateJob(ctx, siteID, userID, CreateJobRequest{
 			Title:    coalesceStr(action.Title, "New Article"),
 			Language: "pt",
 		})
+		if err != nil {
+			return nil, err
+		}
+		return s.StartJob(ctx, siteID, job.ID)
 
 	case "generate_pt_en":
-		return s.CreateJob(ctx, siteID, userID, CreateJobRequest{
+		job, err := s.CreateJob(ctx, siteID, userID, CreateJobRequest{
 			Title:      coalesceStr(action.Title, "New Article"),
 			Language:   "pt",
 			GeneratePT: true,
 			GenerateEN: true,
 		})
+		if err != nil {
+			return nil, err
+		}
+		return s.StartJob(ctx, siteID, job.ID)
 
 	case "publish_now":
 		if action.JobID == "" {

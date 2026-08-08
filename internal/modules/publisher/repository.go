@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,82 @@ func (r *Repository) checkDB() error {
 }
 
 // --- Publications ---
+
+// PostRecord mirrors the subset of the posts table needed to publish an
+// existing post through the publisher funnel (Board publish with {post_id}).
+type PostRecord struct {
+	ID        uuid.UUID
+	Title     string
+	Content   string
+	Excerpt   string
+	Slug      string
+	Language  string
+	PostMeta  map[string]interface{}
+	DeletedAt *time.Time
+}
+
+// postBlocksToText converts posts-style JSONB content blocks to markdown-ish
+// text. Only heading/text blocks are preserved; everything else is skipped.
+func postBlocksToText(blocks []interface{}) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		m, ok := b.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		blockType, _ := m["type"].(string)
+		text, _ := m["text"].(string)
+		if text == "" {
+			continue
+		}
+		switch blockType {
+		case "heading":
+			sb.WriteString("# ")
+			sb.WriteString(text)
+		case "text":
+			sb.WriteString(text)
+		default:
+			continue
+		}
+		sb.WriteString("\n\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func (r *Repository) GetPostForPublish(ctx context.Context, siteID, postID uuid.UUID) (*PostRecord, error) {
+	if err := r.checkDB(); err != nil {
+		return nil, err
+	}
+
+	var rec PostRecord
+	var contentJSON, postMetaJSON []byte
+
+	err := r.db.QueryRow(ctx,
+		`SELECT id, title, COALESCE(content::text, '[]'), COALESCE(excerpt, ''),
+		        slug, COALESCE(post_meta->>'language', ''), COALESCE(post_meta::text, '{}'), deleted_at
+		 FROM posts WHERE id = $1 AND site_id = $2`,
+		postID, siteID,
+	).Scan(&rec.ID, &rec.Title, &contentJSON, &rec.Excerpt, &rec.Slug, &rec.Language, &postMetaJSON, &rec.DeletedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrPostNotFound
+		}
+		return nil, fmt.Errorf("failed to load post for publish: %w", err)
+	}
+
+	var blocks []interface{}
+	if len(contentJSON) > 0 && string(contentJSON) != "null" {
+		if uerr := json.Unmarshal(contentJSON, &blocks); uerr == nil {
+			rec.Content = postBlocksToText(blocks)
+		} else {
+			rec.Content = string(contentJSON)
+		}
+	}
+	if len(postMetaJSON) > 0 {
+		_ = json.Unmarshal(postMetaJSON, &rec.PostMeta)
+	}
+	return &rec, nil
+}
 
 func (r *Repository) CreatePublication(ctx context.Context, p *Publication) error {
 	if err := r.checkDB(); err != nil {
@@ -57,7 +134,7 @@ func (r *Repository) CreatePublication(ctx context.Context, p *Publication) erro
 		 meta_title, meta_description, og_image, featured_image_url, tags, categories,
 		 word_count, reading_time, revision, checksum, source, metadata, created_by, created_at, updated_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16,$17,$18,$19,$20,
-		 $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32::jsonb,$33,$34,$34)`,
+		 $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32::jsonb,$33,$34,$35)`,
 		p.ID, p.SiteID, p.PostID, p.Title, p.Content, p.Excerpt, p.Slug, p.URL,
 		p.CanonicalURL, p.Language, translationsJSON, multilingualJSON, p.Status, p.Visibility,
 		p.AuthorID, p.PublishedBy, p.PublishedAt, p.UnpublishedAt, p.ScheduledAt, p.IsFeatured,
@@ -807,5 +884,3 @@ func (r *Repository) GetMetricsSummary(ctx context.Context, siteID uuid.UUID) (*
 
 	return &s, nil
 }
-
-

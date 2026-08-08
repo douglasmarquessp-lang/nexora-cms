@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	slugRegex       = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-	alphanumRegex   = regexp.MustCompile(`[^a-z0-9]+`)
-	multiDashRegex  = regexp.MustCompile(`-{2,}`)
-	edgeDashRegex   = regexp.MustCompile(`^-|-$`)
-	schemeRegex     = regexp.MustCompile(`^(https?:\/\/)`)
+	slugRegex      = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	alphanumRegex  = regexp.MustCompile(`[^a-z0-9]+`)
+	multiDashRegex = regexp.MustCompile(`-{2,}`)
+	edgeDashRegex  = regexp.MustCompile(`^-|-$`)
+	schemeRegex    = regexp.MustCompile(`^(https?:\/\/)`)
 )
 
 type Validator struct{}

@@ -211,10 +211,10 @@ func TestPublishGeneratedArticle_EnhancerRuns(t *testing.T) {
 	svc.SetContentEnhancer(enh)
 
 	_, err := svc.PublishGeneratedArticle(context.Background(), PublishGeneratedRequest{
-		SiteID:    uuid.New(),
-		Title:     "Título",
-		Content:   "conteúdo original",
-		Language:  "pt",
+		SiteID:   uuid.New(),
+		Title:    "Título",
+		Content:  "conteúdo original",
+		Language: "pt",
 	})
 	if err == nil {
 		t.Error("expected DB error (no repo), but publishing must attempt after enhancement")

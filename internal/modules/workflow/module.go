@@ -8,12 +8,12 @@ import (
 	"nexora/internal/ai"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
+	publisherModule "nexora/internal/modules/publisher"
+	researchModule "nexora/internal/modules/research"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
-	publisherModule "nexora/internal/modules/publisher"
-	researchModule "nexora/internal/modules/research"
 )
 
 type WorkflowModule struct {

@@ -14,12 +14,12 @@ const ModuleName = "publisher"
 type PubStatus string
 
 const (
-	PubStatusDraft     PubStatus = "draft"
-	PubStatusPublished PubStatus = "published"
-	PubStatusScheduled PubStatus = "scheduled"
+	PubStatusDraft       PubStatus = "draft"
+	PubStatusPublished   PubStatus = "published"
+	PubStatusScheduled   PubStatus = "scheduled"
 	PubStatusUnpublished PubStatus = "unpublished"
-	PubStatusArchived  PubStatus = "archived"
-	PubStatusDeleted   PubStatus = "deleted"
+	PubStatusArchived    PubStatus = "archived"
+	PubStatusDeleted     PubStatus = "deleted"
 )
 
 type QueueStatus string
@@ -147,42 +147,42 @@ type QueueItem struct {
 }
 
 type Schedule struct {
-	ID             uuid.UUID              `json:"id"`
-	SiteID         uuid.UUID              `json:"site_id"`
-	PublicationID  uuid.UUID              `json:"publication_id"`
-	ScheduledAt    time.Time              `json:"scheduled_at"`
-	Action         string                 `json:"action"`
-	Status         ScheduleStatus         `json:"status"`
-	Recurrence     string                 `json:"recurrence,omitempty"`
-	RecurrenceEnd  *time.Time             `json:"recurrence_end,omitempty"`
-	NotifyOnPublish bool                  `json:"notify_on_publish"`
-	NotifyUsers    []uuid.UUID            `json:"notify_users,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-	CreatedBy      *uuid.UUID             `json:"created_by,omitempty"`
-	CancelledAt    *time.Time             `json:"cancelled_at,omitempty"`
-	CancelReason   string                 `json:"cancel_reason,omitempty"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-}
-
-type PublicationMetrics struct {
 	ID              uuid.UUID              `json:"id"`
 	SiteID          uuid.UUID              `json:"site_id"`
 	PublicationID   uuid.UUID              `json:"publication_id"`
-	ViewCount       int64                  `json:"view_count"`
-	UniqueVisitors  int64                  `json:"unique_visitors"`
-	AvgTimeSeconds  float64                `json:"avg_time_seconds"`
-	BounceRate      float64                `json:"bounce_rate"`
-	ShareCount      int                    `json:"share_count"`
-	CommentCount    int                    `json:"comment_count"`
-	LikeCount       int                    `json:"like_count"`
-	ClickCount      int                    `json:"click_count"`
-	CTR             float64                `json:"ctr"`
-	ScrollDepth     float64                `json:"scroll_depth"`
+	ScheduledAt     time.Time              `json:"scheduled_at"`
+	Action          string                 `json:"action"`
+	Status          ScheduleStatus         `json:"status"`
+	Recurrence      string                 `json:"recurrence,omitempty"`
+	RecurrenceEnd   *time.Time             `json:"recurrence_end,omitempty"`
+	NotifyOnPublish bool                   `json:"notify_on_publish"`
+	NotifyUsers     []uuid.UUID            `json:"notify_users,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
-	RecordedAt      time.Time              `json:"recorded_at"`
+	CreatedBy       *uuid.UUID             `json:"created_by,omitempty"`
+	CancelledAt     *time.Time             `json:"cancelled_at,omitempty"`
+	CancelReason    string                 `json:"cancel_reason,omitempty"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
+}
+
+type PublicationMetrics struct {
+	ID             uuid.UUID              `json:"id"`
+	SiteID         uuid.UUID              `json:"site_id"`
+	PublicationID  uuid.UUID              `json:"publication_id"`
+	ViewCount      int64                  `json:"view_count"`
+	UniqueVisitors int64                  `json:"unique_visitors"`
+	AvgTimeSeconds float64                `json:"avg_time_seconds"`
+	BounceRate     float64                `json:"bounce_rate"`
+	ShareCount     int                    `json:"share_count"`
+	CommentCount   int                    `json:"comment_count"`
+	LikeCount      int                    `json:"like_count"`
+	ClickCount     int                    `json:"click_count"`
+	CTR            float64                `json:"ctr"`
+	ScrollDepth    float64                `json:"scroll_depth"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	RecordedAt     time.Time              `json:"recorded_at"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
 }
 
 // --- DTOs ---
@@ -229,12 +229,12 @@ type UpdatePublicationRequest struct {
 }
 
 type ScheduleRequest struct {
-	PublicationID  uuid.UUID  `json:"publication_id"`
-	ScheduledAt    time.Time  `json:"scheduled_at"`
-	Action         string     `json:"action,omitempty"`
-	Recurrence     string     `json:"recurrence,omitempty"`
-	RecurrenceEnd  *time.Time `json:"recurrence_end,omitempty"`
-	NotifyOnPublish bool      `json:"notify_on_publish,omitempty"`
+	PublicationID   uuid.UUID  `json:"publication_id"`
+	ScheduledAt     time.Time  `json:"scheduled_at"`
+	Action          string     `json:"action,omitempty"`
+	Recurrence      string     `json:"recurrence,omitempty"`
+	RecurrenceEnd   *time.Time `json:"recurrence_end,omitempty"`
+	NotifyOnPublish bool       `json:"notify_on_publish,omitempty"`
 }
 
 type QueueRequest struct {
@@ -315,20 +315,21 @@ const (
 // --- Errors ---
 
 var (
-	ErrPublicationNotFound    = errors.New("publication not found")
-	ErrDuplicateSlug          = errors.New("duplicate slug for site")
-	ErrInvalidSlug            = errors.New("invalid slug format")
-	ErrInvalidLanguage        = errors.New("language must be 'pt' or 'en'")
-	ErrInvalidVisibility      = errors.New("visibility must be public, private, or password")
-	ErrInvalidStatus          = errors.New("invalid publication status")
-	ErrInvalidAction          = errors.New("invalid queue action")
-	ErrInvalidRecurrence      = errors.New("invalid recurrence pattern")
-	ErrTitleRequired          = errors.New("title is required")
-	ErrDatabaseNotAvail       = errors.New("database not available")
-	ErrQueueItemNotFound      = errors.New("queue item not found")
-	ErrScheduleNotFound       = errors.New("schedule not found")
-	ErrScheduleAlreadyActive  = errors.New("schedule already active for this publication")
-	ErrMaxRetriesExceeded     = errors.New("maximum retries exceeded")
+	ErrPublicationNotFound         = errors.New("publication not found")
+	ErrPostNotFound                = errors.New("post not found")
+	ErrDuplicateSlug               = errors.New("duplicate slug for site")
+	ErrInvalidSlug                 = errors.New("invalid slug format")
+	ErrInvalidLanguage             = errors.New("language must be 'pt' or 'en'")
+	ErrInvalidVisibility           = errors.New("visibility must be public, private, or password")
+	ErrInvalidStatus               = errors.New("invalid publication status")
+	ErrInvalidAction               = errors.New("invalid queue action")
+	ErrInvalidRecurrence           = errors.New("invalid recurrence pattern")
+	ErrTitleRequired               = errors.New("title is required")
+	ErrDatabaseNotAvail            = errors.New("database not available")
+	ErrQueueItemNotFound           = errors.New("queue item not found")
+	ErrScheduleNotFound            = errors.New("schedule not found")
+	ErrScheduleAlreadyActive       = errors.New("schedule already active for this publication")
+	ErrMaxRetriesExceeded          = errors.New("maximum retries exceeded")
 	ErrPublicationAlreadyPublished = errors.New("publication already published")
 	ErrPublicationNotPublished     = errors.New("publication is not published")
 	ErrCannotModifyPublished       = errors.New("cannot modify published publication, use update instead")

@@ -1,4 +1,4 @@
--- 000026_add_post_seo_columns.down.sql
+-- 000034_add_post_seo_columns.down.sql
 
 DROP INDEX IF EXISTS idx_posts_site_seo_score;
 

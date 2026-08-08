@@ -36,6 +36,8 @@ interface WorkflowJob {
   current_step: string;
   progress: number;
   language: string;
+  error_message?: string;
+  publication_id?: string;
   created_at: string;
 }
 
@@ -110,6 +112,8 @@ export function WorkflowDashboardPage() {
     queryKey: siteQueryKey(["workflow-jobs"], currentSiteId),
     queryFn: () => api.get<WorkflowJob[]>("/workflow", { params: { limit: "10" } }),
     enabled: !!currentSiteId,
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((j) => j.status === "running") ? 5000 : false,
   });
 
   const { data: queueData } = useQuery({
@@ -145,16 +149,51 @@ export function WorkflowDashboardPage() {
   const actionMutation = useMutation({
     mutationFn: (action: { action: string; title?: string; job_id?: string }) =>
       api.post("/workflow/actions", action),
-    onSuccess: () => {
-      setActionMsg("Ação executada com sucesso!");
+    onSuccess: (job: unknown) => {
+      const created =
+        job && typeof job === "object" && "status" in (job as object)
+          ? (job as { status?: string }).status
+          : undefined;
+      setActionMsg(
+        created === "running"
+          ? "Job criado e iniciado! Acompanhe o progresso na aba Jobs."
+          : "Ação executada com sucesso!",
+      );
+      queryClient.invalidateQueries({ queryKey: ["workflow-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["workflow-metrics"] });
       refetchDash();
-      setTimeout(() => setActionMsg(""), 3000);
+      setTimeout(() => setActionMsg(""), 4000);
     },
     onError: () => {
       setActionMsg("Falha ao executar ação. Verifique os logs.");
       setTimeout(() => setActionMsg(""), 3000);
     },
   });
+
+  const jobControlMutation = useMutation({
+    mutationFn: ({ jobId, action }: { jobId: string; action: string }) =>
+      api.post(`/workflow/${jobId}/${action}`),
+    onMutate: () => {
+      setActionMsg("");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workflow-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["workflow-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["workflow-metrics"] });
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Falha ao executar ação no job. Verifique os logs.";
+      setActionMsg(msg);
+      setTimeout(() => setActionMsg(""), 4000);
+    },
+  });
+
+  const runJobAction = (jobId: string, action: string) => {
+    jobControlMutation.mutate({ jobId, action });
+  };
 
   const tabs = ["overview", "jobs", "queue", "notifications"];
 
@@ -235,18 +274,31 @@ export function WorkflowDashboardPage() {
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Progress</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Language</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">Created</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {(jobs || []).length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       Nenhum job encontrado.
                     </td>
                   </tr>
                 ) : (jobs || []).map((job) => (
                   <tr key={job.id} className="hover:bg-muted/50">
-                    <td className="px-4 py-3 font-medium text-foreground">{job.title}</td>
+                    <td className="px-4 py-3 font-medium text-foreground">
+                      {job.title}
+                      {(job.status === "failed" || job.error_message) && job.error_message && (
+                        <p className="mt-1 max-w-xs truncate text-xs text-destructive" title={job.error_message}>
+                          {job.error_message}
+                        </p>
+                      )}
+                      {job.status === "completed" && job.publication_id && (
+                        <p className="mt-1 text-xs text-muted-foreground" data-testid={`job-publication-${job.id}`}>
+                          Artigo publicado: {job.publication_id.slice(0, 8)}…
+                        </p>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
                     <td className="px-4 py-3 text-muted-foreground">{job.current_step || "---"}</td>
                     <td className="px-4 py-3">
@@ -261,6 +313,44 @@ export function WorkflowDashboardPage() {
                       <span className="rounded bg-muted px-2 py-0.5 text-xs uppercase">{job.language}</span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{new Date(job.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {(job.status === "draft" || job.status === "paused" || job.status === "failed" || job.status === "cancelled") && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => runJobAction(job.id, "start")}
+                            disabled={jobControlMutation.isPending}
+                            data-testid={`job-start-${job.id}`}
+                          >
+                            {job.status === "paused" ? "Resume" : "Start"}
+                          </Button>
+                        )}
+                        {job.status === "running" && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => runJobAction(job.id, "pause")}
+                              disabled={jobControlMutation.isPending}
+                              data-testid={`job-pause-${job.id}`}
+                            >
+                              Pause
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => runJobAction(job.id, "cancel")}
+                              disabled={jobControlMutation.isPending}
+                              data-testid={`job-cancel-${job.id}`}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        )}
+                        {job.status === "completed" && <span className="text-xs text-muted-foreground">Concluído</span>}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -18,18 +18,18 @@ import (
 )
 
 type Service struct {
-	log      *logger.Logger
-	db       *database.Database
-	cache    *cache.Cache
-	repo     *Repository
-	val      *Validator
-	eventBus *kernel.EventBus
-	auditLog *audit.Logger
-	siteDomain string
-	publishGate  PublishGate
-	contentEnhancer ContentEnhancer
-	editorialGate  EditorialGate
-	minPublishScore float64
+	log               *logger.Logger
+	db                *database.Database
+	cache             *cache.Cache
+	repo              *Repository
+	val               *Validator
+	eventBus          *kernel.EventBus
+	auditLog          *audit.Logger
+	siteDomain        string
+	publishGate       PublishGate
+	contentEnhancer   ContentEnhancer
+	editorialGate     EditorialGate
+	minPublishScore   float64
 	minEditorialScore float64
 }
 
@@ -39,15 +39,15 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		pool = db.Pool
 	}
 	return &Service{
-		log:      log,
-		db:       db,
-		cache:    ch,
-		repo:     NewRepository(pool),
-		val:      NewValidator(),
-		auditLog: audit.New(pool, log),
-		siteDomain: "https://example.com",
-		publishGate: nil,
-		minPublishScore: cfg.SEO.MinPublishScore,
+		log:               log,
+		db:                db,
+		cache:             ch,
+		repo:              NewRepository(pool),
+		val:               NewValidator(),
+		auditLog:          audit.New(pool, log),
+		siteDomain:        "https://example.com",
+		publishGate:       nil,
+		minPublishScore:   cfg.SEO.MinPublishScore,
 		minEditorialScore: cfg.Editorial.MinFinalScore,
 	}
 }
@@ -172,6 +172,44 @@ func (s *Service) pool() (database.Pool, error) {
 // --- Publish ---
 
 func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, req PublishRequest) (*PublishResponse, error) {
+	if req.Title == "" && req.PostID != nil {
+		rec, err := s.repo.GetPostForPublish(ctx, siteID, *req.PostID)
+		if err != nil {
+			return nil, err
+		}
+		req.Title = rec.Title
+		if req.Content == "" {
+			req.Content = rec.Content
+		}
+		if req.Excerpt == "" {
+			req.Excerpt = rec.Excerpt
+		}
+		if req.Slug == "" && rec.Slug != "" {
+			req.Slug = rec.Slug
+		}
+		if req.Language == "" && rec.Language != "" {
+			req.Language = rec.Language
+		}
+		for _, f := range []string{"meta_title", "meta_description", "tags", "categories", "featured_image_url", "author_id"} {
+			if v, ok := rec.PostMeta[f]; ok {
+				switch f {
+				case "meta_title":
+					if req.MetaTitle == "" {
+						req.MetaTitle, _ = v.(string)
+					}
+				case "meta_description":
+					if req.MetaDescription == "" {
+						req.MetaDescription, _ = v.(string)
+					}
+				case "featured_image_url":
+					if req.FeaturedImageURL == "" {
+						req.FeaturedImageURL, _ = v.(string)
+					}
+				}
+			}
+		}
+	}
+
 	if req.Title == "" {
 		return nil, ErrTitleRequired
 	}
@@ -713,20 +751,20 @@ func (s *Service) RetryQueueItem(ctx context.Context, siteID, userID uuid.UUID, 
 	}
 
 	updates := map[string]interface{}{
-		"status":     string(QueuePending),
-		"retry_count": item.RetryCount + 1,
+		"status":        string(QueuePending),
+		"retry_count":   item.RetryCount + 1,
 		"error_message": "",
-		"started_at": nil,
-		"completed_at": nil,
+		"started_at":    nil,
+		"completed_at":  nil,
 	}
 	if err := s.repo.UpdateQueueItem(ctx, siteID, itemID, updates); err != nil {
 		return nil, err
 	}
 
 	s.fireEvent(ctx, EventPubQueueRetried, map[string]interface{}{
-		"queue_item_id":  itemID.String(),
-		"site_id":        siteID.String(),
-		"retry_count":    item.RetryCount + 1,
+		"queue_item_id": itemID.String(),
+		"site_id":       siteID.String(),
+		"retry_count":   item.RetryCount + 1,
 	}, siteID)
 
 	return s.repo.GetQueueItem(ctx, siteID, itemID)

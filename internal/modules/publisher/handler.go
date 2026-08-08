@@ -41,7 +41,7 @@ func (h *Handler) Publish(ctx *rest.Context) {
 		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}
-	if req.Title == "" {
+	if req.Title == "" && req.PostID == nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "title is required")
 		return
 	}
@@ -50,6 +50,8 @@ func (h *Handler) Publish(ctx *rest.Context) {
 	if err != nil {
 		if errors.Is(err, ErrTitleRequired) {
 			ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "title is required")
+		} else if errors.Is(err, ErrPostNotFound) {
+			ctx.Error(http.StatusNotFound, "NOT_FOUND", "post not found")
 		} else if errors.Is(err, ErrInvalidLanguage) {
 			ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "language must be 'pt' or 'en'")
 		} else if errors.Is(err, ErrInvalidSlug) {
@@ -483,13 +485,17 @@ func (h *Handler) listWithStatusParams(ctx *rest.Context,
 
 func (h *Handler) ListQueue(ctx *rest.Context) {
 	h.listWithStatusParams(ctx,
-		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) { return h.svc.ListQueue(c, s, st, l, o) },
+		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) {
+			return h.svc.ListQueue(c, s, st, l, o)
+		},
 		"failed to list queue")
 }
 
 func (h *Handler) RetryQueue(ctx *rest.Context) {
 	h.republishOp(ctx, "itemID",
-		func(c context.Context, s, u, id uuid.UUID) (interface{}, error) { return h.svc.RetryQueueItem(c, s, u, id) },
+		func(c context.Context, s, u, id uuid.UUID) (interface{}, error) {
+			return h.svc.RetryQueueItem(c, s, u, id)
+		},
 		ErrQueueItemNotFound, ErrMaxRetriesExceeded,
 		"queue item not found", "max retries exceeded", "failed to retry queue item")
 }
@@ -498,7 +504,9 @@ func (h *Handler) RetryQueue(ctx *rest.Context) {
 
 func (h *Handler) ListSchedules(ctx *rest.Context) {
 	h.listWithStatusParams(ctx,
-		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) { return h.svc.ListSchedules(c, s, st, l, o) },
+		func(c context.Context, s uuid.UUID, st string, l, o int) (interface{}, error) {
+			return h.svc.ListSchedules(c, s, st, l, o)
+		},
 		"failed to list schedules")
 }
 

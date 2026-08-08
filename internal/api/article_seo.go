@@ -64,11 +64,11 @@ type HreflangLink struct {
 // PublicArticleSEO carries the international-SEO + rich-snippet data attached
 // to every public article response.
 type PublicArticleSEO struct {
-	Hreflang        []HreflangLink `json:"hreflang,omitempty"`
-	OgType          string         `json:"og_type,omitempty"`
-	TwitterCard     string         `json:"twitter_card,omitempty"`
-	SchemaJSONLD    []string       `json:"schema_json_ld,omitempty"`
-	SiteSchemaJSONLD []string      `json:"site_schema_json_ld,omitempty"`
+	Hreflang         []HreflangLink `json:"hreflang,omitempty"`
+	OgType           string         `json:"og_type,omitempty"`
+	TwitterCard      string         `json:"twitter_card,omitempty"`
+	SchemaJSONLD     []string       `json:"schema_json_ld,omitempty"`
+	SiteSchemaJSONLD []string       `json:"site_schema_json_ld,omitempty"`
 }
 
 // buildArticleSEO generates hreflang alternates, Open Graph/Twitter card data

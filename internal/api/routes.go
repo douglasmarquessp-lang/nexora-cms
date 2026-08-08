@@ -207,6 +207,7 @@ func registerContentRoutes(r chi.Router, deps *Dependencies) {
 	registerArticlePipelineRoutes(r, deps)
 	registerPublisherRoutes(r, deps)
 	registerSeoEngineRoutes(r, deps)
+	registerResearchRoutes(r, deps)
 	registerWorkflowRoutes(r, deps)
 	registerTranslationRoutes(r, deps)
 	registerFreshnessRoutes(r, deps)
@@ -254,7 +255,7 @@ func registerEditorialRoutes(r chi.Router, deps *Dependencies) {
 	r.Get("/editorial/ai-insights", rest.AdaptHandler(editorialHandler.AIInsights))
 }
 
-func registerResearchRoutes(r chi.Router, deps *Dependencies) { //nolint:unused // kept for future route registration
+func registerResearchRoutes(r chi.Router, deps *Dependencies) {
 	researchHandler := researchModule.NewHandler(deps.ResearchSvc, deps.Log)
 
 	r.Get("/research", rest.AdaptHandler(researchHandler.ListJobs))
@@ -273,7 +274,7 @@ func registerResearchRoutes(r chi.Router, deps *Dependencies) { //nolint:unused 
 	registerWriterRoutes(r, deps)
 }
 
-func registerWriterRoutes(r chi.Router, deps *Dependencies) { //nolint:unused // kept for future route registration
+func registerWriterRoutes(r chi.Router, deps *Dependencies) {
 	writerHandler := writerModule.NewHandler(deps.WriterSvc, deps.Log)
 
 	r.Get("/writer/styles", rest.AdaptHandler(writerHandler.ListStyles))

@@ -188,11 +188,11 @@ func TestPauseJob_NotRunning(t *testing.T) {
 			"id", "site_id", "user_id", "title", "content_type",
 			"language", "target_language", "status", "current_step", "progress",
 			"priority", "word_count", "tone", "audience", "keywords", "style_slug",
-			"source_job_id", "scheduled_for", "error_message", "retry_count",
+			"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
 			"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
 			"cancelled_at", "created_by", "created_at", "updated_at",
 		}).AddRow(uuid.New(), uuid.New(), nil, "test", "article", "pt", "", "draft", "", 0,
-			5, 0, "", "", []string{}, "", nil, nil, "", 0, 3, false, false, nil, nil, nil, nil, nowTime, nowTime))
+			5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, nil, nil, nil, nil, nowTime, nowTime))
 
 	_, err := svc.PauseJob(context.Background(), uuid.New(), uuid.New())
 	if err != ErrJobNotRunning {
@@ -210,11 +210,11 @@ func TestResumeJob_NotPaused(t *testing.T) {
 			"id", "site_id", "user_id", "title", "content_type",
 			"language", "target_language", "status", "current_step", "progress",
 			"priority", "word_count", "tone", "audience", "keywords", "style_slug",
-			"source_job_id", "scheduled_for", "error_message", "retry_count",
+			"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
 			"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
 			"cancelled_at", "created_by", "created_at", "updated_at",
 		}).AddRow(uuid.New(), uuid.New(), nil, "test", "article", "pt", "", "draft", "", 0,
-			5, 0, "", "", []string{}, "", nil, nil, "", 0, 3, false, false, nil, nil, nil, nil, nowTime, nowTime))
+			5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, nil, nil, nil, nil, nowTime, nowTime))
 
 	_, err := svc.ResumeJob(context.Background(), uuid.New(), uuid.New())
 	if err != ErrJobPaused {
@@ -246,7 +246,7 @@ func TestListJobs_Empty(t *testing.T) {
 			"id", "site_id", "user_id", "title", "content_type",
 			"language", "target_language", "status", "current_step", "progress",
 			"priority", "word_count", "tone", "audience", "keywords", "style_slug",
-			"source_job_id", "scheduled_for", "error_message", "retry_count",
+			"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
 			"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
 			"cancelled_at", "created_by", "created_at", "updated_at",
 		}))
@@ -407,6 +407,99 @@ func TestExecuteAction_GenerateArticle_NoDB(t *testing.T) {
 	})
 	if err != ErrDatabaseNotAvail {
 		t.Errorf("expected ErrDatabaseNotAvail, got %v", err)
+	}
+}
+
+func TestExecuteAction_GenerateArticle_AutoStart(t *testing.T) {
+	svc, mock := setupMockDB(t)
+
+	nowTime := now()
+	jobID := uuid.New()
+	siteID := uuid.New()
+	userID := uuid.New()
+	steps := AllWorkflowSteps
+
+mock.ExpectExec(`INSERT INTO workflow_jobs`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "Test Article 2", "article", "pt", "", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	for range steps {
+		mock.ExpectExec(`INSERT INTO workflow_steps`).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	}
+	mock.ExpectExec(`INSERT INTO generation_pipeline_logs`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	jobRow := pgxmock.NewRows([]string{
+		"id", "site_id", "user_id", "title", "content_type",
+		"language", "target_language", "status", "current_step", "progress",
+		"priority", "word_count", "tone", "audience", "keywords", "style_slug",
+		"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
+		"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
+		"cancelled_at", "created_by", "created_at", "updated_at",
+	}).AddRow(jobID, siteID, &userID, "Test Article 2", "article", "pt", "", JobStatus("draft"), "", float64(0),
+		5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, nil, nil, nil, &userID, nowTime, nowTime)
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(pgxmock.AnyArg(), siteID).
+		WillReturnRows(jobRow)
+
+	jobRowStart := pgxmock.NewRows([]string{
+		"id", "site_id", "user_id", "title", "content_type",
+		"language", "target_language", "status", "current_step", "progress",
+		"priority", "word_count", "tone", "audience", "keywords", "style_slug",
+		"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
+		"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
+		"cancelled_at", "created_by", "created_at", "updated_at",
+	}).AddRow(jobID, siteID, &userID, "Test Article 2", "article", "pt", "", JobStatus("draft"), "", float64(0),
+		5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, nil, nil, nil, &userID, nowTime, nowTime)
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(pgxmock.AnyArg(), siteID).
+		WillReturnRows(jobRowStart)
+
+	mock.ExpectExec(`UPDATE workflow_jobs SET status = 'running'`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), jobID, siteID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'running'`).
+		WithArgs(pgxmock.AnyArg(), jobID, pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	mock.ExpectExec(`INSERT INTO workflow_history`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec(`INSERT INTO generation_pipeline_logs`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	runningRow := pgxmock.NewRows([]string{
+		"id", "site_id", "user_id", "title", "content_type",
+		"language", "target_language", "status", "current_step", "progress",
+		"priority", "word_count", "tone", "audience", "keywords", "style_slug",
+		"source_job_id", "publication_id", "scheduled_for", "error_message", "retry_count",
+		"max_retries", "generate_pt", "generate_en", "started_at", "completed_at",
+		"cancelled_at", "created_by", "created_at", "updated_at",
+	}).AddRow(jobID, siteID, &userID, "Test Article 2", "article", "pt", "", JobStatus("running"), "research", float64(0),
+		5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, nowTime, nil, nil, &userID, nowTime, nowTime)
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(pgxmock.AnyArg(), siteID).
+		WillReturnRows(runningRow)
+
+	job, err := svc.ExecuteAction(context.Background(), siteID, userID, AutomationAction{
+		Action: "generate_article",
+		Title:  "Test Article 2",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if job.Status != JobStatusRunning {
+		t.Errorf("expected job to auto-start as running, got %s", job.Status)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
 	}
 }
 

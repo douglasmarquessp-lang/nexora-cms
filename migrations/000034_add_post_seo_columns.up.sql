@@ -1,4 +1,4 @@
--- 000026_add_post_seo_columns.up.sql
+-- 000034_add_post_seo_columns.up.sql
 -- Store the latest SEO audit results on the post itself so the publish gate
 -- and listings can consult scores without joining seo_audits.
 
