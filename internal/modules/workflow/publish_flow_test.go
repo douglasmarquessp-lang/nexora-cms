@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,6 +267,56 @@ func TestExecuteWorkflow_PublisherStepSuccess(t *testing.T) {
 		WithArgs(jobID, siteID).
 		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, 0))
 
+	expectStepsThroughPublisher(t, mock, jobID, pubID)
+
+	// finished: only executed after the publisher step succeeded
+	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
+		WithArgs(jobID, "finished").
+		WillReturnRows(wfStepRow(jobID, "finished", StepStatusPending))
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'running'`).
+		WithArgs(jobID, "finished").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'completed'`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), jobID, "finished").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectExec(`UPDATE workflow_jobs SET current_step`).
+		WithArgs("finished", jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	progressFinal := float64(len(wfMappedSteps)+2) / float64(len(AllWorkflowSteps)) * 100 // 87.5
+	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 ORDER BY created_at ASC`).
+		WithArgs(jobID).
+		WillReturnRows(wfStepsRows(jobID, append(wfMappedSteps, "publisher", "finished")))
+	mock.ExpectExec(`UPDATE workflow_jobs SET progress`).
+		WithArgs(progressFinal, jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, progressFinal))
+
+	// post-loop: job completed
+	mock.ExpectExec(`UPDATE workflow_jobs SET status = 'completed', progress = 100`).
+		WithArgs(jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	svc.executeWorkflowAsync(context.Background(), siteID, jobID)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+	if fake.calls != 1 {
+		t.Errorf("expected PublishGeneratedArticle called exactly once, got %d", fake.calls)
+	}
+	if fake.lastReq == nil || fake.lastReq.Title != "TITULO-UNICO-7" {
+		t.Errorf("expected publish request carrying the job title, got title=%q", fake.lastReq.Title)
+	}
+}
+
+// expectStepsThroughPublisher registers the pgxmock expectations shared by the
+// publish-flow tests: job load, mapped steps (human_writer skipped), publisher
+// step success (publication created), progress calc, and the immediate
+// publication_id persistence on the job row.
+func expectStepsThroughPublisher(t *testing.T, mock pgxmock.PgxPoolIface, jobID, pubID uuid.UUID) {
+	t.Helper()
 	for _, step := range wfMockStepOrder {
 		if step == "human_writer" {
 			// not AI-mapped -> skipped
@@ -306,34 +357,98 @@ func TestExecuteWorkflow_PublisherStepSuccess(t *testing.T) {
 		WithArgs(progressPub, jobID).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
-	// finished: only executed after the publisher step succeeded
+	// publication_id persisted immediately after the publish step succeeds,
+	// so a post-publication stage failure never orphans the job from its article
+	mock.ExpectExec(`UPDATE workflow_jobs SET publication_id`).
+		WithArgs(pubID, jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+}
+
+// reviewFailingProvider wraps a MockProvider and returns a provider error for
+// the final-review prompt ("Review the content for quality...") — the only
+// prompt unique to the "finished" stage. All other stages behave like the
+// mock, so publishing succeeds and only the final review fails.
+type reviewFailingProvider struct {
+	base      *ai.MockProvider
+	reviewHit bool
+}
+
+func (r *reviewFailingProvider) Generate(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
+	if strings.Contains(req.Prompt, "Review the content for quality") {
+		r.reviewHit = true
+		return nil, ai.ErrProviderUnavailable
+	}
+	return r.base.Generate(ctx, req)
+}
+func (r *reviewFailingProvider) GenerateStream(ctx context.Context, req ai.CompletionRequest) (<-chan ai.StreamChunk, error) {
+	return r.base.GenerateStream(ctx, req)
+}
+func (r *reviewFailingProvider) Embeddings(ctx context.Context, input string) (*ai.EmbeddingResult, error) {
+	return r.base.Embeddings(ctx, input)
+}
+func (r *reviewFailingProvider) Summarize(ctx context.Context, req ai.SummarizeRequest) (string, error) {
+	return r.base.Summarize(ctx, req)
+}
+func (r *reviewFailingProvider) Rewrite(ctx context.Context, req ai.RewriteRequest) (string, error) {
+	return r.base.Rewrite(ctx, req)
+}
+func (r *reviewFailingProvider) Classify(ctx context.Context, req ai.ClassifyRequest) (*ai.ClassifyResult, error) {
+	return r.base.Classify(ctx, req)
+}
+func (r *reviewFailingProvider) Health(ctx context.Context) (*ai.HealthStatus, error) {
+	return r.base.Health(ctx)
+}
+func (r *reviewFailingProvider) Name() string {
+	return r.base.Name()
+}
+func (r *reviewFailingProvider) Capabilities() []ai.Capability {
+	return r.base.Capabilities()
+}
+
+// TestExecuteWorkflow_PostPublishFailureCompletesJob guards the guarantee that
+// a failed stage AFTER a successful publish (e.g. the final review hitting a
+// provider outage) never marks the job failed and never loses the
+// publication_id link: the job is completed and the article stays published.
+func TestExecuteWorkflow_PostPublishFailureCompletesJob(t *testing.T) {
+	cfg := &config.Config{}
+	log := logger.New(cfg)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	jobID := uuid.New()
+	siteID := uuid.New()
+	pubID := uuid.New()
+
+	fake := &fakeGeneratedPublisher{pub: &publisher.Publication{ID: pubID, Title: "Artigo Teste"}}
+	svc := NewService(cfg, log, &database.Database{Pool: mock}, nil)
+	svc.publisherSvc = fake
+
+	m := ai.NewManager(ai.DefaultConfig(), log)
+	rp := &reviewFailingProvider{base: ai.NewMockProvider("mock", "mock-model", nil)}
+	m.RegisterProvider(rp, ai.ProviderCfg{Name: "mock", Enabled: true, Priority: 1, Weight: 10})
+	svc.aiManager = m
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, 0))
+
+	expectStepsThroughPublisher(t, mock, jobID, pubID)
+
+	// finished: the final-review stage fails (provider outage)
 	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
 		WithArgs(jobID, "finished").
 		WillReturnRows(wfStepRow(jobID, "finished", StepStatusPending))
 	mock.ExpectExec(`UPDATE workflow_steps SET status = 'running'`).
 		WithArgs(jobID, "finished").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	mock.ExpectExec(`UPDATE workflow_steps SET status = 'completed'`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), jobID, "finished").
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'failed', error_message = \$1`).
+		WithArgs(pgxmock.AnyArg(), jobID, "finished").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	mock.ExpectExec(`UPDATE workflow_jobs SET current_step`).
-		WithArgs("finished", jobID).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	progressFinal := float64(len(wfMappedSteps)+2) / float64(len(AllWorkflowSteps)) * 100 // 87.5
-	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 ORDER BY created_at ASC`).
-		WithArgs(jobID).
-		WillReturnRows(wfStepsRows(jobID, append(wfMappedSteps, "publisher", "finished")))
-	mock.ExpectExec(`UPDATE workflow_jobs SET progress`).
-		WithArgs(progressFinal, jobID).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
-		WithArgs(jobID, siteID).
-		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, progressFinal))
 
-	// post-loop: publication_id persisted then job completed
-	mock.ExpectExec(`UPDATE workflow_jobs SET publication_id`).
-		WithArgs(pubID, jobID).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	// the article was already published: job must be completed, not failed
 	mock.ExpectExec(`UPDATE workflow_jobs SET status = 'completed', progress = 100`).
 		WithArgs(jobID).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -346,7 +461,7 @@ func TestExecuteWorkflow_PublisherStepSuccess(t *testing.T) {
 	if fake.calls != 1 {
 		t.Errorf("expected PublishGeneratedArticle called exactly once, got %d", fake.calls)
 	}
-	if fake.lastReq == nil || fake.lastReq.Title != "TITULO-UNICO-7" {
-		t.Errorf("expected publish request carrying the job title, got title=%q", fake.lastReq.Title)
+	if !rp.reviewHit {
+		t.Error("expected the final-review prompt to have failed the provider")
 	}
 }

@@ -635,6 +635,13 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 				return
 			}
 			publicationID = published
+			if publicationID != nil {
+				_, _ = p.Exec(ctx,
+					`UPDATE workflow_jobs SET publication_id = $1, updated_at = NOW()
+					 WHERE id = $2`,
+					*publicationID, jobID,
+				)
+			}
 			continue
 		}
 
@@ -662,6 +669,16 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 				 WHERE workflow_job_id = $2 AND step_name = $3`,
 				err.Error(), jobID, stepStr,
 			)
+			if publicationID != nil {
+				// The article was already published: a post-publication stage
+				// failure (e.g. the final review) must not mark the job failed.
+				_, _ = p.Exec(ctx,
+					`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+					 WHERE id = $1 AND status = 'running'`,
+					jobID,
+				)
+				return
+			}
 			_, _ = p.Exec(ctx,
 				`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
 				 WHERE id = $2`,
@@ -718,14 +735,6 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 				input.GroundingMetadata = groundingMeta
 			}
 		}
-	}
-
-	if publicationID != nil {
-		_, _ = p.Exec(ctx,
-			`UPDATE workflow_jobs SET publication_id = $1, updated_at = NOW()
-			 WHERE id = $2`,
-			*publicationID, jobID,
-		)
 	}
 
 	_, _ = p.Exec(ctx,
