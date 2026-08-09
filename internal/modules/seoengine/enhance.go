@@ -161,6 +161,24 @@ func buildMetaDescription(title, content, keyword, lang string) string {
 		}
 		line := sep + s
 		if len([]rune(sb.String()+line)) > 160 {
+			// The first sentence alone exceeds the limit (the markdown H1 and
+			// the first paragraph join into a single run). Truncate it at a
+			// word boundary instead of abandoning the description — an empty
+			// meta is scored 0 by the SEO gate even though text exists.
+			if sb.Len() == 0 {
+				runes := []rune(line)
+				cut := 160
+				if cut > len(runes) {
+					cut = len(runes)
+				}
+				chunk := string(runes[:cut])
+				if cut < len(runes) {
+					if idx := strings.LastIndex(chunk, " "); idx > 60 {
+						chunk = chunk[:idx]
+					}
+				}
+				sb.WriteString(chunk)
+			}
 			break
 		}
 		sb.WriteString(line)

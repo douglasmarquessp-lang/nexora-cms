@@ -1392,3 +1392,19 @@
 - (+ workflow `publish_flow_test.go` do Sprint 6.2b, ainda não commitado.)
 
 **Validação:** EXECUTADO — `go build ./...` (0), `go vet ./...` (0), `go test ./internal/ai/... ./internal/modules/seoengine/... ./internal/modules/publisher/... ./internal/modules/workflow/... ./internal/modules/contentgenerator/...` — só as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4). Sem commit. Árvore de trabalho ainda contém o Sprint 6.2b (testes + doc AGENTS.md) não commitado.
+
+### Sprint 6.5 — Teste real no Railway: meta description vazia roubava 10 pts do SEO gate (2026-08-09)
+
+**Contexto (teste real de produção):** workflow `generate_article` com Gemini real falhava no publish: 58.04 (pré-6.4) → 72.45 (pós-6.4 + 3 posts internos publicados no site). Diagnóstico com o analisador local (mesmo código do deploy) sobre o conteúdo real gerado revelou `MetaDescription` **vazia** no `ContentEnhancement` — o gate perdia os 10 pontos de meta em TODO publish automatizado.
+
+**Causa raiz:** `buildMetaDescription` (enhance.go): `stripMarkdown` junta a linha do H1 (`# Título` sem ponto final) com o 1º parágrafo → a 1ª "frase" = título + parágrafo inteiro (324 runes > 160) → o loop dava `break` na primeira iteração sem escrever nada → meta `""`.
+
+**Fix:** quando a 1ª frase sozinha excede 160 runes, truncar a 160 runes em quebra de palavra (`LastIndex(" ")` com mínimo 60) em vez de abandonar a descrição — meta nunca é vazia quando há texto. `publisher` gate analisa meta real.
+
+**Resultado com fix (simulação local com conteúdo real de produção + `ai.NewQualityChecker()`):** OVERALL **82.45 ≥ 80** (title 100, meta 100, headings 90, keyword 100, readability 39.78, internal 100 — enhancer anexou 2 links internos dos posts criados, external 100, eeat 34.75, images 30).
+
+**Testes:** +2 em `enhance_test.go` (`TestBuildMetaDescription_LongFirstSentenceTruncated` — vazio nunca para 1ª frase longa, ≤160, deterministic; `TestBuildMetaDescription_H1JoinedBodySentence` — markdown H1+junto, keyword no meta).
+
+**Validação:** `go build ./...`, `go vet ./...`, `go test ./internal/modules/seoengine/... ./internal/modules/publisher/... ./internal/modules/workflow/...` — tudo já, apenas as 6 falhas pré-existentes de `internal/ai`. Commit `xxxx + push` feitos; Railway precisa redeploy para o teste real validar.
+
+**Notas E2E production:** 3 posts publicados criados via API (`Pixel 9a vs Pixel 8a...`, `Pixel 9a review...`, `Como funciona a IA do Pixel 9a...`) — necessários para `SelectInternalLinks` retornar candidatos (links internos = 10 pts, antes 0).

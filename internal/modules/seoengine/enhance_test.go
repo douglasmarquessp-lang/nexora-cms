@@ -44,6 +44,39 @@ func TestBuildMetaDescription_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestBuildMetaDescription_LongFirstSentenceTruncated(t *testing.T) {
+	title := "Título sem ponto final que se junta ao primeiro parágrafo"
+	longFirst := title + " O primeiro parágrafo inteiro é uma frase longa sem pontuação interna até a última palavra final aqui e continua com muito mais texto para compor o cenário."
+	meta := buildMetaDescription(title, longFirst, "título", "pt")
+	if meta == "" {
+		t.Fatal("expected a meta description even when the first sentence exceeds 160 runes")
+	}
+	runes := len([]rune(meta))
+	if runes > 160 {
+		t.Errorf("meta must not exceed 160 runes, got %d: %q", runes, meta)
+	}
+	if !strings.Contains(strings.ToLower(meta), "título") {
+		t.Errorf("expected the keyword in the truncated meta, got %q", meta)
+	}
+	if got := buildMetaDescription(title, longFirst, "título", "pt"); got != meta {
+		t.Error("truncated meta must be deterministic")
+	}
+}
+
+func TestBuildMetaDescription_H1JoinedBodySentence(t *testing.T) {
+	content := "# Pixel 9a: bateria, preço e câmera do novo celular da Google\n\nA linha A da Google consolidou-se no mercado global de smartphones como uma das melhores opções de custo-benefício para quem busca a experiência pura do Android, atualizações rápidas e, acima de tudo, câmeras de nível topo de linha sem precisar pagar uma fortuna.\n\n## Câmera\n\nA fotografia sempre foi o maior trunfo da linha Pixel."
+	meta := buildMetaDescription("Pixel 9a: bateria, preço e câmera do novo celular da Google", content, "bateria", "pt")
+	if meta == "" {
+		t.Fatal("expected a derived meta for markdown article content")
+	}
+	if len([]rune(meta)) > 160 {
+		t.Errorf("meta too long: %d", len([]rune(meta)))
+	}
+	if !strings.Contains(strings.ToLower(meta), "bateria") {
+		t.Errorf("expected keyword inside the meta, got %q", meta)
+	}
+}
+
 func TestAppendExternalSources(t *testing.T) {
 	links := []ExternalLinkCandidate{
 		{URL: "https://example.gov.br/doc", Title: "Documentação oficial", Domain: "example.gov.br"},
