@@ -543,7 +543,7 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Workf
 	}
 
 	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.started", "job", &jobID,
-		string(job.Status), string(JobStatusRunning), nil, "", &siteID, 0)
+		string(job.Status), string(JobStatusRunning), nil, "", job.UserID, 0)
 	s.addLog(ctx, p, jobID, firstStep, "info", "workflow job started", nil, 0)
 	s.fireEvent(ctx, EventWorkflowStarted, map[string]interface{}{
 		"job_id":  jobID.String(),
@@ -788,7 +788,7 @@ func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteI
 			progress, jobID,
 		)
 		s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.completed", "job", &jobID,
-			string(JobStatusRunning), string(JobStatusFailed), nil, pubErr.Error(), &siteID, 0)
+			string(JobStatusRunning), string(JobStatusFailed), nil, pubErr.Error(), job.UserID, 0)
 		return nil, pubErr
 	}
 
@@ -866,7 +866,7 @@ func (s *Service) transitionJobStatus(ctx context.Context, siteID, jobID uuid.UU
 	}
 
 	s.addHistory(ctx, p, siteID, &jobID, nil, action, "job", &jobID,
-		string(requiredStatus), newStatus, nil, "", &siteID, 0)
+		string(requiredStatus), newStatus, nil, "", job.UserID, 0)
 	s.addLog(ctx, p, jobID, job.CurrentStep, "info", "workflow job "+verb+"d", nil, 0)
 	s.fireEvent(ctx, event, map[string]interface{}{
 		"job_id":  jobID.String(),
@@ -925,7 +925,7 @@ func (s *Service) CancelJob(ctx context.Context, siteID, jobID uuid.UUID, reason
 	}
 
 	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.cancelled", "job", &jobID,
-		string(job.Status), string(JobStatusCancelled), nil, reason, &siteID, 0)
+		string(job.Status), string(JobStatusCancelled), nil, reason, job.UserID, 0)
 	s.addLog(ctx, p, jobID, job.CurrentStep, "warning", fmt.Sprintf("workflow job cancelled: %s", reason), nil, 0)
 	s.fireEvent(ctx, EventWorkflowCancelled, map[string]interface{}{
 		"job_id":  jobID.String(),
@@ -984,7 +984,7 @@ func (s *Service) RetryStep(ctx context.Context, siteID, jobID uuid.UUID, req Re
 	}
 
 	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.retry", "step", nil,
-		string(StepStatusFailed), string(StepStatusRunning), nil, "", &siteID, 0)
+		string(StepStatusFailed), string(StepStatusRunning), nil, "", job.UserID, 0)
 	s.addLog(ctx, p, jobID, stepName, "info", fmt.Sprintf("step retry #%d", newRetryCount), nil, 0)
 	s.fireEvent(ctx, EventWorkflowRetry, map[string]interface{}{
 		"job_id":      jobID.String(),

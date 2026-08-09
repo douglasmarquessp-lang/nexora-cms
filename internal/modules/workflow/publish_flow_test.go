@@ -46,6 +46,8 @@ func workflowAIManager() *ai.Manager {
 	return m
 }
 
+var wfJobUserID = uuid.New()
+
 var wfJobCols = []string{
 	"id", "site_id", "user_id", "title", "content_type",
 	"language", "target_language", "status", "current_step", "progress",
@@ -57,10 +59,9 @@ var wfJobCols = []string{
 
 func wfJobRow(jobID, siteID uuid.UUID, status JobStatus, progress float64) *pgxmock.Rows {
 	now := time.Now()
-	userID := uuid.New()
 	return pgxmock.NewRows(wfJobCols).AddRow(
-		jobID, siteID, &userID, "TITULO-UNICO-7", "article", "pt", "", status, "", progress,
-		5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, now, nil, nil, &userID, now, now,
+		jobID, siteID, &wfJobUserID, "TITULO-UNICO-7", "article", "pt", "", status, "", progress,
+		5, 0, "", "", []string{}, "", nil, nil, nil, "", 0, 3, false, false, now, nil, nil, &wfJobUserID, now, now,
 	)
 }
 
@@ -224,7 +225,7 @@ func TestExecuteWorkflow_PublisherStepFailsOnGate(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO workflow_history`).
 		WithArgs(pgxmock.AnyArg(), siteID, pgxmock.AnyArg(), pgxmock.AnyArg(), "workflow.completed",
 			pgxmock.AnyArg(), pgxmock.AnyArg(), "running", "failed", pgxmock.AnyArg(),
-			pubErrMsg, pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pubErrMsg, &wfJobUserID, int64(0), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	svc.executeWorkflowAsync(context.Background(), siteID, jobID)
