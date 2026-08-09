@@ -1408,3 +1408,15 @@
 **Validação:** `go build ./...`, `go vet ./...`, `go test ./internal/modules/seoengine/... ./internal/modules/publisher/... ./internal/modules/workflow/...` — tudo já, apenas as 6 falhas pré-existentes de `internal/ai`. Commit `xxxx + push` feitos; Railway precisa redeploy para o teste real validar.
 
 **Notas E2E production:** 3 posts publicados criados via API (`Pixel 9a vs Pixel 8a...`, `Pixel 9a review...`, `Como funciona a IA do Pixel 9a...`) — necessários para `SelectInternalLinks` retornar candidatos (links internos = 10 pts, antes 0).
+
+### Sprint 6.5b — Post-publish robustness: review failure ≠ job failed (2026-08-09)
+
+**Cenário real (Railway, artigo publicado):** job `2b6b7eea` passou o SEO gate (meta fix 6.5) e **publicou o artigo** "Pixel 9a: bateria, preço e câmera do novo celular da Google" (publication `92092117`, visível em `GET /articles` público), mas o step `finished` (StageFinalReview, última chamada Gemini da sequência) falhou com `all AI providers failed` (outage/rate-limit transitório) → o job ficou `failed` mesmo com o artigo publicado, e o `publication_id` do job ficou NULL (só no metadata do step).
+
+**Fix (`internal/modules/workflow/service.go`):**
+1. `publication_id` do job persistido IMEDIATAMENTE após o publish no loop (antes era pós-loop — a saída precoce por erro perdia o vínculo).
+2. Falha de stage APÓS publicação (publicationID != nil) não marca mais o job como failed: step fica `failed` + job `completed`/progress 100 (o objetivo — gerar e publicar — foi cumprido); o review falho pode ser re-executado via retry.
+
+**Testes (`publish_flow_test.go`):** helper `expectStepsThroughPublisher` extraído (bloco compartilhado de expectativas) + novo `TestExecuteWorkflow_PostPublishFailureCompletesJob` com `reviewFailingProvider` (MockProvider wrapper que falha só no prompt final-review "Review the content for quality") — asserts: step finished failed, job completed, publish 1×, review prompt realmente atingiu o provider.
+
+**Validação:** `go build/vet` limpos, `go test ./...` só as 6 pré-existentes de `internal/ai`. Commit `e2ce317` + push; Railway precisa redeploy.
