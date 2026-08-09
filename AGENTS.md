@@ -1333,3 +1333,62 @@
   - `POST /research/deep` → **201**; `audit_log` recebe `research.created` com `user_id NULL` (antes: 23503 a cada execução); `user.login` após login real grava com payload `{}` (antes: 23502 null payload).
   - Log do servidor: **zero** "failed to write audit log" / 23503 / 23502 após os fixes.
 - Ainda pendente (fora de escopo, pré-existente): label `low` em domínios fora do allowlist mesmo com reliability 95 gravado no banco (o label é derivado de `ai.ReliabilityOfDomain(url)` independendo do valor persistido).
+
+### Sprint 6.2b — Tests: workflow publish step (gate fail + success) (2026-08-08)
+
+**Objetivo:** Cobertura automatizada para os dois caminhos do publish na automação de workflow (Sprint 6.2): SEO gate bloqueando e publicação com sucesso. Nenhuma mudança de código de produção.
+
+**Novo arquivo `internal/modules/workflow/publish_flow_test.go`:**
+- `fakeGeneratedPublisher` — fake determinístico de `generatedPublisher` com contador de chamadas, resultado e erro configuráveis.
+- `workflowAIManager()` — `ai.Manager` com `MockProvider` (sem rede; stages do pipeline rodam offline; `pe.manager` é dereferenciado sem nil-check — **manager nulo panificaria**, por isso o mock real é obrigatório).
+- Helpers espelhando os SELECTs reais: `wfJobCols`/`wfJobRow` (30 colunas, ordem exata de `getJobByID`), `wfStepCols`/`wfStepRow`/`wfStepsRows` (16 colunas, ordem exata de `listSteps`/`getStepByName`), `wfMockStepOrder` (6 steps na ordem real de execução, com `human_writer` skip no lugar certo) e `expectMappedStep` (sequência getStep→running→completed→current_step→calcProgress→progress→rebuild).
+
+**Testes (2):**
+1. `TestExecuteWorkflow_PublisherStepFailsOnGate` — gate rejeita (erro fake): step publisher `failed` com `error_message` real, job `failed` com `current_step=publisher` e progress 62.5, `finished` **não** executado (nenhuma expectativa de finished — meta não atendida prova o não-uso), `PublishGeneratedArticle` chamado exatamente 1×, history com `running→failed` + mensagem real.
+2. `TestExecuteWorkflow_PublisherStepSuccess` — sucesso: publisher `completed` (progress 75), `finished` executado DEPOIS (87.5), job `completed` com progress 100, `publication_id` persistido por UPDATE após o loop, publish 1× com `Title` do job vindo da linha do banco (sentinela `TITULO-UNICO-7`).
+
+**Pitfalls pgxmock descobertos (debug real, documentados para o futuro):**
+1. **Célula de coluna com dest `*uuid.UUID` DEVE ser ponteiro** (`&userID`), senão o scan refletivo aborta na célula e — como `QueryRow` engole erro de scan silenciosamente — **todas as colunas seguintes ficam zeradas** (sintoma: `job.UserID=<nil>`, `Title=""`, `Status=""`) enquanto id/site_id (dest `uuid.UUID`) continuam corretos. O padrão validado já existia nos testes antigos (`&userID`); `started_at`/`completed_at`/`cancelled_at` com dest `*time.Time` aceitam `now` (time.Time) ou `nil`.
+- `wfStepsRows` NÃO pode marcar `human_writer` como completed: `calcProgress` divide completed-count pelos steps retornados (8), e human_writer é `skipped` — usar lista de steps mapeados para o denominador.
+- Ordem das expectations FIFO = ordem REAL de execução dos steps (human_writer entre writer e editorial_engine), não a ordem arbitrária do loop.
+- Regex de query cruza newlines sem problema (`stripQuery` do pgxmock colapsa whitespace).
+
+**Validação:** `go build ./...` (0), `go vet ./...` (0), `go test ./...` — 33 pacotes ok, apenas as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4). Sem commit.
+
+### Sprint 6.4 — Integridade do artigo no pipeline: Content nunca é o relatório + meta descrição determinística + gate a nível de página (2026-08-08)
+
+**Objetivo:** (1) Diagnostic stages (quality/review/seo) do PipelineExecutor substituíam `Content` pelo relatório do diagnóstico — um caller que publica direto do output publicaria o RELATÓRIO como artigo; (2) gerar meta description determinística no enhancer e entregá-la ao SEO gate; (3) o gate inline deve pontuar o artigo como a página real renderiza (título vira H1 quando o corpo não tem H1); (4) enrich do rascunho no estágio SEO (Introdução H2 + seção Fontes com fontes confiáveis).
+
+**Mudanças no pipeline (`internal/ai/pipeline.go`):**
+- `PipelineResult` ganhou campo `Analysis string` (`json:"analysis,omitempty"`) — o relatório diagnóstico nunca é o artigo; `Content` guarda sempre o artigo publicável.
+- `runQuality` — `Content: text` (artigo original) + `Analysis: result` (relatório completo). Antes: publicava o relatório no lugar do artigo.
+- `runReview` — `Content: sourceText(input)` + `Analysis: result.Content` (mesmo princípio).
+- `runSEO` — reescrito: o artigo em `Content` sofre 2 enriquecimentos determinísticos e as recomendações da IA vão para `Analysis`:
+  1. `ensureIntroHeading` — quando o rascunho não tem nenhum H2 (markdown `##` ou HTML `<h2>`), prefixa `## Introdução\n\n` (PT) / `## Introduction\n\n` (EN) — a página publicada nunca fica sem hierarquia de subheadings.
+  2. `sourcesSection` — quando há `GroundingMetadata.Sources`, anexa `## Fontes\n`/`## Sources\n` com até 5 links markdown de fontes com reliability ≥ 75 (`ai.ReliabilityOfDomain(ExtractDomain(uri))`), título cai para o domínio quando vazio, URIs deduplicadas, vazias ignoradas; sem fontes utilizáveis → `""` (artigo intocado).
+
+**Enhancer (`internal/modules/seoengine/enhance.go`):**
+- `ContentEnhancement.MetaDescription` (novo campo em `publisher/enhance.go`) — `buildMetaDescription(title, content, keyword, lang)`: deriva de forma determinística ≈155 chars (frases-gulosas, ≤160 runes, prioriza frases com a keyword, corta sem quebrar palavra); `""` quando não há texto (a meta vazia pontua 0 no gate — nunca inventa meta).
+- `appendExternalSources` — seção `## Sources`/`## Fontes` com os `ExternalLinkCandidate` confiáveis; `javascript:` URL nunca inclusa; título cai para o domínio; NO-OP sem links.
+- `hasExternalLinks` — só anexa Fontes quando o conteúdo ainda não tem nenhum link externo real (o pipeline já anexa research sources — evita duplicação entre camadas).
+- `EnhanceBeforePublish` agora popula `MetaDescription` e usa `appendExternalSources` condicionado por `hasExternalLinks`.
+
+**Publisher (`internal/modules/publisher/service.go`):**
+- `enhanceContent` retorna `(content, metaDescription string)`; `PublishGeneratedArticle` usa a meta do enhancer quando `pubReq.MetaDescription` vier vazia — o gate de SEO passa a ver meta description real (pontuação correta do analisador).
+- `internal/modules/publisher/gate_test.go` — assinaturas dos 5 testes de `enhanceContent` atualizadas para o 2º retorno.
+
+**Gate a nível de página (`internal/modules/seoengine/service.go`):**
+- `CheckPublishScore` (caminho inline) agora usa `pageContent(title, content)` — quando o corpo não tem H1 (markdown `#` ou HTML `<h1>`), o texto analisado é `# Título\n\n corpo` (a página real renderiza o título como H1); o score de headings reflete a página publicada, não o artefato de armazenamento.
+
+**Workflow (`internal/modules/workflow/service.go`):**
+- `publisherSvc` tipado como interface `generatedPublisher` (só `PublishGeneratedArticle`) — refactor de produção que tornou os testes 6.2b possíveis; `*publisher.Service` satisfaz sem mudanças; lógica de publish movida para dentro do loop em `publishWorkflowJob` (novo método com estados do step e do job).
+- `internal/modules/contentgenerator/service.go` — site de rebuild do input agora também recebe `input.Content = accumulatedContent` (estava faltando no rebuild; só o primeiro site tinha).
+
+**Testes novos (17, todos passando):**
+- `internal/ai/pipeline_enrich_test.go` (6) — `TestRunSEO_KeepsArticleAndAddsSources` (artigo preservado, fonte .gov anexada, fonte low filtrada, recomendações em Analysis), `TestPipelineSEO_AddsIntroHeadingWhenNoH2` (PT), `TestPipelineSEO_KeepsExistingH2`, `TestSourcesSection_FiltersAndCaps` (5 links max, title fallback, dedupe, filtro reliability), `TestSourcesSection_Empty`, `TestEnsureIntroHeading` (EN/PT/h2-existente/vazio).
+- `internal/ai/pipeline_test.go` — 4 asserções atualizadas: "Fact Check" agora verificado em `result.Analysis` + novo assert que `Content` preserva o artigo no quality stage.
+- `internal/modules/seoengine/enhance_test.go` (5) — meta determinística + ≤160 runes + keyword, artigos diferentes → metas diferentes, vazio → vazio, `appendExternalSources` (PT/EN/javascript/fallback titulo/nil), `hasExternalLinks` (md + html + relativo não conta), `EnhanceBeforePublish` gera meta.
+- `internal/modules/seoengine/gate_flow_test.go` (6) — `wellStructuredArticle` fixture: passa o mínimo 80 sem AI nem stored score; segundo tópico também passa; meta vazia derruba abaixo de 80; sem headings perde pontos; sem external links perde pontos; artigo medíocre falha o gate.
+- (+ workflow `publish_flow_test.go` do Sprint 6.2b, ainda não commitado.)
+
+**Validação:** EXECUTADO — `go build ./...` (0), `go vet ./...` (0), `go test ./internal/ai/... ./internal/modules/seoengine/... ./internal/modules/publisher/... ./internal/modules/workflow/... ./internal/modules/contentgenerator/...` — só as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4). Sem commit. Árvore de trabalho ainda contém o Sprint 6.2b (testes + doc AGENTS.md) não commitado.

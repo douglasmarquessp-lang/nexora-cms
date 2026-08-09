@@ -3,6 +3,7 @@ package seoengine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"nexora/internal/modules/publisher"
@@ -55,6 +56,12 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	if len(internal) > 0 {
 		content = appendRelatedLinks(content, internal, lang)
 	}
+	// External sources: only append a References section when the content does
+	// not already carry real https links (the AI pipeline appends research
+	// sources itself) — never duplicate links across layers.
+	if len(external) > 0 && !hasExternalLinks(content) {
+		content = appendExternalSources(content, external, lang)
+	}
 
 	internalI := make([]interface{}, 0, len(internal))
 	for i := range internal {
@@ -76,13 +83,147 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	}
 
 	return &publisher.ContentEnhancement{
-		Content:        content,
-		InternalLinks:  internalI,
-		ExternalLinks:  externalI,
-		GapReport:      gap,
-		TopicAuthority: topicAuth,
-		Suggestions:    suggestions,
+		Content:         content,
+		MetaDescription: buildMetaDescription(in.Title, content, keyword, lang),
+		InternalLinks:   internalI,
+		ExternalLinks:   externalI,
+		GapReport:       gap,
+		TopicAuthority:  topicAuth,
+		Suggestions:     suggestions,
 	}, nil
+}
+
+// hasExternalLinks reports whether the content already contains markdown or
+// HTML links to external (http/https) URLs.
+func hasExternalLinks(content string) bool {
+	for _, m := range markdownLinkRE.FindAllString(content, -1) {
+		if strings.Contains(m, "http://") || strings.Contains(m, "https://") {
+			return true
+		}
+	}
+	return htmlHrefRE.MatchString(content)
+}
+
+// appendExternalSources appends a "Sources"/"Fontes" section with the reliable
+// external links (markdown bullets). Deterministic: same candidates → same
+// output.
+func appendExternalSources(content string, links []ExternalLinkCandidate, lang string) string {
+	if len(links) == 0 {
+		return content
+	}
+	var sb strings.Builder
+	sb.WriteString(strings.TrimSpace(content))
+	sb.WriteString("\n\n")
+	if lang == "en" {
+		sb.WriteString("## Sources\n")
+	} else {
+		sb.WriteString("## Fontes\n")
+	}
+	for _, l := range links {
+		if l.URL == "" || strings.Contains(strings.ToLower(l.URL), "javascript:") {
+			continue
+		}
+		title := l.Title
+		if title == "" {
+			title = l.Domain
+		}
+		sb.WriteString("- [")
+		sb.WriteString(title)
+		sb.WriteString("](")
+		sb.WriteString(l.URL)
+		sb.WriteString(")\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// buildMetaDescription derives a deterministic meta description from the
+// article: first keywords-bearing paragraphs, sentence-greedy up to ~155
+// characters. Returns "" when no text is available (an empty meta is scored 0
+// by the SEO gate — the description is never faked, just honestly derived).
+func buildMetaDescription(title, content, keyword, lang string) string {
+	text := stripMarkdown(content)
+	if text == "" {
+		text = strings.TrimSpace(title)
+	}
+	if text == "" {
+		return ""
+	}
+	sentences := sentencesFrom(text)
+	if len(sentences) == 0 {
+		sentences = []string{text}
+	}
+	var sb strings.Builder
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	for _, s := range sentences {
+		sep := ""
+		if sb.Len() > 0 {
+			sep = " "
+		}
+		line := sep + s
+		if len([]rune(sb.String()+line)) > 160 {
+			break
+		}
+		sb.WriteString(line)
+		// prefer a description that contains the keyword when it appears in
+		// an early sentence; otherwise keep collecting up to the limit.
+		if kw != "" && len([]rune(sb.String())) >= 120 && strings.Contains(strings.ToLower(sb.String()), kw) {
+			break
+		}
+	}
+	result := strings.TrimSpace(sb.String())
+	if len([]rune(result)) > 160 {
+		runes := []rune(result)
+		cut := 160
+		if cut > len(runes) {
+			cut = len(runes)
+		}
+		result = string(runes[:cut])
+		if strings.HasSuffix(result, " ") {
+			result = strings.TrimRight(result, " ")
+		}
+	}
+	return result
+}
+
+var (
+	markdownLinkRE = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
+	htmlHrefRE     = regexp.MustCompile(`(?i)<a[^>]+href=["']?https?://`)
+)
+
+// stripMarkdown removes markdown link syntax, headings, emphasis and line
+// breaks, returning plain text for meta description derivation.
+func stripMarkdown(content string) string {
+	content = markdownLinkRE.ReplaceAllString(content, "$1")
+	content = regexpHeadRE.ReplaceAllString(content, "")
+	content = strings.ReplaceAll(content, "**", "")
+	content = strings.ReplaceAll(content, "__", "")
+	content = strings.TrimSpace(content)
+	lines := strings.Split(content, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			cleaned = append(cleaned, l)
+		}
+	}
+	return strings.Join(cleaned, " ")
+}
+
+var (
+	regexpHeadRE = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+)
+
+// sentencesFrom splits text into trimmed sentences on [.!?] boundaries.
+func sentencesFrom(text string) []string {
+	parts := sentenceSplitRE.Split(text, -1)
+	sentences := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			sentences = append(sentences, p)
+		}
+	}
+	return sentences
 }
 
 // appendRelatedLinks appends a "Related reading" section (in the article's

@@ -26,8 +26,16 @@ type Service struct {
 	eventBus     *kernel.EventBus
 	auditLog     *audit.Logger
 	aiManager    *ai.Manager
-	publisherSvc *publisher.Service
+	publisherSvc generatedPublisher
 	researchSvc  *research.Service
+}
+
+// generatedPublisher is the minimal subset of the publisher service used by
+// the workflow auto-run (PublishGeneratedArticle). Keeping it as an interface
+// makes the publish path unit-testable with a deterministic fake while the
+// real *publisher.Service satisfies it unchanged.
+type generatedPublisher interface {
+	PublishGeneratedArticle(ctx context.Context, req publisher.PublishGeneratedRequest) (*publisher.Publication, error)
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -606,6 +614,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 
 	var accumulatedContent string
 	var groundingMeta *ai.GroundingMetadata
+	var publicationID *uuid.UUID
 
 	for _, step := range AllWorkflowSteps {
 		stepStr := string(step)
@@ -617,6 +626,15 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		}
 
 		if stepState.Status != StepStatusPending && stepState.Status != StepStatusRunning {
+			continue
+		}
+
+		if step == StepPublisher {
+			published, publishErr := s.publishWorkflowJob(ctx, p, siteID, jobID, stepStr, job, accumulatedContent, groundingMeta)
+			if publishErr != nil {
+				return
+			}
+			publicationID = published
 			continue
 		}
 
@@ -695,48 +713,11 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			if s.researchSvc != nil {
 				input.ResearchFn = s.researchFn(siteID)
 			}
+			input.Content = accumulatedContent
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta
 			}
 		}
-	}
-
-	var publicationID *uuid.UUID
-
-	if s.publisherSvc != nil && accumulatedContent != "" {
-		pubReq := publisher.PublishGeneratedRequest{
-			SiteID:   siteID,
-			Title:    job.Title,
-			Content:  accumulatedContent,
-			Language: job.Language,
-			Source:   "workflow",
-		}
-		if len(job.Keywords) > 0 {
-			pubReq.Tags = job.Keywords
-		}
-		pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, pubReq)
-		if pubErr == nil && pub != nil {
-			publicationID = &pub.ID
-			if groundingMeta != nil && s.researchSvc != nil {
-				sources := research.ArticleSourcesFromGrounding(siteID, pub.ID, uuid.Nil, jobID, uuid.Nil, groundingMeta)
-				if len(sources) > 0 {
-					_, _ = s.researchSvc.SaveArticleSources(ctx, sources)
-				}
-			}
-		}
-		if pubErr != nil {
-			s.log.Error("auto-publish failed", "job_id", jobID, "error", pubErr)
-			_, _ = p.Exec(ctx,
-				`UPDATE workflow_jobs SET status = 'failed', error_message = $1, completed_at = NULL, updated_at = NOW()
-				 WHERE id = $2 AND status = 'running'`,
-				pubErr.Error(), jobID,
-			)
-			s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.completed", "job", &jobID,
-				string(JobStatusRunning), string(JobStatusFailed), nil, pubErr.Error(), &siteID, 0)
-			return
-		}
-	} else if s.publisherSvc == nil {
-		s.log.Warn("workflow publisher service not wired, job completed without publishing", "job_id", jobID)
 	}
 
 	if publicationID != nil {
@@ -752,6 +733,99 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		 WHERE id = $1 AND status = 'running'`,
 		jobID,
 	)
+}
+
+// publishWorkflowJob executes the real publisher inside the "publisher" step.
+// It updates the step and the job state itself:
+//   - success: step completed, publication_id returned (persisted by the caller)
+//   - failure: step failed, job failed with current_step = publisher, progress < 100,
+//     history written, and no further step (finished) is executed.
+func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stepStr string, job *WorkflowJob, content string, groundingMeta *ai.GroundingMetadata) (*uuid.UUID, error) {
+	if s.publisherSvc == nil || content == "" {
+		s.log.Warn("workflow publisher not wired or no content available, publisher step skipped", "job_id", jobID)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_steps SET status = 'skipped', updated_at = NOW()
+			 WHERE workflow_job_id = $1 AND step_name = $2`,
+			jobID, stepStr,
+		)
+		return nil, nil
+	}
+
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_steps SET status = 'running', started_at = NOW(), updated_at = NOW()
+		 WHERE workflow_job_id = $1 AND step_name = $2`,
+		jobID, stepStr,
+	)
+
+	pubReq := publisher.PublishGeneratedRequest{
+		SiteID:   siteID,
+		Title:    job.Title,
+		Content:  content,
+		Language: job.Language,
+		Source:   "workflow",
+	}
+	if len(job.Keywords) > 0 {
+		pubReq.Tags = job.Keywords
+	}
+
+	pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, pubReq)
+	if pubErr != nil {
+		s.log.Error("auto-publish failed", "job_id", jobID, "error", pubErr)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_steps SET status = 'failed', error_message = $1, updated_at = NOW()
+			 WHERE workflow_job_id = $2 AND step_name = $3`,
+			pubErr.Error(), jobID, stepStr,
+		)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET status = 'failed', error_message = $1, current_step = $2, updated_at = NOW()
+			 WHERE id = $3 AND status = 'running'`,
+			pubErr.Error(), stepStr, jobID,
+		)
+		progress := s.calcProgress(ctx, p, jobID)
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET progress = $1, updated_at = NOW()
+			 WHERE id = $2`,
+			progress, jobID,
+		)
+		s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.completed", "job", &jobID,
+			string(JobStatusRunning), string(JobStatusFailed), nil, pubErr.Error(), &siteID, 0)
+		return nil, pubErr
+	}
+
+	if groundingMeta != nil && s.researchSvc != nil {
+		sources := research.ArticleSourcesFromGrounding(siteID, pub.ID, uuid.Nil, jobID, uuid.Nil, groundingMeta)
+		if len(sources) > 0 {
+			_, _ = s.researchSvc.SaveArticleSources(ctx, sources)
+		}
+	}
+
+	pubMeta := map[string]interface{}{
+		"publication_id": pub.ID.String(),
+		"ai_source":      "workflow",
+	}
+	pubMetaJSON, _ := json.Marshal(pubMeta)
+	now := time.Now()
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_steps SET status = 'completed', progress = 100,
+		 completed_at = $1, duration_ms = 0, metadata = $2::jsonb, updated_at = $1
+		 WHERE workflow_job_id = $3 AND step_name = $4`,
+		now, string(pubMetaJSON), jobID, stepStr,
+	)
+
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_jobs SET current_step = $1, updated_at = NOW()
+		 WHERE id = $2`,
+		stepStr, jobID,
+	)
+
+	progress := s.calcProgress(ctx, p, jobID)
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_jobs SET progress = $1, updated_at = NOW()
+		 WHERE id = $2`,
+		progress, jobID,
+	)
+
+	return &pub.ID, nil
 }
 
 func (s *Service) PauseJob(ctx context.Context, siteID, jobID uuid.UUID) (*WorkflowJob, error) {

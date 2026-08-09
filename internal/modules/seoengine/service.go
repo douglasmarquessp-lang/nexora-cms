@@ -1718,7 +1718,7 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 	input := ArticleAnalysisInput{
 		Title:           in.Title,
 		MetaDescription: in.MetaDescription,
-		Content:         in.Content,
+		Content:         pageContent(in.Title, in.Content),
 		Keyword:         deriveKeyword(in.Title),
 		Language:        in.Language,
 	}
@@ -1727,6 +1727,20 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 	}
 	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
 	return analysis.OverallScore, nil
+}
+
+// pageContent returns the content text as the published page actually renders
+// it: when the article body has no H1, the page shows the post title as the
+// H1 heading — the analyzer consumes that page-equivalent text so heading
+// scoring reflects the real page, not an artifact of the storage format.
+func pageContent(title, content string) string {
+	if strings.TrimSpace(content) == "" {
+		return content
+	}
+	if markdownH1RE.MatchString(content) || htmlH1RE.MatchString(content) {
+		return content
+	}
+	return "# " + strings.TrimSpace(title) + "\n\n" + content
 }
 
 // --- Helper ---

@@ -22,6 +22,7 @@ type ContentEnhancerInput struct {
 // content plus the intelligence artifacts gathered along the way.
 type ContentEnhancement struct {
 	Content        string        // content with an appended related-links section (when internal links were added)
+	MetaDescription string       // deterministic meta description derived from the content ("" when not derivable)
 	InternalLinks  []interface{} // []seoengine.InternalLinkCandidate, serialized to keep the interface decoupled
 	ExternalLinks  []interface{} // []seoengine.ExternalLinkCandidate
 	GapReport      interface{}   // *seoengine.ContentGapReport

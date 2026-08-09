@@ -268,8 +268,11 @@ func TestPipelineQualityStageWithGroundingMetadata(t *testing.T) {
 	if result.Content == "" {
 		t.Error("expected non-empty content")
 	}
-	if !strings.Contains(result.Content, "Fact Check") {
+	if !strings.Contains(result.Analysis, "Fact Check") {
 		t.Error("expected fact check results when grounding metadata provided")
+	}
+	if result.Content != "This is a mock source snippet for testing. Artificial intelligence is transforming industries worldwide. Another mock source for grounding tests." {
+		t.Error("quality stage must preserve the article in Content, never replace it with the report")
 	}
 }
 
@@ -289,7 +292,7 @@ func TestPipelineQualityStageWithoutGrounding(t *testing.T) {
 	if result.Content == "" {
 		t.Error("expected non-empty content")
 	}
-	if strings.Contains(result.Content, "Fact Check") {
+	if strings.Contains(result.Analysis, "Fact Check") {
 		t.Error("expected no fact check when no grounding metadata provided")
 	}
 }
@@ -311,7 +314,7 @@ func TestPipelineQualityStageWithEmptyGroundingMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteStage quality with empty grounding failed: %v", err)
 	}
-	if !strings.Contains(result.Content, "Fact Check") {
+	if !strings.Contains(result.Analysis, "Fact Check") {
 		t.Error("expected fact check result even with unverified/empty grounding")
 	}
 }
@@ -347,7 +350,7 @@ func TestPipelineResearchToQualityGroundingFlow(t *testing.T) {
 	if qualityResult.Content == "" {
 		t.Error("expected non-empty quality result")
 	}
-	if !strings.Contains(qualityResult.Content, "Fact Check") {
+	if !strings.Contains(qualityResult.Analysis, "Fact Check") {
 		t.Error("expected fact check when research grounding metadata propagated to quality")
 	}
 }

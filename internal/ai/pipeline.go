@@ -3,8 +3,14 @@ package ai
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
+)
+
+var (
+	markdownH2RE = regexp.MustCompile(`(?m)^##\s+.+$`)
+	htmlH2RE     = regexp.MustCompile(`(?i)<h2[^>]*>.*?</h2>`)
 )
 
 type PipelineStage int
@@ -91,6 +97,11 @@ type PipelineInput struct {
 type PipelineResult struct {
 	Stage             PipelineStage      `json:"stage"`
 	Content           string             `json:"content"`
+	// Analysis carries the stage's diagnostic report (e.g. quality check,
+	// final review, SEO recommendations). It is never the article itself:
+	// downstream callers publish Content, so diagnostic stages must keep the
+	// article in Content and move their reports here.
+	Analysis          string             `json:"analysis,omitempty"`
 	Error             error              `json:"error,omitempty"`
 	Duration          time.Duration      `json:"duration,omitempty"`
 	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
@@ -414,10 +425,87 @@ func (pe *PipelineExecutor) runSEO(ctx context.Context, input PipelineInput) (*P
 		return nil, err
 	}
 
+	// Enrichment stage: the article stays the Content. We add:
+	//   1. an "Introduction" H2 when the draft has no subheadings yet, so the
+	//      published page always has a real H2 structure;
+	//   2. a real "Sources" section with markdown links to the research
+	//      grounding sources (reliability >= 75) when available.
+	// The AI's SEO recommendations go to Analysis (diagnostic, not published).
+	base := sourceText(input)
+	article := ensureIntroHeading(base, input.Language)
+	if sources := sourcesSection(input.GroundingMetadata, input.Language); sources != "" {
+		article = strings.TrimSpace(article) + "\n\n" + sources
+	}
+
 	return &PipelineResult{
-		Stage:   StageSEOGen,
-		Content: result.Content,
+		Stage:    StageSEOGen,
+		Content:  article,
+		Analysis: result.Content,
 	}, nil
+}
+
+// sourcesSection renders markdown links to the research sources with
+// reliability >= 80 (verified/official: news agencies, official sites, docs).
+// Returns "" when there are no usable sources so the article stays untouched.
+// External URLs are deduplicated against the article text.
+func sourcesSection(gm *GroundingMetadata, lang string) string {
+	if gm == nil || len(gm.Sources) == 0 {
+		return ""
+	}
+	heading := "## Fontes\n"
+	if lang == "en" {
+		heading = "## Sources\n"
+	}
+	var sb strings.Builder
+	sb.WriteString(heading)
+	count := 0
+	seen := map[string]bool{}
+	for _, src := range gm.Sources {
+		if src.URI == "" || seen[src.URI] {
+			continue
+		}
+		domain := ExtractDomain(src.URI)
+		score, _ := ReliabilityOfDomain(domain)
+		if score < 75 {
+			continue
+		}
+		seen[src.URI] = true
+		title := src.Title
+		if title == "" {
+			title = domain
+		}
+		sb.WriteString("- [")
+		sb.WriteString(title)
+		sb.WriteString("](")
+		sb.WriteString(src.URI)
+		sb.WriteString(")\n")
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// ensureIntroHeading prepends a real H2 "Introduction" when the article has no
+// H2 subheading yet — articles that reach the SEO stage without any structure
+// get an honest structural heading instead of staying heading-less.
+func ensureIntroHeading(content, lang string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	if markdownH2RE.MatchString(trimmed) || htmlH2RE.MatchString(trimmed) {
+		return content
+	}
+	heading := "## Introdução\n\n"
+	if lang == "en" {
+		heading = "## Introduction\n\n"
+	}
+	return heading + trimmed
 }
 
 func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
@@ -459,8 +547,9 @@ func (pe *PipelineExecutor) runQuality(ctx context.Context, input PipelineInput)
 	}
 
 	return &PipelineResult{
-		Stage:   StageQualityCheck,
-		Content: result,
+		Stage:    StageQualityCheck,
+		Content:  text,
+		Analysis: result,
 	}, nil
 }
 
@@ -485,6 +574,9 @@ func (pe *PipelineExecutor) runTranslation(ctx context.Context, input PipelineIn
 	}, nil
 }
 
+// runReview runs the final review on the article. The article is preserved in
+// Content; the review report goes to Analysis so callers that publish straight
+// from the pipeline output never lose the draft to a diagnostic report.
 func (pe *PipelineExecutor) runReview(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeRevision, map[string]string{
 		"content":      sourceText(input),
@@ -501,8 +593,9 @@ func (pe *PipelineExecutor) runReview(ctx context.Context, input PipelineInput) 
 	}
 
 	return &PipelineResult{
-		Stage:   StageFinalReview,
-		Content: result.Content,
+		Stage:    StageFinalReview,
+		Content:  sourceText(input),
+		Analysis: result.Content,
 	}, nil
 }
 

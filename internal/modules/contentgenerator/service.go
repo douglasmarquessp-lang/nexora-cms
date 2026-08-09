@@ -543,6 +543,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			if s.researchSvc != nil {
 				input.ResearchFn = s.researchFn(siteID)
 			}
+			input.Content = accumulatedContent
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta
 			}

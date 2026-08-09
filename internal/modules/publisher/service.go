@@ -108,10 +108,11 @@ func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, post
 }
 
 // enhanceContent runs the registered content enhancer and returns the possibly
-// enhanced content. Fails open: on any error the content is returned unchanged.
-func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string) string {
+// enhanced content plus the generated meta description ("" when the enhancer
+// produced none). Fails open: on any error the content is returned unchanged.
+func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string) (string, string) {
 	if s.contentEnhancer == nil || strings.TrimSpace(content) == "" {
-		return content
+		return content, ""
 	}
 	out, err := s.contentEnhancer.EnhanceBeforePublish(ctx, ContentEnhancerInput{
 		SiteID:   siteID,
@@ -124,12 +125,12 @@ func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *
 	})
 	if err != nil {
 		s.log.Warn("content enhancement failed, publishing original", "error", err)
-		return content
+		return content, ""
 	}
 	if out == nil || strings.TrimSpace(out.Content) == "" {
-		return content
+		return content, ""
 	}
-	return out.Content
+	return out.Content, out.MetaDescription
 }
 
 func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang, metaDescription string) error {
@@ -357,7 +358,11 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 		pubReq.Language = "pt"
 	}
 	keyword := deriveKeyword(req.Title)
-	pubReq.Content = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)
+	var enhMeta string
+	pubReq.Content, enhMeta = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)
+	if pubReq.MetaDescription == "" {
+		pubReq.MetaDescription = enhMeta
+	}
 	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, pubReq.MetaDescription); err != nil {
 		return nil, err
 	}
