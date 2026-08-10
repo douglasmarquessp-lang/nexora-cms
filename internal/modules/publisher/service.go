@@ -15,6 +15,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitelang"
 )
 
 type Service struct {
@@ -223,6 +224,9 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	if lang != "pt" && lang != "en" {
 		return nil, ErrInvalidLanguage
 	}
+	// Site-level pin (e.g. AIWorkSimple = English-only): the override wins,
+	// so a publication for that site is always created in "en".
+	lang = sitelang.Resolve(siteID, lang)
 
 	vis := req.Visibility
 	if vis == "" {
@@ -354,9 +358,10 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 		Categories:       req.Categories,
 		Source:           coalesceStr(req.Source, "generated"),
 	}
-	if req.Language == "" {
-		pubReq.Language = "pt"
-	}
+	// Site-level pin (e.g. AIWorkSimple = English-only): generated content
+	// is always published in the site's pinned language when no explicit
+	// language was requested.
+	pubReq.Language = sitelang.Resolve(req.SiteID, req.Language)
 	keyword := deriveKeyword(req.Title)
 	var enhMeta string
 	pubReq.Content, enhMeta = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)

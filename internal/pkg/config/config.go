@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
@@ -25,9 +26,12 @@ type Config struct {
 	Freshness FreshnessConfig
 	Editorial EditorialConfig
 	Revalidate RevalidateConfig
-	Debug     bool
-	LogLevel  string
-	LogFormat string
+	// SitesWhitelist restricts which sites are returned by GET /sites (the
+	// Admin site selector). Comma-separated site UUIDs; empty = all sites.
+	SitesWhitelist []string
+	Debug          bool
+	LogLevel       string
+	LogFormat      string
 	// MigrationsDir is the directory containing the SQL migration files.
 	// It must remain reachable at runtime, so the deploy image ships the
 	// migrations folder next to the API binary.
@@ -328,6 +332,11 @@ func Load() (*Config, error) {
 		Timeout:    getEnvDuration("SITE_REVALIDATE_TIMEOUT", 5*time.Second),
 	}
 
+	// SITES_WHITELIST: when set, only these sites are listed by GET /sites
+	// (Admin site selector). Empty = all sites (default behavior). Invalid
+	// entries are dropped so a malformed value never breaks the API.
+	cfg.SitesWhitelist = validSiteIDs(getEnvCSV("SITES_WHITELIST"))
+
 	if cfg.Auth.JWTSecret == "change-me-to-a-random-64-char-string" {
 		return nil, errDefaultJWTSecret
 	}
@@ -411,6 +420,19 @@ func splitCSV(raw string) []string {
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// validSiteIDs keeps only well-formed UUID entries from a comma-separated
+// site whitelist. Malformed entries are dropped so a typo in SITES_WHITELIST
+// never breaks the sites listing.
+func validSiteIDs(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	for _, id := range raw {
+		if _, err := uuid.Parse(id); err == nil {
+			out = append(out, id)
 		}
 	}
 	return out

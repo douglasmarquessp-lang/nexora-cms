@@ -17,6 +17,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitelang"
 )
 
 type Service struct {
@@ -96,10 +97,7 @@ func (s *Service) CreateJob(ctx context.Context, siteID, userID uuid.UUID, req C
 	if req.Title == "" {
 		return nil, ErrInvalidTitle
 	}
-	lang := req.Language
-	if lang == "" {
-		lang = "pt"
-	}
+	lang := sitelang.Resolve(siteID, req.Language)
 	if lang != "pt" && lang != "en" {
 		return nil, ErrInvalidLanguage
 	}
@@ -1377,7 +1375,7 @@ func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, a
 	case "generate_article":
 		job, err := s.CreateJob(ctx, siteID, userID, CreateJobRequest{
 			Title:    coalesceStr(action.Title, "New Article"),
-			Language: "pt",
+			Language: sitelang.Resolve(siteID, ""),
 		})
 		if err != nil {
 			return nil, err
@@ -1387,7 +1385,7 @@ func (s *Service) ExecuteAction(ctx context.Context, siteID, userID uuid.UUID, a
 	case "generate_pt_en":
 		job, err := s.CreateJob(ctx, siteID, userID, CreateJobRequest{
 			Title:      coalesceStr(action.Title, "New Article"),
-			Language:   "pt",
+			Language:   sitelang.Resolve(siteID, ""),
 			GeneratePT: true,
 			GenerateEN: true,
 		})

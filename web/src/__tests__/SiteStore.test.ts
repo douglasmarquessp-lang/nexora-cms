@@ -7,6 +7,16 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
+// Mock the site-selection config. The array is mutated per-test so existing
+// tests keep the default behavior (empty whitelist = no restriction) while
+// dedicated tests exercise the AIWorkSimple-only restriction.
+const siteSelectionMock = vi.hoisted(() => ({
+  ADMIN_ALLOWED_SITE_IDS: [] as string[],
+}));
+vi.mock("@/config/siteSelection", () => siteSelectionMock);
+
+const AIWORK_SIMPLE_ID = "a64d7d72-b97f-4f31-96fd-8aeb15f6184c";
+
 // Mock localStorage
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -42,6 +52,7 @@ async function resetStore() {
 describe("SiteStore", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    siteSelectionMock.ADMIN_ALLOWED_SITE_IDS.length = 0;
     localStorageMock.clear();
     await resetStore();
   });
@@ -341,5 +352,58 @@ describe("SiteStore", () => {
     expect(state.sites).toHaveLength(1);
     expect(state.status).toBe("success");
     expect(localStorageMock.getItem("current_site_id")).toBe("site-b");
+  });
+
+  it("keeps only the Admin allowed sites when the whitelist is set", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    siteSelectionMock.ADMIN_ALLOWED_SITE_IDS.push(AIWORK_SIMPLE_ID);
+    (api.get as any).mockResolvedValue(
+      listResponse([site("site-other"), site(AIWORK_SIMPLE_ID, "AIWorkSimple")])
+    );
+
+    await useSiteStore.getState().fetchSites();
+
+    const state = useSiteStore.getState();
+    expect(state.sites).toHaveLength(1);
+    expect(state.sites[0]?.id).toBe(AIWORK_SIMPLE_ID);
+    expect(state.currentSite?.id).toBe(AIWORK_SIMPLE_ID);
+    expect(state.status).toBe("success");
+  });
+
+  it("never selects a non-allowed site, even when it is the first returned", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    siteSelectionMock.ADMIN_ALLOWED_SITE_IDS.push(AIWORK_SIMPLE_ID);
+    (api.get as any).mockResolvedValue(
+      listResponse([site("site-other"), site(AIWORK_SIMPLE_ID, "AIWorkSimple")])
+    );
+
+    await useSiteStore.getState().fetchSites();
+
+    const state = useSiteStore.getState();
+    expect(state.sites.find((s) => s.id === "site-other")).toBeUndefined();
+    expect(state.currentSite?.id).toBe(AIWORK_SIMPLE_ID);
+    expect(localStorageMock.getItem("current_site_id")).toBe(AIWORK_SIMPLE_ID);
+  });
+
+  it("drops a persisted site that is no longer allowed and restores the first allowed one", async () => {
+    const { useSiteStore } = await import("@/stores/site");
+    const { api } = await import("@/api/client");
+
+    siteSelectionMock.ADMIN_ALLOWED_SITE_IDS.push(AIWORK_SIMPLE_ID);
+    localStorageMock.setItem("current_site_id", "site-other");
+    (api.get as any).mockResolvedValue(
+      listResponse([site("site-other"), site(AIWORK_SIMPLE_ID, "AIWorkSimple")])
+    );
+
+    await useSiteStore.getState().fetchSites();
+
+    const state = useSiteStore.getState();
+    expect(state.currentSite?.id).toBe(AIWORK_SIMPLE_ID);
+    expect(state.sites).toHaveLength(1);
+    expect(localStorageMock.getItem("current_site_id")).toBe(AIWORK_SIMPLE_ID);
   });
 });

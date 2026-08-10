@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/api/client";
+import { ADMIN_ALLOWED_SITE_IDS } from "@/config/siteSelection";
 
 export interface Site {
   id: string;
@@ -80,7 +81,20 @@ export const useSiteStore = create<SiteState>((set, get) => {
    */
   let loadEpoch = 0;
 
-  function applySites(sites: Site[]) {
+  /**
+   * Restricts a site list to the Admin's allowed sites (single source of
+   * truth: `web/src/config/siteSelection.ts`). Empty whitelist = no
+   * restriction. Applied in the single funnel where site lists enter the
+   * store, so the persisted-site restore and the auto-first-site selection
+   * always operate on the allowed subset.
+   */
+  function restrictSites(sites: Site[]): Site[] {
+    if (ADMIN_ALLOWED_SITE_IDS.length === 0) return sites;
+    return sites.filter((s) => ADMIN_ALLOWED_SITE_IDS.includes(s.id));
+  }
+
+  function applySites(rawSites: Site[]) {
+    const sites = restrictSites(rawSites);
     const persisted = loadPersistedSite(sites);
 
     if (persisted) {

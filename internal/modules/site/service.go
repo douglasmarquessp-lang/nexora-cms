@@ -51,6 +51,7 @@ var validSettingTypes = map[string]bool{
 }
 
 type Service struct {
+	cfg      *config.Config
 	log      *logger.Logger
 	db       *database.Database
 	cache    *cache.Cache
@@ -65,6 +66,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 	}
 
 	return &Service{
+		cfg:      cfg,
 		log:      log,
 		db:       db,
 		cache:    ch,
@@ -459,16 +461,26 @@ func (s *Service) ListSites(ctx context.Context, userID uuid.UUID, page, perPage
 
 	offset := (page - 1) * perPage
 
+	where := "deleted_at IS NULL"
+	args := []interface{}{}
+	argIdx := 1
+	if len(s.cfg.SitesWhitelist) > 0 {
+		where += fmt.Sprintf(" AND id = ANY($%d::uuid[])", argIdx)
+		args = append(args, s.cfg.SitesWhitelist)
+		argIdx++
+	}
+	args = append(args, perPage, offset)
+
 	rows, err := p.Query(ctx,
 		`SELECT id, name, slug, COALESCE(description, ''), status, owner_id,
 		        COALESCE(settings::text, '{}'), COALESCE(feature_flags::text, '{}'),
 		        COALESCE(theme, ''), COALESCE(locale, ''), COALESCE(timezone, ''),
 		        created_at, updated_at
 		 FROM sites
-		 WHERE deleted_at IS NULL
+		 WHERE `+where+`
 		 ORDER BY created_at DESC
-		 LIMIT $1 OFFSET $2`,
-		perPage, offset,
+		 LIMIT $`+fmt.Sprintf("%d", argIdx)+` OFFSET $`+fmt.Sprintf("%d", argIdx+1),
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sites: %w", err)
@@ -527,7 +539,13 @@ func (s *Service) ListSites(ctx context.Context, userID uuid.UUID, page, perPage
 	}
 
 	if len(sites) > 0 {
-		if err := p.QueryRow(ctx, `SELECT COUNT(*) FROM sites WHERE deleted_at IS NULL`).Scan(&total); err != nil {
+		countWhere := "deleted_at IS NULL"
+		countArgs := []interface{}{}
+		if len(s.cfg.SitesWhitelist) > 0 {
+			countWhere += " AND id = ANY($1::uuid[])"
+			countArgs = append(countArgs, s.cfg.SitesWhitelist)
+		}
+		if err := p.QueryRow(ctx, `SELECT COUNT(*) FROM sites WHERE `+countWhere, countArgs...).Scan(&total); err != nil {
 			return nil, fmt.Errorf("failed to count sites: %w", err)
 		}
 	} else {

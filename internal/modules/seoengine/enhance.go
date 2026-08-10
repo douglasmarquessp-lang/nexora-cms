@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"nexora/internal/pkg/sitelang"
 	"nexora/internal/modules/publisher"
 )
 
@@ -22,10 +23,7 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 		return nil, nil
 	}
 
-	lang := in.Language
-	if lang == "" {
-		lang = "pt"
-	}
+	lang := sitelang.Resolve(in.SiteID, in.Language)
 	keyword := deriveKeyword(in.Title)
 	if in.Keyword != "" {
 		keyword = in.Keyword

@@ -17,6 +17,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitelang"
 	"nexora/internal/modules/publisher"
 	"nexora/internal/modules/research"
 )
@@ -128,7 +129,7 @@ func (s *Service) CreatePipeline(ctx context.Context, siteID, userID uuid.UUID, 
 	if req.Title == "" {
 		return nil, ErrInvalidTitle
 	}
-	lang := coalesceStr(req.Language, "pt")
+	lang := sitelang.Resolve(siteID, req.Language)
 	if lang != "pt" && lang != "en" {
 		return nil, ErrInvalidLanguage
 	}

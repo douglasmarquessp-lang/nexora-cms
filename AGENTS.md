@@ -1420,3 +1420,35 @@
 **Testes (`publish_flow_test.go`):** helper `expectStepsThroughPublisher` extraído (bloco compartilhado de expectativas) + novo `TestExecuteWorkflow_PostPublishFailureCompletesJob` com `reviewFailingProvider` (MockProvider wrapper que falha só no prompt final-review "Review the content for quality") — asserts: step finished failed, job completed, publish 1×, review prompt realmente atingiu o provider.
 
 **Validação:** `go build/vet` limpos, `go test ./...` só as 6 pré-existentes de `internal/ai`. Commit `e2ce317` + push; Railway precisa redeploy.
+
+### Sprint 6.6 — AIWorkSimple: site único + idioma inglês forçado (2026-08-10)
+
+**Objetivo:** (1) o Admin passa a mostrar/selecionar apenas o site AIWorkSimple (demais sites permanecem no banco, intocados); (2) todo conteúdo gerado/publicado no AIWorkSimple é forçado para inglês — o pin vence mesmo quando o chamador solicita "pt".
+
+**1. Backend — whitelist de sites (`internal/pkg/config/config.go`, `internal/modules/site/service.go`):**
+- `Config.SitesWhitelist []string` + env `SITES_WHITELIST` (CSV; vazio = todos os sites, comportamento padrão preservado). `validSiteIDs()` filtra entradas que não são UUIDs na carga (`github.com/google/uuid` importado no config) — env malformada nunca quebra a API.
+- `site.Service` guarda o `cfg` (novo campo `cfg *config.Config` no struct, setado no `NewService`); `ListSites` aplica o filtro no Postgres: quando a whitelist está setada, a query usa `WHERE s.id = ANY($N::uuid[])` (1º filtro: `deleted_at IS NULL`), count com o MESMO WHERE; quando vazia, query original intacta. O handler/middleware/resposta (formato `{sites, total, ...}`) não mudaram — contratos preservados.
+
+**2. Backend — pin de idioma por site (`internal/pkg/sitelang/sitelang.go` NOVO):**
+- `sitelang.Resolve(siteID, requested)`: site pinado → sempre o idioma do pin (vence inclusive pedido explícito); senão normaliza lower e devolve (vazio → "pt"); valores desconhecidos ("fr") passam CRU para os callers manterem seu `ErrInvalidLanguage` (semântica 400 preservada).
+- Override registrado: AIWorkSimple `a64d7d72-b97f-4f31-96fd-8aeb15f6184c` → "en".
+- **Pontos de aplicação (único lugar central; nenhum outro default hardcoded mudou):**
+  - `publisher/service.go` — `PublishArticle`: `lang = sitelang.Resolve(siteID, lang)` APÓS a validação pt/en (manual + automático via `{post_id}` sem título); `PublishGeneratedArticle`: `pubReq.Language = sitelang.Resolve(req.SiteID, req.Language)` no lugar do `if req.Language == "" { pt }` — o funnel único de publicação cobre workflow/autocontent/contentgenerator/articlepipeline/translation.
+  - `workflow/service.go` — `CreateJob`: `sitelang.Resolve(siteID, req.Language)` no lugar do default pt; `ExecuteAction` `generate_article`/`generate_pt_en`: `Language: sitelang.Resolve(siteID, "")` (nunca mais "pt" hardcoded).
+  - `autocontent/service.go` e `articlepipeline/service.go` — `CreateJob`/`CreatePipeline`: `sitelang.Resolve(siteID, req.Language)`.
+  - `seoengine/enhance.go` — `buildMetaDescription`: `sitelang.Resolve(in.SiteID, in.Language)` (meta description da página publicada segue o pin).
+
+**3. Frontend Admin — seleção restrita (`web/src/config/siteSelection.ts` NOVO + `web/src/stores/site.ts`):**
+- `ADMIN_ALLOWED_SITE_IDS: string[]` = `["a64d7d72-..."]` (AIWorkSimple). Fonte única: vazio = todos os sites.
+- `applySites` agora passa por `restrictSites()` (filtro por `ADMIN_ALLOWED_SITE_IDS`) ANTES de `loadPersistedSite`/auto-first — restore de site persistido que não é permitido cai para o primeiro permitido + corrige o localStorage; `currentSite` nunca é um site fora da whitelist.
+
+**4. Config/docs:**
+- `.env.example` — seção "Admin: seleção de sites" (`SITES_WHITELIST`) + comentário do pin de idioma do AIWorkSimple.
+
+**Testes:**
+- `internal/pkg/sitelang/sitelang_test.go` (4): pin sempre en (incl. "pt"/"PT"/"fr"), site não-pinado honra pt/en + normaliza caixa, vazio → pt, desconhecido passa cru para validação do caller, outro site não é afetado pelo pin.
+- `web/src/__tests__/SiteStore.test.ts` — +3 testes: whitelist setada mantém só o site permitido (e seleciona-o como current), site não-permitido nunca é selecionado mesmo sendo o primeiro retornado, persisted site não-permitido é descartado com fallback + fix do storage. `siteSelectionMock` via `vi.hoisted` (array mutável, resetado no `beforeEach`).
+
+**Validação:** EXECUTADO — `go build ./...` (0), `go vet` (0), `go test ./...` só as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4); suíte frontend 98/98 (95 pré-existentes + 3 novos), `npx tsc -b` (0), `npm run lint` (0 erros, 48 warnings — +3 `as any` nos novos testes, mesmo estilo dos existentes), `npm run build` (0, warning de chunk pré-existente). Nenhum commit feito.
+
+**Notas:** a contagem 99/98 do site.scope usada apenas para seleção no Admin (API continua servindo todos os sites); pin de idioma não se aplica ao site público Next.js (README/vercel.json) — se um dia o site público do AIWorkSimple for deployado, seu fetch deve forçar `X-Site-ID` + `language=en`; `generate_pt_en` continua gerando as duas variantes (a publicação primária sai em en por causa do pin no publisher).
