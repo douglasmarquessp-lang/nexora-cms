@@ -36,6 +36,7 @@ type Service struct {
 	auditLog       *audit.Logger
 	qualityChecker ai.QualityChecker
 	aiManager     *ai.Manager
+	imageProvider ImageProvider
 
 	competitorDomains          []string
 	internalLinkMinScore       int
@@ -78,6 +79,13 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 
 func (s *Service) SetQualityChecker(qc ai.QualityChecker) {
 	s.qualityChecker = qc
+}
+
+// SetImageProvider wires the optional image provider (Pexels) used by the
+// content enhancer to embed a real photograph and its honest alt text into
+// generated articles. Nil (default) disables image enrichment.
+func (s *Service) SetImageProvider(p ImageProvider) {
+	s.imageProvider = p
 }
 
 func (s *Service) SetAIManager(m *ai.Manager) {
@@ -1729,6 +1737,94 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 	return analysis.OverallScore, nil
 }
 
+// CheckPublishScoreWithIssues implements publisher.PublishGateDetailer: same
+// evaluation as CheckPublishScore plus a compact, human-readable list of the
+// audit dimensions that keep the score below the publish minimum. Deterministic.
+func (s *Service) CheckPublishScoreWithIssues(ctx context.Context, in publisher.PublishGateInput) (float64, []string, error) {
+	if in.PostID != nil {
+		p, err := s.pool()
+		if err == nil {
+			var score float64
+			var issuesJSON string
+			qerr := p.QueryRow(ctx,
+				`SELECT seo_score, COALESCE(seo_issues::text, '[]') FROM posts WHERE id = $1 AND site_id = $2 AND seo_analyzed_at IS NOT NULL`,
+				in.PostID, in.SiteID,
+			).Scan(&score, &issuesJSON)
+			if qerr == nil {
+				var stored []AuditIssue
+				if json.Unmarshal([]byte(issuesJSON), &stored) == nil {
+					issues := make([]string, 0, len(stored))
+					for _, is := range stored {
+						if is.Issue != "" {
+							issues = append(issues, is.Issue)
+						}
+					}
+					if len(issues) > 6 {
+						issues = issues[:6]
+					}
+					return score, issues, nil
+				}
+				return score, nil, nil
+			}
+			if qerr != pgx.ErrNoRows {
+				s.log.Warn("publish gate: failed to read stored seo score", "error", qerr)
+			}
+		}
+	}
+
+	input := ArticleAnalysisInput{
+		Title:           in.Title,
+		MetaDescription: in.MetaDescription,
+		Content:         pageContent(in.Title, in.Content),
+		Keyword:         deriveKeyword(in.Title),
+		Language:        in.Language,
+	}
+	if input.Language == "" {
+		input.Language = "pt"
+	}
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	return analysis.OverallScore, buildGateIssues(analysis), nil
+}
+
+// buildGateIssues reports the weighted dimensions scoring below 60/100 (the
+// likely culprits of a blocked publication), newest-failing first, capped at 6.
+// Deterministic and language-neutral ("images: 30/100").
+func buildGateIssues(a *ArticleAnalysis) []string {
+	if a == nil {
+		return nil
+	}
+	type dim struct {
+		name  string
+		score float64
+	}
+	all := []dim{
+		{"title", a.TitleScore},
+		{"meta_description", a.MetaScore},
+		{"headings", a.HeadingScore},
+		{"keyword", a.KeywordScore},
+		{"readability", a.ReadabilityScore},
+		{"internal_links", a.InternalLinksScore},
+		{"external_links", a.ExternalLinksScore},
+		{"eeat", a.EEATScore},
+		{"images", a.ImagesScore},
+		{"slug", a.SlugScore},
+		{"schema", a.SchemaScore},
+	}
+	issues := []string{}
+	for _, d := range all {
+		if d.score < 60 {
+			issues = append(issues, fmt.Sprintf("%s: %.0f/100", d.name, d.score))
+		}
+	}
+	if a.DuplicateCount > 0 {
+		issues = append(issues, fmt.Sprintf("duplicates: %d block(s) found", a.DuplicateCount))
+	}
+	if len(issues) > 6 {
+		issues = issues[:6]
+	}
+	return issues
+}
+
 // pageContent returns the content text as the published page actually renders
 // it: when the article body has no H1, the page shows the post title as the
 // H1 heading — the analyzer consumes that page-equivalent text so heading
@@ -1764,3 +1860,6 @@ func avgKeywordScore(keywords []SEOKeyword) float64 {
 }
 
 
+
+var _ publisher.PublishGate = (*Service)(nil)
+var _ publisher.PublishGateDetailer = (*Service)(nil)

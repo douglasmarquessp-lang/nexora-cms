@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -284,6 +285,12 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	seoengineMod.SetEventBus(k.EventBus())
 	seoengineSvc.SetQualityChecker(aiModule.NewQualityChecker())
 	seoengineSvc.SetAIManager(aiSvc)
+	// Pexels image provider: enriches generated articles with a real photo
+	// (featured image + <img> + ALT + attribution). Disabled when no
+	// PEXELS_API_KEY is configured — articles then publish without images.
+	if strings.TrimSpace(cfg.Pexels.APIKey) != "" {
+		seoengineSvc.SetImageProvider(seoengineModule.NewPexelsClient(cfg.Pexels.APIKey, cfg.Pexels.Timeout))
+	}
 	publisherSvc.SetPublishGate(seoengineSvc)
 	publisherSvc.SetContentEnhancer(seoengineSvc)
 	editorialSvc.SetLinkSuggestor(seoengineSvc)

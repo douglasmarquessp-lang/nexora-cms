@@ -238,6 +238,8 @@ func (h *Handler) StartJob(ctx *rest.Context) {
 			ctx.Error(http.StatusConflict, "CONFLICT", "job already completed")
 		} else if errors.Is(err, ErrJobAlreadyCancelled) {
 			ctx.Error(http.StatusConflict, "CONFLICT", "job already cancelled")
+		} else if errors.Is(err, ErrJobInFailedState) {
+			ctx.Error(http.StatusConflict, "CONFLICT", "job is in failed state; retry the failed step instead")
 		} else {
 			h.log.Error("failed to start workflow job", "error", err)
 			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to start workflow job")

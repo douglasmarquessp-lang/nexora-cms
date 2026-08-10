@@ -110,28 +110,32 @@ func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, post
 
 // enhanceContent runs the registered content enhancer and returns the possibly
 // enhanced content plus the generated meta description ("" when the enhancer
-// produced none). Fails open: on any error the content is returned unchanged.
-func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string) (string, string) {
+// produced none). It also returns the enhancement object itself so callers can
+// persist its artifacts (featured image, internal/external links). Fails open:
+// on any error the content is returned unchanged and enh is nil.
+func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string, featuredURL, featuredAlt string) (string, string, *ContentEnhancement) {
 	if s.contentEnhancer == nil || strings.TrimSpace(content) == "" {
-		return content, ""
+		return content, "", nil
 	}
 	out, err := s.contentEnhancer.EnhanceBeforePublish(ctx, ContentEnhancerInput{
-		SiteID:   siteID,
-		PostID:   postID,
-		Title:    title,
-		Content:  content,
-		Keyword:  keyword,
-		Category: category,
-		Language: lang,
+		SiteID:           siteID,
+		PostID:           postID,
+		Title:            title,
+		Content:          content,
+		Keyword:          keyword,
+		Category:         category,
+		Language:         lang,
+		FeaturedImageURL: featuredURL,
+		FeaturedImageAlt: featuredAlt,
 	})
 	if err != nil {
 		s.log.Warn("content enhancement failed, publishing original", "error", err)
-		return content, ""
+		return content, "", nil
 	}
 	if out == nil || strings.TrimSpace(out.Content) == "" {
-		return content, ""
+		return content, "", nil
 	}
-	return out.Content, out.MetaDescription
+	return out.Content, out.MetaDescription, out
 }
 
 func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang, metaDescription string) error {
@@ -141,19 +145,32 @@ func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID
 	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
 		return nil
 	}
-	score, err := s.publishGate.CheckPublishScore(ctx, PublishGateInput{
+	in := PublishGateInput{
 		SiteID:          siteID,
 		PostID:          postID,
 		Title:           title,
 		Content:         content,
 		Language:        lang,
 		MetaDescription: metaDescription,
-	})
+	}
+	score, err := s.publishGate.CheckPublishScore(ctx, in)
 	if err != nil {
 		s.log.Warn("publish gate evaluation failed, allowing publish", "error", err)
 		return nil
 	}
 	if score < s.minPublishScore {
+		// When the gate can explain itself, surface the concrete audit
+		// issues in the error so operators see exactly what to fix
+		// (e.g. "images: 30/100; internal_links: 0/100").
+		if detailer, ok := s.publishGate.(PublishGateDetailer); ok {
+			if dScore, issues, derr := detailer.CheckPublishScoreWithIssues(ctx, in); derr == nil && dScore == score {
+				msg := fmt.Sprintf("seo score %.2f below minimum %.2f", score, s.minPublishScore)
+				if len(issues) > 0 {
+					msg += ": " + strings.Join(issues, "; ")
+				}
+				return fmt.Errorf("%w: %s", ErrSEOPublishBlocked, msg)
+			}
+		}
 		return fmt.Errorf("%w: seo score %.2f below minimum %.2f", ErrSEOPublishBlocked, score, s.minPublishScore)
 	}
 	return nil
@@ -311,6 +328,15 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	// The social card (og_image) and the featured image must agree: when only
+	// one of them is provided, mirror it onto the other so the public article
+	// page and the social preview always show the same photograph.
+	if pub.OgImage == "" {
+		pub.OgImage = pub.FeaturedImageURL
+	}
+	if pub.FeaturedImageURL == "" {
+		pub.FeaturedImageURL = pub.OgImage
+	}
 
 	if err := s.repo.CreatePublication(ctx, pub); err != nil {
 		return nil, fmt.Errorf("failed to publish article: %w", err)
@@ -364,7 +390,13 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	pubReq.Language = sitelang.Resolve(req.SiteID, req.Language)
 	keyword := deriveKeyword(req.Title)
 	var enhMeta string
-	pubReq.Content, enhMeta = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language)
+	var enh *ContentEnhancement
+	pubReq.Content, enhMeta, enh = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language, req.FeaturedImageURL, "")
+	if enh != nil {
+		if enh.FeaturedImageURL != "" {
+			pubReq.FeaturedImageURL = enh.FeaturedImageURL
+		}
+	}
 	if pubReq.MetaDescription == "" {
 		pubReq.MetaDescription = enhMeta
 	}
@@ -1009,6 +1041,16 @@ var publisherStopWords = map[string]bool{
 	"on": true, "with": true, "is": true, "at": true, "from": true, "by": true,
 	"sobre": true, "entre": true, "como": true, "mais": true, "mas": true,
 	"or": true, "an": true, "be": true, "this": true, "that": true,
+	"new": true, "best": true, "top": true, "guide": true, "review": true,
+	"latest": true, "cheap": true, "free": true, "buy": true, "sale": true,
+	"deal": true, "official": true, "ultimate": true, "complete": true,
+	"amazing": true, "great": true, "good": true, "better": true,
+	"novo": true, "nova": true, "novos": true, "novas": true,
+	"melhor": true, "melhores": true, "gratis": true, "gratuito": true,
+	"gratuita": true, "barato": true, "baratos": true, "comprar": true,
+	"compra": true, "porque": true, "muito": true, "muitos": true,
+	"apenas": true, "somente": true, "nosso": true, "nossa": true,
+	"seus": true, "sua": true, "suas": true,
 }
 
 func stopWord(w string) bool {

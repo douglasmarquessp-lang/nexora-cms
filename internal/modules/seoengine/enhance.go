@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"nexora/internal/pkg/sitelang"
 	"nexora/internal/modules/publisher"
@@ -51,6 +52,27 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	}
 
 	content := in.Content
+	// Featured image: if the caller already knows one, embed it (honest alt
+	// text derived from the title when none was given). Otherwise ask the
+	// image provider (Pexels) for a real photograph — never block publishing
+	// on image fetching: on any error the article proceeds without an image.
+	featuredURL := strings.TrimSpace(in.FeaturedImageURL)
+	featuredAlt := strings.TrimSpace(in.FeaturedImageAlt)
+	if featuredURL == "" && s.imageProvider != nil {
+		img, ierr := s.imageProvider.SearchImage(ctx, keyword)
+		if ierr == nil && img != nil && img.URL != "" {
+			featuredURL = img.URL
+			featuredAlt = strings.TrimSpace(img.Alt)
+			if featuredAlt == "" {
+				featuredAlt = deriveImageAlt(in.Title)
+			}
+			content = embedFeaturedImage(content, img, featuredAlt, lang)
+		} else {
+			s.log.Warn("enhance: image provider failed, publishing without image", "error", ierr)
+		}
+	} else if featuredURL != "" && featuredAlt == "" {
+		featuredAlt = deriveImageAlt(in.Title)
+	}
 	if len(internal) > 0 {
 		content = appendRelatedLinks(content, internal, lang)
 	}
@@ -81,13 +103,15 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	}
 
 	return &publisher.ContentEnhancement{
-		Content:         content,
-		MetaDescription: buildMetaDescription(in.Title, content, keyword, lang),
-		InternalLinks:   internalI,
-		ExternalLinks:   externalI,
-		GapReport:       gap,
-		TopicAuthority:  topicAuth,
-		Suggestions:     suggestions,
+		Content:          content,
+		MetaDescription:  buildMetaDescription(in.Title, content, keyword, lang),
+		InternalLinks:    internalI,
+		ExternalLinks:    externalI,
+		GapReport:        gap,
+		TopicAuthority:   topicAuth,
+		Suggestions:      suggestions,
+		FeaturedImageURL: featuredURL,
+		FeaturedImageAlt: featuredAlt,
 	}, nil
 }
 
@@ -275,3 +299,83 @@ func appendRelatedLinks(content string, links []InternalLinkCandidate, lang stri
 }
 
 var _ publisher.ContentEnhancer = (*Service)(nil)
+
+// embedFeaturedImage inserts an HTML <figure> with the real photograph right
+// after the first paragraph (or at the top when the content has no paragraph
+// boundary). The public site renders article content as HTML, so a native
+// <img> tag displays correctly. Attribution is always included (Pexels
+// license requirement) with rel="nofollow noopener" on the links.
+func embedFeaturedImage(content string, img *PexelsImage, alt, lang string) string {
+	if img == nil || strings.TrimSpace(img.URL) == "" {
+		return content
+	}
+	fig := "Photo by"
+	if lang == "pt" {
+		fig = "Foto de"
+	}
+	photo := strings.TrimSpace(img.Photographer)
+	photoURL := strings.TrimSpace(img.PhotographerURL)
+	var sb strings.Builder
+	sb.WriteString("<figure>")
+	sb.WriteString("<img src=\"")
+	sb.WriteString(img.URL)
+	sb.WriteString("\" alt=\"")
+	sb.WriteString(sanitizeAttr(alt))
+	sb.WriteString("\" loading=\"lazy\" />")
+	if photo != "" {
+		sb.WriteString("<figcaption>")
+		sb.WriteString(fig)
+		sb.WriteString(" <a href=\"")
+		sb.WriteString(photoURL)
+		sb.WriteString("\" rel=\"nofollow noopener\" target=\"_blank\">")
+		sb.WriteString(sanitizeAttr(photo))
+		sb.WriteString("</a> on <a href=\"https://www.pexels.com\" rel=\"nofollow noopener\" target=\"_blank\">Pexels</a></figcaption>")
+	}
+	sb.WriteString("</figure>")
+
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return sb.String()
+	}
+	if idx := strings.Index(trimmed, "\n\n"); idx > 0 {
+		head := strings.TrimSuffix(trimmed[:idx], "\n")
+		rest := strings.TrimPrefix(trimmed[idx:], "\n")
+		return head + "\n\n" + sb.String() + "\n\n" + strings.TrimSpace(rest)
+	}
+	return sb.String() + "\n\n" + trimmed
+}
+
+// sanitizeAttr strips characters that would break an HTML attribute.
+func sanitizeAttr(s string) string {
+	repl := strings.NewReplacer("\"", "&#34;", "<", "&lt;", ">", "&gt;", "\n", " ", "\r", " ")
+	return repl.Replace(strings.TrimSpace(s))
+}
+
+// deriveImageAlt builds an honest, keyword-free alt text from the article
+// title: the cleaned title phrase (punctuation removed, capped at 10 words).
+// Never keyword-stuffed — it describes the subject, exactly what the photo
+// illustrates.
+func deriveImageAlt(title string) string {
+	words := tokenize(title)
+	picked := []string{}
+	for _, w := range words {
+		if stopWords[w] || len(w) < 3 {
+			continue
+		}
+		picked = append(picked, w)
+		if len(picked) >= 10 {
+			break
+		}
+	}
+	if len(picked) == 0 {
+		return strings.TrimSpace(title)
+	}
+	alt := strings.Join(picked, " ")
+	if len([]rune(alt)) > 120 {
+		runes := []rune(alt)
+		alt = string(runes[:117]) + "..."
+	}
+	r := []rune(alt)
+	r[0] = unicode.ToLower(r[0])
+	return string(r)
+}

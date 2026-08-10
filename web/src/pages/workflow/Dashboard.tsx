@@ -191,6 +191,32 @@ export function WorkflowDashboardPage() {
     },
   });
 
+  // Retry re-runs ONLY the failed step (POST /workflow/{id}/retry with the
+  // step name) and relaunches the pipeline — it never re-starts the whole job
+  // like "start" would (a failed job cannot be started again).
+  const jobRetryMutation = useMutation({
+    mutationFn: ({ jobId, stepName }: { jobId: string; stepName: string }) =>
+      api.post(`/workflow/${jobId}/retry`, { step_name: stepName }),
+    onMutate: () => {
+      setActionMsg("");
+    },
+    onSuccess: () => {
+      setActionMsg("Tentando novamente o passo falho...");
+      queryClient.invalidateQueries({ queryKey: ["workflow-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["workflow-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["workflow-metrics"] });
+      setTimeout(() => setActionMsg(""), 4000);
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Falha ao tentar novamente o passo. Verifique os logs.";
+      setActionMsg(msg);
+      setTimeout(() => setActionMsg(""), 4000);
+    },
+  });
+
   const runJobAction = (jobId: string, action: string) => {
     jobControlMutation.mutate({ jobId, action });
   };
@@ -315,7 +341,7 @@ export function WorkflowDashboardPage() {
                     <td className="px-4 py-3 text-muted-foreground">{new Date(job.created_at).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
-                        {(job.status === "draft" || job.status === "paused" || job.status === "failed" || job.status === "cancelled") && (
+                        {(job.status === "draft" || job.status === "paused" || job.status === "cancelled") && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -324,6 +350,17 @@ export function WorkflowDashboardPage() {
                             data-testid={`job-start-${job.id}`}
                           >
                             {job.status === "paused" ? "Resume" : "Start"}
+                          </Button>
+                        )}
+                        {job.status === "failed" && job.current_step && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => jobRetryMutation.mutate({ jobId: job.id, stepName: job.current_step })}
+                            disabled={jobRetryMutation.isPending}
+                            data-testid={`job-retry-${job.id}`}
+                          >
+                            Tentar novamente
                           </Button>
                         )}
                         {job.status === "running" && (

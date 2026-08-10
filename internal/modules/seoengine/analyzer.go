@@ -105,6 +105,36 @@ var (
 		"on": true, "with": true, "is": true, "at": true, "from": true, "by": true,
 		"sobre": true, "entre": true, "como": true, "mais": true, "mas": true,
 		"or": true, "an": true, "be": true, "this": true, "that": true,
+		// Generic/marketing filler words that must never become a focus
+		// keyword (Sprint 6.7): "Pixel 9a Review" must yield "pixel", not
+		// "review".
+		"new": true, "best": true, "top": true, "guide": true, "review": true,
+		"latest": true, "cheap": true, "free": true, "buy": true, "sale": true,
+		"deal": true, "official": true, "ultimate": true, "complete": true,
+		"amazing": true, "great": true, "good": true, "better": true,
+		"have": true, "has": true, "had": true, "are": true, "was": true,
+		"were": true, "been": true, "not": true, "but": true, "all": true,
+		"any": true, "our": true, "your": true, "their": true, "its": true,
+		"about": true, "into": true, "over": true, "under": true, "very": true,
+		"much": true, "many": true, "some": true, "which": true, "when": true,
+		"where": true, "who": true, "them": true, "these": true, "those": true,
+		"just": true, "only": true, "also": true, "than": true, "then": true,
+		"here": true, "there": true, "out": true, "off": true, "up": true,
+		"down": true, "how": true, "what": true, "why": true, "should": true,
+		"will": true, "would": true, "can": true,
+		"novo": true, "nova": true, "novos": true, "novas": true,
+		"melhor": true, "melhores": true, "gratis": true, "gratuito": true,
+		"gratuita": true, "barato": true, "baratos": true, "comprar": true,
+		"compra": true, "porque": true, "muito": true, "muitos": true,
+		"muita": true, "muitas": true, "apenas": true, "somente": true,
+		"nosso": true, "nossa": true, "nossos": true, "nossas": true,
+		"seus": true, "sua": true, "suas": true, "dele": true, "dela": true,
+		"eles": true, "elas": true, "isso": true, "isto": true, "aquilo": true,
+		"esse": true, "essa": true, "este": true, "esta": true, "estes": true,
+		"estas": true, "agora": true, "aqui": true, "ali": true, "onde": true,
+		"quem": true, "qual": true, "quais": true, "pode": true, "podem": true,
+		"deve": true, "devem": true, "sem": true, "ate": true, "desde": true,
+		"sendo": true, "ter": true, "tem": true, "temos": true,
 	}
 )
 

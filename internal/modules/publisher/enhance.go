@@ -16,6 +16,12 @@ type ContentEnhancerInput struct {
 	Keyword  string
 	Category string
 	Language string
+	// FeaturedImageURL is the already-known featured image of the article
+	// (e.g. from the generation pipeline). The enhancer embeds it in the
+	// body when set; otherwise it may fetch one via its image provider.
+	FeaturedImageURL string
+	// FeaturedImageAlt is the honest alt text of the featured image.
+	FeaturedImageAlt string
 }
 
 // ContentEnhancement is what the enhancer returns: the (possibly modified)
@@ -28,6 +34,12 @@ type ContentEnhancement struct {
 	GapReport      interface{}   // *seoengine.ContentGapReport
 	TopicAuthority interface{}   // *seoengine.TopicalAuthorityReport
 	Suggestions    []string      // human-readable PT/EN suggestions
+	// FeaturedImageURL/Alt carry the image the enhancer embedded (or the one
+	// it was given). The publisher persists them onto the publication
+	// (featured_image_url + og_image) so the public page and social cards are
+	// consistent with the stored article.
+	FeaturedImageURL string
+	FeaturedImageAlt string
 }
 
 // ContentEnhancer is implemented by the SEO engine. It may add internal links,

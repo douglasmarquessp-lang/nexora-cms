@@ -517,6 +517,12 @@ func (s *Service) StartJob(ctx context.Context, siteID, jobID uuid.UUID) (*Workf
 		return nil, ErrJobAlreadyCompleted
 	case JobStatusCancelled:
 		return nil, ErrJobAlreadyCancelled
+	case JobStatusFailed:
+		// A failed job must go through RetryStep (which re-runs only the
+		// failed step and relaunches the pipeline). Starting it again would
+		// skip every previously-failed step and could mark the job completed
+		// without a successful publication.
+		return nil, ErrJobInFailedState
 	}
 
 	now := time.Now()
@@ -624,6 +630,16 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		}
 
 		if stepState.Status != StepStatusPending && stepState.Status != StepStatusRunning {
+			// Relaunched pipeline (e.g. after RetryStep): completed steps never
+			// execute again, so their accumulated content is recovered from the
+			// per-step metadata. Without this, the publisher step would see an
+			// empty draft and be skipped, and a retried job could never publish.
+			if stepState.Metadata != nil {
+				if c, ok := stepState.Metadata["ai_content"].(string); ok && c != "" {
+					accumulatedContent = c
+					input.Content = c
+				}
+			}
 			continue
 		}
 
@@ -999,6 +1015,12 @@ func (s *Service) RetryStep(ctx context.Context, siteID, jobID uuid.UUID, req Re
 		"step":        stepName,
 		"retry_count": newRetryCount,
 	}, siteID)
+
+	// The retried step is reset to 'running' — the pipeline must actually
+	// execute it, otherwise the job stays stuck in running forever.
+	if s.aiManager != nil {
+		go s.executeWorkflowAsync(context.Background(), siteID, jobID)
+	}
 
 	return s.getJobByID(ctx, p, siteID, jobID)
 }

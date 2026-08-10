@@ -22,6 +22,7 @@ type Config struct {
 	Cache     CacheConfig
 	AI        AIConfig
 	SEO       SEOConfig
+	Pexels    PexelsConfig
 	Research  ResearchConfig
 	Freshness FreshnessConfig
 	Editorial EditorialConfig
@@ -151,6 +152,17 @@ type SEOConfig struct {
 	// ExternalLinkMinReliability is the minimum reliability score (0-100)
 	// an external source must have to be linked (default 75).
 	ExternalLinkMinReliability int
+}
+
+// PexelsConfig controls the Pexels image provider used to enrich generated
+// articles with a real photograph (featured image + in-body image). The API
+// key is only read from the environment; it is never logged or exposed.
+type PexelsConfig struct {
+	// APIKey is the Pexels API key (PEXELS_API_KEY). Empty disables the
+	// image provider entirely (articles publish without images).
+	APIKey string
+	// Timeout bounds each Pexels search request (default 8s).
+	Timeout time.Duration
 }
 
 // ResearchConfig controls the AI Research Intelligence behavior.
@@ -311,6 +323,11 @@ func Load() (*Config, error) {
 		InternalLinkMinScore:     getEnvInt("SEO_INTERNAL_LINK_MIN_SCORE", 40),
 		InternalLinkMax:          getEnvInt("SEO_INTERNAL_LINK_MAX", 5),
 		ExternalLinkMinReliability: getEnvInt("SEO_EXTERNAL_LINK_MIN_RELIABILITY", 75),
+	}
+
+	cfg.Pexels = PexelsConfig{
+		APIKey:  getEnv("PEXELS_API_KEY", ""),
+		Timeout: getEnvDuration("PEXELS_TIMEOUT", 8*time.Second),
 	}
 
 	cfg.Research = ResearchConfig{

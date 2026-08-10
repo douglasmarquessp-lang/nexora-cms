@@ -369,6 +369,7 @@ var (
 	ErrJobAlreadyRunning    = errors.New("job is already running")
 	ErrJobAlreadyCompleted  = errors.New("job is already completed")
 	ErrJobAlreadyCancelled  = errors.New("job is already cancelled")
+	ErrJobInFailedState     = errors.New("job is in failed state; retry the failed step instead of starting")
 	ErrJobNotRunning        = errors.New("job is not running")
 	ErrJobPaused            = errors.New("job is paused")
 	ErrStepNotFound         = errors.New("step not found")
