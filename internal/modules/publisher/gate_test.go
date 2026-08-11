@@ -3,6 +3,8 @@ package publisher
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -55,6 +57,52 @@ func TestCheckPublishGate_EmptyContent(t *testing.T) {
 	}
 	if fg.got != nil {
 		t.Error("gate must not be consulted for empty content")
+	}
+}
+
+func TestCheckPublishGate_ThresholdBoundaries(t *testing.T) {
+	// Sprint 6.9: the gate boundary must sit exactly at the minimum (default
+	// 70): score >= 70 → allowed, score < 70 → blocked. The blocked error
+	// must always report the current score and the required minimum. The
+	// analyzer itself is untouched — these are pure gate-threshold checks.
+	ctx := context.Background()
+	table := []struct {
+		name  string
+		score float64
+		block bool
+	}{
+		{"69.99 below minimum is blocked", 69.99, true},
+		{"70.00 at minimum is allowed", 70.00, false},
+		{"70.31 above minimum is allowed", 70.31, false},
+		{"65.14 below minimum is blocked", 65.14, true},
+		{"66.53 below minimum is blocked", 66.53, true},
+		{"80.00 far above minimum is allowed", 80.00, false},
+	}
+	for _, tt := range table {
+		t.Run(tt.name, func(t *testing.T) {
+			fg := &fakeGate{score: tt.score}
+			svc := gateSvc(70, fg)
+			err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "meta", "", "")
+			if !tt.block {
+				if err != nil {
+					t.Fatalf("expected publish allowed, got %v", err)
+				}
+				if fg.got == nil || fg.got.Title != "Titulo" {
+					t.Fatalf("unexpected gate input: %+v", fg.got)
+				}
+				return
+			}
+			if !errors.Is(err, ErrSEOPublishBlocked) {
+				t.Fatalf("expected ErrSEOPublishBlocked, got %v", err)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, fmt.Sprintf("%.2f", tt.score)) {
+				t.Errorf("error must report the current score %.2f, got %q", tt.score, msg)
+			}
+			if !strings.Contains(msg, "70.00") {
+				t.Errorf("error must report the minimum 70.00, got %q", msg)
+			}
+		})
 	}
 }
 

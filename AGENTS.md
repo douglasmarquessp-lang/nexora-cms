@@ -1478,3 +1478,19 @@
 **Testes novos (arquivo `internal/modules/seoengine/sprint68_gate_flow_test.go`, 9 testes):** FocusKeyword (EN + PT + case-insensitive + singular-plural + fallback), EnhanceBeforePublish com stubImageProvider (figura <figure><img alt> no corpo → AnalyzeArticle ImagesScore 100 vs 30 baseline + overall ≥ +3pts), caller-provided image embutida, AnalyzeEEAT author-boost (≥10pts), CheckPublishScore página-level (gate ≥80 com fixture real; keyword-stripped degrada), CheckPublishScoreWithIssues (images issue reportada; internal-links NÃO reportada quando links presentes), gate Flow fixtures atualizadas (wellStructured com "marketing de conteúdo"/"inteligência artificial" repetidos → passam; meta ≤160).
 
 **Validação:** EXECUTADO — `go build ./...` (0), `go vet ./...` (0), `go test ./...` 34 pacotes ok; apenas as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4). Integration article real: overall=89.05 title=100 meta=75 headings=90 keyword=100 readability=64 internal=100 external=100 eeat=66.5 images=100. Nenhum commit feito.
+
+### Sprint 6.9 — SEO publish gate threshold 80 → 70 (2026-08-11)
+
+**Objetivo:** desbloquear artigos do AIWorkSimple com SEO Score 70-79 alterando APENAS o threshold do publish gate (80 → 70). Nenhuma mudança no analyzer, pesos, fórmula, critérios ou Pexels/EEAT/keyword (preservados).
+
+**Regra única (produção):** SEO Score >= 70 → publicação permitida; SEO Score < 70 → bloqueada (`ErrSEOPublishBlocked`). Verificado por grep: o gate flui 100% por `cfg.SEO.MinPublishScore` — config.go é a única origem; publisher (`minPublishScore`), workflow (via `PublishGeneratedArticle`) e editorial readiness (`GetPublishReadiness`) leem o mesmo valor. NÃO existe segundo gate com 80.
+
+**Arquivos alterados:**
+- `internal/pkg/config/config.go` — `getEnvFloat("SEO_MIN_PUBLISH_SCORE", 80)` → `70` (env override preservado)
+- `.env.example` — `SEO_MIN_PUBLISH_SCORE=80` → `70`
+
+**Não alterados (verificado):** analyzer/seoengine service (fórmula/pesos/critérios), publisher gate logic (`score < s.minPublishScore`), handler 422 `SEO_SCORE_BELOW_MINIMUM`, mensagem de erro (`seo score %.2f below minimum %.2f` — continua reportando score atual + mínimo), workflow publish step, `editorial/pipeline_test.go` e `intelligence_service_test.go` (fixtures com override explícito 80 — testes de lógica threshold-agnostic, não gates de produção).
+
+**Testes:** `internal/modules/publisher/gate_test.go` — novo `TestCheckPublishGate_ThresholdBoundaries` (tabela com min=70): 69.99 → bloqueado, 70.00 → permitido, 70.31 → permitido, 65.14 → bloqueado, 66.53 → bloqueado, 80.00 → permitido; erro bloqueado contém o score atual e "70.00". Testes existentes do gate já eram parametrizados por `gateSvc(min, gate)` — intactos.
+
+**Validação:** EXECUTADO — `go test ./...` 34 pacotes ok (apenas as 6 falhas pré-existentes de `internal/ai`: rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4), `go build ./...` (0), `go vet ./...` (0). Nenhum commit feito.

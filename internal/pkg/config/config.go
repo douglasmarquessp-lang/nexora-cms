@@ -324,7 +324,7 @@ func Load() (*Config, error) {
 	}
 
 	cfg.SEO = SEOConfig{
-		MinPublishScore:          getEnvFloat("SEO_MIN_PUBLISH_SCORE", 80),
+		MinPublishScore:          getEnvFloat("SEO_MIN_PUBLISH_SCORE", 70),
 		CompetitorDomains:        getEnvCSV("SEO_COMPETITOR_DOMAINS"),
 		InternalLinkMinScore:     getEnvInt("SEO_INTERNAL_LINK_MIN_SCORE", 40),
 		InternalLinkMax:          getEnvInt("SEO_INTERNAL_LINK_MAX", 5),
