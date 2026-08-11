@@ -287,6 +287,12 @@ type PublishGeneratedRequest struct {
 	Categories       []string  `json:"categories,omitempty"`
 	Source           string    `json:"source,omitempty"`
 	SourceJobID      uuid.UUID `json:"source_job_id,omitempty"`
+	// Keyword (optional) is the focus keyword the generation pipeline
+	// identified. Empty → derived deterministically from title+content.
+	Keyword string `json:"keyword,omitempty"`
+	// AuthorName (optional) is the byline used by the EEAT analysis. Empty →
+	// the configured site default author is used.
+	AuthorName string `json:"author_name,omitempty"`
 }
 
 // --- Events ---

@@ -377,6 +377,15 @@ func (pe *PipelineExecutor) runDraft(ctx context.Context, input PipelineInput) (
 	for k, v := range input.Style {
 		styleGuide += fmt.Sprintf(", %s: %s", k, v)
 	}
+	// Writing-style guidance (Sprint 6.8): the generated draft must be
+	// scannable and readable, with a clean heading hierarchy. These are
+	// plain-language instructions — the readability score is never
+	// manipulated, it is earned by the prose the model produces.
+	if input.Language == "en" {
+		styleGuide += ", writing style: short sentences (under 20 words), short paragraphs (2-4 sentences), active voice, plain clear language, avoid long complex words, scannable text, use exactly one H1 (the article title), at least two H2 sections, and at least one H3 subsection"
+	} else {
+		styleGuide += ", estilo de escrita: frases curtas (menos de 20 palavras), parágrafos curtos (2 a 4 frases), voz ativa, linguagem clara e simples, evite palavras longas e complexas, texto escaneável, use exatamente um H1 (o título do artigo), pelo menos dois H2 e pelo menos um H3"
+	}
 
 	req, err := pe.manager.Prompts().Build(ctx, promptID, map[string]string{
 		"title":        input.Title,

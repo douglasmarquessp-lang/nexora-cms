@@ -25,7 +25,7 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	}
 
 	lang := sitelang.Resolve(in.SiteID, in.Language)
-	keyword := deriveKeyword(in.Title)
+	keyword := FocusKeyword(in.Title, in.Content)
 	if in.Keyword != "" {
 		keyword = in.Keyword
 	}
@@ -37,6 +37,16 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	if err != nil {
 		s.log.Warn("enhance: internal link selection failed, continuing", "error", err)
 		internal = nil
+	}
+	if len(internal) == 0 {
+		// First article on a fresh site: no prior content to link to. No fake
+		// links are ever generated; the analyzer scores internal_links with
+		// its baseline (30/100, 10% weight) and the remaining criteria must
+		// compensate for the article to pass the publish gate.
+		s.log.Warn("enhance: no internal link candidates available",
+			"site_id", in.SiteID, "title", in.Title,
+			"impact", "internal_links_score=30; weight=10%",
+		)
 	}
 
 	external, err := s.SelectExternalLinks(ctx, in.SiteID, in.Title, 0, 3)
@@ -70,8 +80,15 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 		} else {
 			s.log.Warn("enhance: image provider failed, publishing without image", "error", ierr)
 		}
-	} else if featuredURL != "" && featuredAlt == "" {
-		featuredAlt = deriveImageAlt(in.Title)
+	} else if featuredURL != "" {
+		// Caller-provided image (e.g. media library): it must still land in
+		// the ARTICLE (as a <figure> with ALT), not only in featured_image_url
+		// metadata — otherwise the analyzer's analyzeImages() never sees it
+		// and the images dimension sits at 30/100 at publish time.
+		if featuredAlt == "" {
+			featuredAlt = deriveImageAlt(in.Title)
+		}
+		content = embedPlainImage(content, featuredURL, featuredAlt)
 	}
 	if len(internal) > 0 {
 		content = appendRelatedLinks(content, internal, lang)
@@ -105,6 +122,7 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	return &publisher.ContentEnhancement{
 		Content:          content,
 		MetaDescription:  buildMetaDescription(in.Title, content, keyword, lang),
+		Keyword:          keyword,
 		InternalLinks:    internalI,
 		ExternalLinks:    externalI,
 		GapReport:        gap,
@@ -332,6 +350,34 @@ func embedFeaturedImage(content string, img *PexelsImage, alt, lang string) stri
 		sb.WriteString("</a> on <a href=\"https://www.pexels.com\" rel=\"nofollow noopener\" target=\"_blank\">Pexels</a></figcaption>")
 	}
 	sb.WriteString("</figure>")
+
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return sb.String()
+	}
+	if idx := strings.Index(trimmed, "\n\n"); idx > 0 {
+		head := strings.TrimSuffix(trimmed[:idx], "\n")
+		rest := strings.TrimPrefix(trimmed[idx:], "\n")
+		return head + "\n\n" + sb.String() + "\n\n" + strings.TrimSpace(rest)
+	}
+	return sb.String() + "\n\n" + trimmed
+}
+
+// embedPlainImage inserts a <figure> with the caller-provided image (no
+// Pexels attribution). Placed right after the first paragraph like
+// embedFeaturedImage, so the image is part of the article body and the
+// analyzer's images dimension sees it.
+func embedPlainImage(content, src, alt string) string {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return content
+	}
+	var sb strings.Builder
+	sb.WriteString("<figure><img src=\"")
+	sb.WriteString(sanitizeAttr(src))
+	sb.WriteString("\" alt=\"")
+	sb.WriteString(sanitizeAttr(alt))
+	sb.WriteString("\" loading=\"lazy\" /></figure>")
 
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {

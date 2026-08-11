@@ -121,7 +121,7 @@ var (
 		"just": true, "only": true, "also": true, "than": true, "then": true,
 		"here": true, "there": true, "out": true, "off": true, "up": true,
 		"down": true, "how": true, "what": true, "why": true, "should": true,
-		"will": true, "would": true, "can": true,
+		"will": true, "would": true, "can": true, "every": true, "each": true,
 		"novo": true, "nova": true, "novos": true, "novas": true,
 		"melhor": true, "melhores": true, "gratis": true, "gratuito": true,
 		"gratuita": true, "barato": true, "baratos": true, "comprar": true,
@@ -599,6 +599,68 @@ func deriveKeyword(title string) string {
 		}
 	}
 	return best
+}
+
+// FocusKeyword derives the article's real focus keyword from the title and
+// body. Deterministic. Ranking, in order:
+//
+//  1. two-word phrases of title terms (inner stopwords allowed, e.g.
+//     "Marketing de Conteúdo" → "marketing de conteudo") that occur in the
+//     body, ranked by occurrence count, then length, then title position;
+//  2. the longest single title term that occurs in the body;
+//  3. deriveKeyword(title) as a last resort.
+//
+// The keyword always exists in the title (and usually repeated in the body),
+// satisfying the analyzer's title/density checks, and it avoids both traps
+// that broke the publish gate: longest-generic-word ("simple", "hours") and
+// rare-phrase-with-one-hit ("every week", "small teams").
+func FocusKeyword(title, body string) string {
+	words := tokenize(title)
+	bodyLower := strings.ToLower(body)
+
+	bestMulti := ""
+	bestMultiCount := 0
+	bestSingle := ""
+	bestSingleCount := 0
+	for i := 0; i < len(words); i++ {
+		if stopWords[words[i]] || len(words[i]) < 2 {
+			continue
+		}
+		// Single-term candidate (fallback tier).
+		c := strings.Count(bodyLower, words[i])
+		if c > bestSingleCount || (c == bestSingleCount && c > 0 && len(words[i]) > len(bestSingle)) {
+			bestSingle, bestSingleCount = words[i], c
+		}
+		// Two-term candidates: extend through inner stopwords, but only
+		// ever count at most two content terms (short, query-like phrases).
+		// Once two content terms are seen, the phrase is complete — a
+		// trailing stopword would never be part of a focus keyword.
+		contentSeen := 1
+		phrase := words[i]
+		for j := i + 1; j < len(words); j++ {
+			if contentSeen == 2 {
+				break
+			}
+			if !stopWords[words[j]] {
+				contentSeen++
+			}
+			phrase += " " + words[j]
+			pc := strings.Count(bodyLower, phrase)
+			if pc > bestMultiCount || (pc == bestMultiCount && pc > 0 && len([]rune(phrase)) > len([]rune(bestMulti))) {
+				bestMulti, bestMultiCount = phrase, pc
+			}
+		}
+	}
+	if bestMulti != "" {
+		// A repeated two-term phrase is the strongest query-like keyword
+		// and beats any single term, even a marginally more frequent one
+		// ("ai tools" over bare "ai").
+		return bestMulti
+	}
+	if bestSingle != "" {
+		return bestSingle
+	}
+	return deriveKeyword(title)
 }
 
 func tokenize(s string) []string {

@@ -42,6 +42,7 @@ type Service struct {
 	internalLinkMinScore       int
 	internalLinkMax            int
 	externalLinkMinReliability int
+	defaultAuthor              string
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -60,6 +61,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		s.internalLinkMinScore = cfg.SEO.InternalLinkMinScore
 		s.internalLinkMax = cfg.SEO.InternalLinkMax
 		s.externalLinkMinReliability = cfg.SEO.ExternalLinkMinReliability
+		s.defaultAuthor = cfg.SEO.DefaultAuthor
 	}
 	if s.internalLinkMinScore == 0 {
 		s.internalLinkMinScore = 40
@@ -1727,13 +1729,24 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 		Title:           in.Title,
 		MetaDescription: in.MetaDescription,
 		Content:         pageContent(in.Title, in.Content),
-		Keyword:         deriveKeyword(in.Title),
+		Keyword:         in.Keyword,
 		Language:        in.Language,
+		AuthorName:      in.AuthorName,
+	}
+	if input.Keyword == "" {
+		input.Keyword = FocusKeyword(in.Title, in.Content)
+	}
+	if input.AuthorName == "" {
+		// Fallback: a configurable default byline so EEAT always sees an
+		// author even when the pipeline did not carry one. Never fabricated
+		// per-article — a single site-level value.
+		input.AuthorName = s.defaultAuthor
 	}
 	if input.Language == "" {
 		input.Language = "pt"
 	}
 	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	logScoreBreakdown(s.log, in.SiteID, in.Title, input.Keyword, analysis)
 	return analysis.OverallScore, nil
 }
 
@@ -1776,8 +1789,15 @@ func (s *Service) CheckPublishScoreWithIssues(ctx context.Context, in publisher.
 		Title:           in.Title,
 		MetaDescription: in.MetaDescription,
 		Content:         pageContent(in.Title, in.Content),
-		Keyword:         deriveKeyword(in.Title),
+		Keyword:         in.Keyword,
 		Language:        in.Language,
+		AuthorName:      in.AuthorName,
+	}
+	if input.Keyword == "" {
+		input.Keyword = FocusKeyword(in.Title, in.Content)
+	}
+	if input.AuthorName == "" {
+		input.AuthorName = s.defaultAuthor
 	}
 	if input.Language == "" {
 		input.Language = "pt"
@@ -1837,6 +1857,46 @@ func pageContent(title, content string) string {
 		return content
 	}
 	return "# " + strings.TrimSpace(title) + "\n\n" + content
+}
+
+// logScoreBreakdown emits the structured per-dimension SEO score so a blocked
+// publication can be diagnosed precisely (Sprint 6.8): every dimension of the
+// weighted score plus the top audit issues. Same input → same output; this is
+// pure observability, no behavior change.
+func logScoreBreakdown(log *logger.Logger, siteID uuid.UUID, title, keyword string, a *ArticleAnalysis) {
+	if log == nil || a == nil {
+		return
+	}
+	issues := make([]string, 0, 8)
+	for _, is := range a.Suggestions {
+		if is.Issue != "" {
+			issues = append(issues, is.Issue)
+			if len(issues) >= 8 {
+				break
+			}
+		}
+	}
+	log.Info("publish gate: seo score breakdown",
+		"site_id", siteID,
+		"title", title,
+		"keyword", keyword,
+		"title_score", round2(a.TitleScore),
+		"meta_score", round2(a.MetaScore),
+		"headings_score", round2(a.HeadingScore),
+		"keyword_score", round2(a.KeywordScore),
+		"readability_score", round2(a.ReadabilityScore),
+		"internal_links_score", round2(a.InternalLinksScore),
+		"external_links_score", round2(a.ExternalLinksScore),
+		"eeat_score", round2(a.EEATScore),
+		"images_score", round2(a.ImagesScore),
+		"overall_score", round2(a.OverallScore),
+		"word_count", a.WordCount,
+		"keyword_density", a.KeywordDensity,
+		"internal_links", a.InternalLinks,
+		"external_links", a.ExternalLinks,
+		"images_with_alt", a.ImagesWithAlt,
+		"issues", issues,
+	)
 }
 
 // --- Helper ---

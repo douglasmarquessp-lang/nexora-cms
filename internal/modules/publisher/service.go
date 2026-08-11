@@ -32,6 +32,7 @@ type Service struct {
 	editorialGate     EditorialGate
 	minPublishScore   float64
 	minEditorialScore float64
+	defaultAuthor     string
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -50,6 +51,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		publishGate:       nil,
 		minPublishScore:   cfg.SEO.MinPublishScore,
 		minEditorialScore: cfg.Editorial.MinFinalScore,
+		defaultAuthor:     cfg.SEO.DefaultAuthor,
 	}
 }
 
@@ -138,7 +140,7 @@ func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *
 	return out.Content, out.MetaDescription, out
 }
 
-func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang, metaDescription string) error {
+func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang, metaDescription, keyword, authorName string) error {
 	if s.publishGate == nil || s.minPublishScore <= 0 {
 		return nil
 	}
@@ -152,6 +154,8 @@ func (s *Service) checkPublishGate(ctx context.Context, siteID uuid.UUID, postID
 		Content:         content,
 		Language:        lang,
 		MetaDescription: metaDescription,
+		Keyword:         keyword,
+		AuthorName:      authorName,
 	}
 	score, err := s.publishGate.CheckPublishScore(ctx, in)
 	if err != nil {
@@ -273,7 +277,7 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	}
 
 	if req.PostID != nil {
-		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang, req.MetaDescription); err != nil {
+		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang, req.MetaDescription, "", ""); err != nil {
 			return nil, err
 		}
 		if err := s.checkEditorialGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
@@ -388,7 +392,7 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	// is always published in the site's pinned language when no explicit
 	// language was requested.
 	pubReq.Language = sitelang.Resolve(req.SiteID, req.Language)
-	keyword := deriveKeyword(req.Title)
+	keyword := req.Keyword // "" → enhancer/gate derive deterministically from title+content
 	var enhMeta string
 	var enh *ContentEnhancement
 	pubReq.Content, enhMeta, enh = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language, req.FeaturedImageURL, "")
@@ -396,11 +400,23 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 		if enh.FeaturedImageURL != "" {
 			pubReq.FeaturedImageURL = enh.FeaturedImageURL
 		}
+		// The enhancer may derive a sharper focus keyword than the caller's;
+		// the gate must evaluate the same keyword the content was enriched
+		// with, so title/keyword/meta/keyword checks stay consistent.
+		if enh.Keyword != "" {
+			keyword = enh.Keyword
+		}
 	}
 	if pubReq.MetaDescription == "" {
 		pubReq.MetaDescription = enhMeta
 	}
-	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, pubReq.MetaDescription); err != nil {
+	// EEAT needs a byline: the explicit author wins, otherwise the site's
+	// configured default author (SEO_DEFAULT_AUTHOR). Never fabricated.
+	author := req.AuthorName
+	if author == "" {
+		author = s.defaultAuthor
+	}
+	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, pubReq.MetaDescription, keyword, author); err != nil {
 		return nil, err
 	}
 	if err := s.checkEditorialGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {

@@ -36,12 +36,12 @@ func TestCheckPublishGate_Disabled(t *testing.T) {
 	ctx := context.Background()
 
 	svc := gateSvc(0, &fakeGate{score: 10})
-	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "T", "C", "pt", ""); err != nil {
+	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "T", "C", "pt", "", "", ""); err != nil {
 		t.Errorf("expected no gate check when min score is 0, got %v", err)
 	}
 
 	svc = gateSvc(80, nil)
-	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "T", "C", "pt", ""); err != nil {
+	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "T", "C", "pt", "", "", ""); err != nil {
 		t.Errorf("expected no gate check without gate, got %v", err)
 	}
 }
@@ -50,7 +50,7 @@ func TestCheckPublishGate_EmptyContent(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGate{score: 10}
 	svc := gateSvc(80, fg)
-	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "", "", "pt", ""); err != nil {
+	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "", "", "pt", "", "", ""); err != nil {
 		t.Errorf("expected skip for empty title/content, got %v", err)
 	}
 	if fg.got != nil {
@@ -63,7 +63,7 @@ func TestCheckPublishGate_BlocksLowScore(t *testing.T) {
 	fg := &fakeGate{score: 55}
 	svc := gateSvc(80, fg)
 
-	err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "")
+	err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "", "", "")
 	if !errors.Is(err, ErrSEOPublishBlocked) {
 		t.Errorf("expected ErrSEOPublishBlocked, got %v", err)
 	}
@@ -78,7 +78,7 @@ func TestCheckPublishGate_AllowsHighScore(t *testing.T) {
 	fg := &fakeGate{score: 95}
 	svc := gateSvc(80, fg)
 
-	if err := svc.checkPublishGate(ctx, uuid.New(), &postID, "Titulo", "Conteúdo", "pt", ""); err != nil {
+	if err := svc.checkPublishGate(ctx, uuid.New(), &postID, "Titulo", "Conteúdo", "pt", "", "", ""); err != nil {
 		t.Errorf("expected publish allowed, got %v", err)
 	}
 	if fg.got == nil || fg.got.PostID == nil || *fg.got.PostID != postID {
@@ -91,7 +91,7 @@ func TestCheckPublishGate_FailsOpenOnGateError(t *testing.T) {
 	fg := &fakeGate{err: errors.New("boom")}
 	svc := gateSvc(80, fg)
 
-	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", ""); err != nil {
+	if err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "", "", ""); err != nil {
 		t.Errorf("expected fail-open on gate error, got %v", err)
 	}
 }
@@ -101,7 +101,7 @@ func TestCheckPublishGate_ForwardsMetaDescription(t *testing.T) {
 	fg := &fakeGate{score: 95}
 	svc := gateSvc(80, fg)
 
-	err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "Meta descrição do artigo")
+	err := svc.checkPublishGate(ctx, uuid.New(), nil, "Titulo", "Conteúdo", "pt", "Meta descrição do artigo", "", "")
 	if err != nil {
 		t.Fatalf("expected gate pass, got %v", err)
 	}

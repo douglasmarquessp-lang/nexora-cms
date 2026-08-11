@@ -27,13 +27,17 @@ type ContentEnhancerInput struct {
 // ContentEnhancement is what the enhancer returns: the (possibly modified)
 // content plus the intelligence artifacts gathered along the way.
 type ContentEnhancement struct {
-	Content        string        // content with an appended related-links section (when internal links were added)
-	MetaDescription string       // deterministic meta description derived from the content ("" when not derivable)
-	InternalLinks  []interface{} // []seoengine.InternalLinkCandidate, serialized to keep the interface decoupled
-	ExternalLinks  []interface{} // []seoengine.ExternalLinkCandidate
-	GapReport      interface{}   // *seoengine.ContentGapReport
-	TopicAuthority interface{}   // *seoengine.TopicalAuthorityReport
-	Suggestions    []string      // human-readable PT/EN suggestions
+	Content         string        // content with an appended related-links section (when internal links were added)
+	MetaDescription string        // deterministic meta description derived from the content ("" when not derivable)
+	InternalLinks   []interface{} // []seoengine.InternalLinkCandidate, serialized to keep the interface decoupled
+	ExternalLinks   []interface{} // []seoengine.ExternalLinkCandidate
+	GapReport       interface{}   // *seoengine.ContentGapReport
+	TopicAuthority  interface{}   // *seoengine.TopicalAuthorityReport
+	Suggestions     []string      // human-readable PT/EN suggestions
+	// Keyword is the focus keyword the enhancer used (derived when the
+	// caller did not pass one). The publisher forwards it to the publish
+	// gate so the gate analysis uses the same keyword as the enhancer.
+	Keyword string
 	// FeaturedImageURL/Alt carry the image the enhancer embedded (or the one
 	// it was given). The publisher persists them onto the publication
 	// (featured_image_url + og_image) so the public page and social cards are

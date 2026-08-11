@@ -152,6 +152,12 @@ type SEOConfig struct {
 	// ExternalLinkMinReliability is the minimum reliability score (0-100)
 	// an external source must have to be linked (default 75).
 	ExternalLinkMinReliability int
+
+	// DefaultAuthor is the byline attached to generated articles that carry
+	// no explicit author (SEO_DEFAULT_AUTHOR). It feeds the EEAT gate
+	// analysis so author presence never silently disappears between the
+	// generation pipeline and the publish gate.
+	DefaultAuthor string
 }
 
 // PexelsConfig controls the Pexels image provider used to enrich generated
@@ -323,6 +329,7 @@ func Load() (*Config, error) {
 		InternalLinkMinScore:     getEnvInt("SEO_INTERNAL_LINK_MIN_SCORE", 40),
 		InternalLinkMax:          getEnvInt("SEO_INTERNAL_LINK_MAX", 5),
 		ExternalLinkMinReliability: getEnvInt("SEO_EXTERNAL_LINK_MIN_RELIABILITY", 75),
+		DefaultAuthor:        getEnv("SEO_DEFAULT_AUTHOR", ""),
 	}
 
 	cfg.Pexels = PexelsConfig{

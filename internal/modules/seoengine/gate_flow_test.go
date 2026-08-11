@@ -78,7 +78,7 @@ func TestCheckPublishScore_WellStructuredPasses(t *testing.T) {
 	svc, _ := setupMockDB(t) // inline analysis path does not touch the DB
 	title := "Guia de Marketing de Conteúdo para Pequenas Empresas"
 	content := wellStructuredArticle(title, "marketing de conteúdo", "")
-	score := gateFlowScore(t, svc, title, content, wellMeta("marketing"), "pt")
+	score := gateFlowScore(t, svc, title, content, wellMeta("marketing de conteúdo"), "pt")
 	if score < 80 {
 		t.Errorf("expected well-structured article to pass the 80 minimum gate, got %.2f", score)
 	}
@@ -89,8 +89,8 @@ func TestCheckPublishScore_WellStructuredPasses(t *testing.T) {
 func TestCheckPublishScore_SecondTopicAlsoPasses(t *testing.T) {
 	svc, _ := setupMockDB(t)
 	title := "Como Usar Inteligência Artificial no Atendimento ao Cliente"
-	content := wellStructuredArticle(title, "inteligência", "")
-	meta := "inteligência artificial no atendimento: guia para empresas com exemplos práticos, métricas e planos de implementação em um texto claro e direto para equipes de suporte em todo o Brasil"
+	content := wellStructuredArticle(title, "inteligência artificial", "")
+	meta := "inteligência artificial no atendimento: guia para empresas com exemplos práticos, métricas e planos de implementação em um texto claro"
 	score := gateFlowScore(t, svc, title, content, meta, "pt")
 	if score < 80 {
 		t.Errorf("expected second well-structured article to pass, got %.2f", score)

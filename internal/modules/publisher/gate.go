@@ -16,6 +16,12 @@ type PublishGateInput struct {
 	Content         string
 	Language        string
 	MetaDescription string
+	// Keyword (optional) is the focus keyword from the generation pipeline.
+	// Empty → the gate derives it deterministically from title+content.
+	Keyword string
+	// AuthorName (optional) feeds the EEAT analysis. Empty → the gate uses
+	// the site's configured default author when set.
+	AuthorName string
 }
 
 // PublishGate is implemented by the SEO engine. It returns the content's SEO
