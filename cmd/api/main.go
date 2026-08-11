@@ -297,6 +297,10 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 
 	workflowSvc := workflowMod.Service()
 	workflowMod.SetEventBus(k.EventBus())
+	// Editorial review screen: deterministic content enrichment (no image
+	// search) + the full per-dimension SEO breakdown of the publish gate.
+	workflowSvc.SetEnhancer(seoengineSvc)
+	workflowSvc.SetSEOReviewer(seoengineSvc)
 
 	translationSvc := translationMod.Service()
 	translationMod.SetEventBus(k.EventBus())

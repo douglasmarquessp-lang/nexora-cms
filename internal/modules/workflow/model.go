@@ -23,6 +23,18 @@ const (
 	JobStatusCancelled JobStatus = "cancelled"
 )
 
+// ReviewStatus tracks the editorial review lifecycle of a generated article.
+// Jobs start as "generated" (content ready), flow to the review screen, and
+// are either approved+published, rejected, or regenerated (new revision).
+type ReviewStatus string
+
+const (
+	ReviewStatusGenerated ReviewStatus = "generated"
+	ReviewStatusApproved  ReviewStatus = "approved"
+	ReviewStatusRejected  ReviewStatus = "rejected"
+	ReviewStatusPublished ReviewStatus = "published"
+)
+
 type StepStatus string
 
 const (
@@ -114,6 +126,13 @@ type WorkflowJob struct {
 	StyleSlug      string     `json:"style_slug,omitempty"`
 	SourceJobID    *uuid.UUID `json:"source_job_id,omitempty"`
 	PublicationID  *uuid.UUID `json:"publication_id,omitempty"`
+	ReviewStatus   ReviewStatus `json:"review_status"`
+	Revision       int        `json:"revision"`
+	ApprovedBy     *uuid.UUID `json:"approved_by,omitempty"`
+	ApprovedAt     *time.Time `json:"approved_at,omitempty"`
+	RejectedBy     *uuid.UUID `json:"rejected_by,omitempty"`
+	RejectedAt     *time.Time `json:"rejected_at,omitempty"`
+	RejectionReason string    `json:"rejection_reason,omitempty"`
 	ScheduledFor   *time.Time `json:"scheduled_for,omitempty"`
 	ErrorMessage   string     `json:"error_message,omitempty"`
 	RetryCount     int        `json:"retry_count"`
@@ -339,6 +358,87 @@ type NotificationList struct {
 	Unread        int64          `json:"unread"`
 }
 
+// JobVersion is an immutable snapshot of an article draft. Every regenerate
+// bumps the version; prior content is never deleted.
+type JobVersion struct {
+	ID               uuid.UUID `json:"id"`
+	SiteID           uuid.UUID `json:"site_id"`
+	WorkflowJobID    uuid.UUID `json:"workflow_job_id"`
+	Version          int       `json:"version"`
+	Title            string    `json:"title"`
+	Slug             string    `json:"slug,omitempty"`
+	Content          string    `json:"content"`
+	MetaTitle        string    `json:"meta_title,omitempty"`
+	MetaDescription  string    `json:"meta_description,omitempty"`
+	Keyword          string    `json:"keyword,omitempty"`
+	FeaturedImageURL string    `json:"featured_image_url,omitempty"`
+	FeaturedImageAlt string    `json:"featured_image_alt,omitempty"`
+	Language         string    `json:"language"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// --- Review DTOs ---
+
+type ReviewArticle struct {
+	Title            string `json:"title"`
+	Slug             string `json:"slug,omitempty"`
+	Content          string `json:"content"`
+	Keyword          string `json:"keyword,omitempty"`
+	MetaTitle        string `json:"meta_title,omitempty"`
+	MetaDescription  string `json:"meta_description,omitempty"`
+	FeaturedImageURL string `json:"featured_image_url,omitempty"`
+	FeaturedImageAlt string `json:"featured_image_alt,omitempty"`
+	AuthorName       string `json:"author_name,omitempty"`
+	Language         string `json:"language"`
+	WordCount        int    `json:"word_count"`
+	ReadingTime      int    `json:"reading_time"`
+}
+
+type ReviewSEO struct {
+	Score          float64  `json:"score"`
+	MinScore       float64  `json:"min_score"`
+	Passes         bool     `json:"passes"`
+	Title          float64  `json:"title,omitempty"`
+	Meta           float64  `json:"meta,omitempty"`
+	Headings       float64  `json:"headings,omitempty"`
+	Keyword        float64  `json:"keyword,omitempty"`
+	Readability    float64  `json:"readability,omitempty"`
+	InternalLinks  float64  `json:"internal_links,omitempty"`
+	ExternalLinks  float64  `json:"external_links,omitempty"`
+	EEAT           float64  `json:"eeat,omitempty"`
+	Images         float64  `json:"images,omitempty"`
+	KeywordDensity float64  `json:"keyword_density,omitempty"`
+	WordCount      int      `json:"word_count,omitempty"`
+	Issues         []string `json:"issues,omitempty"`
+}
+
+type JobReviewDetail struct {
+	Job        *WorkflowJob   `json:"job"`
+	Article    *ReviewArticle `json:"article"`
+	SEO        *ReviewSEO     `json:"seo,omitempty"`
+	Version    int            `json:"version"`
+	ApproverID *uuid.UUID     `json:"approver_id,omitempty"`
+}
+
+type ApproveReviewRequest struct {
+	// MetaTitle/MetaDescription/Keyword optionally override the draft values
+	// before publishing (an approve is atomic: gate → publish → ISR).
+	MetaTitle       *string `json:"meta_title,omitempty"`
+	MetaDescription *string `json:"meta_description,omitempty"`
+	Keyword         *string `json:"keyword,omitempty"`
+}
+
+type RejectReviewRequest struct {
+	Reason string `json:"reason"`
+}
+
+type SaveDraftRequest struct {
+	Title           *string `json:"title,omitempty"`
+	MetaTitle       *string `json:"meta_title,omitempty"`
+	MetaDescription *string `json:"meta_description,omitempty"`
+	Keyword         *string `json:"keyword,omitempty"`
+}
+
 // --- Events ---
 
 const (
@@ -360,6 +460,10 @@ const (
 	EventWorkflowPublicationReady kernel.EventType = "workflow.publication.ready"
 	EventWorkflowQualityFailed    kernel.EventType = "workflow.quality.failed"
 	EventWorkflowSEOFailed        kernel.EventType = "workflow.seo.failed"
+	EventWorkflowReviewApproved   kernel.EventType = "workflow.review.approved"
+	EventWorkflowReviewRejected   kernel.EventType = "workflow.review.rejected"
+	EventWorkflowReviewRegenerated kernel.EventType = "workflow.review.regenerated"
+	EventWorkflowReviewDraftSaved kernel.EventType = "workflow.review.draft_saved"
 )
 
 // --- Errors ---
@@ -387,4 +491,8 @@ var (
 	ErrNotificationNotFound = errors.New("notification not found")
 	ErrInvalidAction        = errors.New("invalid automation action")
 	ErrInvalidStep          = errors.New("invalid workflow step")
+	ErrReviewArticleNotFound = errors.New("review article not found (job has no generated content)")
+	ErrJobAlreadyPublished   = errors.New("job is already published")
+	ErrJobReviewRejected     = errors.New("job was rejected; regenerate before publishing")
+	ErrReviewReasonRequired  = errors.New("rejection reason is required")
 )

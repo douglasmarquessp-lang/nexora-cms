@@ -124,6 +124,12 @@ func RegisterRoutes(r chi.Router, svc *Service, log *logger.Logger) {
 			r.Post("/retry", rest.AdaptHandler(h.RetryStep))
 			r.Get("/steps", rest.AdaptHandler(h.GetSteps))
 			r.Post("/steps/advance", rest.AdaptHandler(h.AdvanceStep))
+			r.Get("/review", rest.AdaptHandler(h.GetJobReview))
+			r.Post("/review/approve", rest.AdaptHandler(h.ApproveJobReview))
+			r.Post("/review/reject", rest.AdaptHandler(h.RejectJobReview))
+			r.Post("/review/regenerate", rest.AdaptHandler(h.RegenerateJobReview))
+			r.Put("/review/draft", rest.AdaptHandler(h.SaveJobDraft))
+			r.Get("/versions", rest.AdaptHandler(h.ListJobVersions))
 		})
 	})
 }

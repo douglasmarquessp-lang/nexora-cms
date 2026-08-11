@@ -20,6 +20,20 @@ import (
 // Fails open: if anything goes wrong the content is returned unchanged with a
 // nil error so publishing is never blocked by the enrichment layer.
 func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.ContentEnhancerInput) (*publisher.ContentEnhancement, error) {
+	return s.enhance(ctx, in, false)
+}
+
+// EnhanceForReview is the review-screen variant of EnhanceBeforePublish: the
+// exact same deterministic enrichment (gap analysis, internal/external links,
+// meta description, keyword, embedded caller-provided image) except that it
+// NEVER queries the image provider. The review page must render fast and
+// stable; the actual image search (if any) only happens inside the real
+// publish funnel.
+func (s *Service) EnhanceForReview(ctx context.Context, in publisher.ContentEnhancerInput) (*publisher.ContentEnhancement, error) {
+	return s.enhance(ctx, in, true)
+}
+
+func (s *Service) enhance(ctx context.Context, in publisher.ContentEnhancerInput, skipImageSearch bool) (*publisher.ContentEnhancement, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -68,7 +82,7 @@ func (s *Service) EnhanceBeforePublish(ctx context.Context, in publisher.Content
 	// on image fetching: on any error the article proceeds without an image.
 	featuredURL := strings.TrimSpace(in.FeaturedImageURL)
 	featuredAlt := strings.TrimSpace(in.FeaturedImageAlt)
-	if featuredURL == "" && s.imageProvider != nil {
+	if featuredURL == "" && !skipImageSearch && s.imageProvider != nil {
 		img, ierr := s.imageProvider.SearchImage(ctx, keyword)
 		if ierr == nil && img != nil && img.URL != "" {
 			featuredURL = img.URL

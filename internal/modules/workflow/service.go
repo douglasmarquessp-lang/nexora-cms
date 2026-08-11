@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,8 @@ type Service struct {
 	aiManager    *ai.Manager
 	publisherSvc generatedPublisher
 	researchSvc  *research.Service
+	enhancer     contentEnhancer
+	seoReviewer  seoReviewer
 }
 
 // generatedPublisher is the minimal subset of the publisher service used by
@@ -1496,4 +1499,494 @@ func coalesceStr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// --- Editorial Review Lifecycle ---
+
+// contentEnhancer is the deterministic enrichment used by the review screen
+// (never queries the image provider). *seoengine.Service satisfies it.
+type contentEnhancer interface {
+	EnhanceForReview(ctx context.Context, in publisher.ContentEnhancerInput) (*publisher.ContentEnhancement, error)
+}
+
+// seoReviewer produces the full per-dimension SEO breakdown exactly like the
+// publish gate evaluates it. *seoengine.Service satisfies it.
+type seoReviewer interface {
+	ReviewSEO(ctx context.Context, in publisher.PublishGateInput) (*publisher.SEOReviewReport, error)
+}
+
+type ApproveReviewResult struct {
+	Job         *WorkflowJob         `json:"job"`
+	Publication *publisher.Publication `json:"publication"`
+}
+
+func (s *Service) SetEnhancer(e contentEnhancer) { s.enhancer = e }
+func (s *Service) SetSEOReviewer(r seoReviewer)  { s.seoReviewer = r }
+
+// applyVersionOverrides merges the editable fields of the latest version
+// snapshot (Save Draft / approve-time overrides) over the step-extracted
+// article.
+func applyVersionOverrides(article *ReviewArticle, ver *JobVersion) {
+	if ver == nil || article == nil {
+		return
+	}
+	if ver.Title != "" {
+		article.Title = ver.Title
+	}
+	if ver.Slug != "" {
+		article.Slug = ver.Slug
+	}
+	if ver.Keyword != "" {
+		article.Keyword = ver.Keyword
+	}
+	if ver.MetaTitle != "" {
+		article.MetaTitle = ver.MetaTitle
+	}
+	if ver.MetaDescription != "" {
+		article.MetaDescription = ver.MetaDescription
+	}
+	if ver.FeaturedImageURL != "" {
+		article.FeaturedImageURL = ver.FeaturedImageURL
+	}
+	if ver.FeaturedImageAlt != "" {
+		article.FeaturedImageAlt = ver.FeaturedImageAlt
+	}
+	if ver.Language != "" {
+		article.Language = ver.Language
+	}
+}
+
+// reviewEnhancement runs the deterministic content enrichment for the review
+// pipeline. Never blocks: any failure (or a missing enhancer) leaves the
+// article untouched and returns nil — the SEO breakdown then evaluates the
+// raw draft, and the real publish funnel re-enhances anyway.
+func (s *Service) reviewEnhancement(ctx context.Context, siteID uuid.UUID, article *ReviewArticle, jobLang string) *publisher.ContentEnhancement {
+	if s.enhancer == nil || article == nil {
+		return nil
+	}
+	enh, err := s.enhancer.EnhanceForReview(ctx, publisher.ContentEnhancerInput{
+		SiteID:           siteID,
+		Title:            article.Title,
+		Content:          article.Content,
+		Keyword:          article.Keyword,
+		Language:         jobLang,
+		FeaturedImageURL: article.FeaturedImageURL,
+		FeaturedImageAlt: article.FeaturedImageAlt,
+	})
+	if err != nil {
+		s.log.Warn("review: enhancement failed, evaluating raw draft", "error", err)
+		return nil
+	}
+	return enh
+}
+
+// buildReviewArticle loads the generated draft (step metadata + latest
+// version overrides) and applies the deterministic enhancement so the review
+// screen shows exactly what the publish funnel would produce.
+func (s *Service) buildReviewArticle(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, job *WorkflowJob) (*ReviewArticle, error) {
+	article, err := s.loadReviewArticle(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	article.Title = job.Title
+	if article.Language == "" {
+		article.Language = job.Language
+	}
+	ver, err := s.latestVersion(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	applyVersionOverrides(article, ver)
+
+	enh := s.reviewEnhancement(ctx, siteID, article, job.Language)
+	if enh != nil {
+		if enh.Content != "" {
+			article.Content = enh.Content
+		}
+		if enh.MetaDescription != "" {
+			article.MetaDescription = enh.MetaDescription
+		}
+		if enh.Keyword != "" {
+			article.Keyword = enh.Keyword
+		}
+		if enh.FeaturedImageURL != "" {
+			article.FeaturedImageURL = enh.FeaturedImageURL
+		}
+		if enh.FeaturedImageAlt != "" {
+			article.FeaturedImageAlt = enh.FeaturedImageAlt
+		}
+	}
+	return article, nil
+}
+
+// GetJobReview returns the complete review payload: the job, the enhanced
+// draft article, and the per-dimension SEO breakdown against the configured
+// publish minimum.
+func (s *Service) GetJobReview(ctx context.Context, siteID, jobID uuid.UUID) (*JobReviewDetail, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.getJobReview(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	article, err := s.buildReviewArticle(ctx, p, siteID, jobID, job)
+	if err != nil {
+		return nil, err
+	}
+
+	detail := &JobReviewDetail{Job: job, Article: article, Version: job.Revision}
+	if s.seoReviewer == nil {
+		return detail, nil
+	}
+	rep, rerr := s.seoReviewer.ReviewSEO(ctx, publisher.PublishGateInput{
+		SiteID:          siteID,
+		Title:           article.Title,
+		Content:         article.Content,
+		Language:        job.Language,
+		MetaDescription: article.MetaDescription,
+		Keyword:         article.Keyword,
+		AuthorName:      article.AuthorName,
+	})
+	if rerr != nil {
+		s.log.Warn("review: seo breakdown failed", "error", rerr)
+		return detail, nil
+	}
+	if rep == nil {
+		return detail, nil
+	}
+	detail.SEO = &ReviewSEO{
+		Score:          rep.Score,
+		MinScore:       rep.MinScore,
+		Passes:         rep.Passes,
+		Title:          rep.Title,
+		Meta:           rep.Meta,
+		Headings:       rep.Headings,
+		Keyword:        rep.Keyword,
+		Readability:    rep.Readability,
+		InternalLinks:  rep.InternalLinks,
+		ExternalLinks:  rep.ExternalLinks,
+		EEAT:           rep.EEAT,
+		Images:         rep.Images,
+		KeywordDensity: rep.KeywordDensity,
+		WordCount:      rep.WordCount,
+		Issues:         rep.Issues,
+	}
+	if rep.WordCount > 0 {
+		article.WordCount = rep.WordCount
+		article.ReadingTime = int(float64(rep.WordCount) / 200.0 + 0.5)
+	}
+	return detail, nil
+}
+
+// ApproveJob validates the SEO gate, publishes through the official funnel
+// (PublishGeneratedArticle → enhance → gate → ISR revalidation), records the
+// approver, and links the publication to the job.
+func (s *Service) ApproveJob(ctx context.Context, siteID, jobID, userID uuid.UUID, req ApproveReviewRequest) (*ApproveReviewResult, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.getJobReview(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.PublicationID != nil {
+		return nil, ErrJobAlreadyPublished
+	}
+	if job.ReviewStatus == ReviewStatusRejected {
+		return nil, ErrJobReviewRejected
+	}
+
+	article, err := s.buildReviewArticle(ctx, p, siteID, jobID, job)
+	if err != nil {
+		return nil, err
+	}
+	// Approve-time overrides (from the review screen form).
+	if req.MetaTitle != nil && *req.MetaTitle != "" {
+		article.MetaTitle = *req.MetaTitle
+	}
+	if req.MetaDescription != nil && *req.MetaDescription != "" {
+		article.MetaDescription = *req.MetaDescription
+	}
+	if req.Keyword != nil && *req.Keyword != "" {
+		article.Keyword = *req.Keyword
+	}
+
+	lang := sitelang.Resolve(siteID, job.Language)
+	if s.publisherSvc == nil {
+		return nil, fmt.Errorf("publisher service not configured")
+	}
+	pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, publisher.PublishGeneratedRequest{
+		SiteID:           siteID,
+		Title:            article.Title,
+		Content:          article.Content,
+		Language:         lang,
+		Slug:             article.Slug,
+		MetaTitle:        article.MetaTitle,
+		MetaDescription:  article.MetaDescription,
+		Keyword:          article.Keyword,
+		AuthorName:       article.AuthorName,
+		FeaturedImageURL: article.FeaturedImageURL,
+		Tags:             job.Keywords,
+		Source:           "workflow",
+		SourceJobID:      jobID,
+	})
+	if pubErr != nil {
+		s.log.Error("review approve: publish blocked", "job_id", jobID, "error", pubErr)
+		return nil, pubErr
+	}
+
+	now := time.Now()
+	if _, err := p.Exec(ctx,
+		`UPDATE workflow_jobs
+		 SET review_status = 'published', approved_by = $1, approved_at = $2,
+		     publication_id = $3, updated_at = NOW()
+		 WHERE id = $4 AND site_id = $5`,
+		userID, now, pub.ID, jobID, siteID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to mark workflow job published: %w", err)
+	}
+
+	// Persist the final (enhanced + overridden) draft as the latest version so
+	// the review history is complete before the next regenerate.
+	ver, verErr := s.latestVersion(ctx, p, siteID, jobID)
+	if verErr != nil {
+		s.log.Warn("review approve: failed to load version", "error", verErr)
+	}
+	v := &JobVersion{
+		ID:               uuid.New(),
+		SiteID:           siteID,
+		WorkflowJobID:    jobID,
+		Version:          job.Revision,
+		Title:            article.Title,
+		Slug:             article.Slug,
+		Content:          article.Content,
+		MetaTitle:        article.MetaTitle,
+		MetaDescription:  article.MetaDescription,
+		Keyword:          article.Keyword,
+		FeaturedImageURL: article.FeaturedImageURL,
+		FeaturedImageAlt: article.FeaturedImageAlt,
+		Language:         lang,
+	}
+	if ver != nil {
+		v.Version = ver.Version
+	}
+	if err := s.saveVersion(ctx, p, v); err != nil {
+		s.log.Warn("review approve: failed to persist version", "error", err)
+	}
+
+	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.review.approved", "job", &jobID,
+		string(job.ReviewStatus), string(ReviewStatusPublished),
+		map[string]interface{}{"publication_id": pub.ID.String()}, "", &userID, 0)
+	s.addLog(ctx, p, jobID, "publisher", "info", "workflow review approved and published", nil, 0)
+	s.fireEvent(ctx, EventWorkflowReviewApproved, map[string]interface{}{
+		"job_id":         jobID.String(),
+		"site_id":        siteID.String(),
+		"publication_id": pub.ID.String(),
+	}, siteID)
+
+	job.PublicationID = &pub.ID
+	job.ReviewStatus = ReviewStatusPublished
+	job.ApprovedBy = &userID
+	job.ApprovedAt = &now
+	return &ApproveReviewResult{Job: job, Publication: pub}, nil
+}
+
+// RejectJob records the editorial rejection. The job is never published; the
+// draft stays in the step metadata/versions for a later regenerate.
+func (s *Service) RejectJob(ctx context.Context, siteID, jobID, userID uuid.UUID, reason string) (*WorkflowJob, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.getJobReview(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.PublicationID != nil {
+		return nil, ErrJobAlreadyPublished
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, ErrReviewReasonRequired
+	}
+
+	now := time.Now()
+	if _, err := p.Exec(ctx,
+		`UPDATE workflow_jobs
+		 SET review_status = 'rejected', rejected_by = $1, rejected_at = $2,
+		     rejection_reason = $3, updated_at = NOW()
+		 WHERE id = $4 AND site_id = $5`,
+		userID, now, reason, jobID, siteID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to reject workflow job: %w", err)
+	}
+
+	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.review.rejected", "job", &jobID,
+		string(job.ReviewStatus), string(ReviewStatusRejected), nil, reason, &userID, 0)
+	s.addLog(ctx, p, jobID, job.CurrentStep, "warn", "workflow review rejected: "+reason, nil, 0)
+	s.fireEvent(ctx, EventWorkflowReviewRejected, map[string]interface{}{
+		"job_id":  jobID.String(),
+		"site_id": siteID.String(),
+		"reason":  reason,
+	}, siteID)
+
+	return s.getJobReview(ctx, p, siteID, jobID)
+}
+
+// RegenerateJob snapshots the current draft as a new immutable version, bumps
+// the revision, and resets the job to draft so the pipeline can re-run. Prior
+// content is never deleted.
+func (s *Service) RegenerateJob(ctx context.Context, siteID, jobID, userID uuid.UUID) (*WorkflowJob, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.getJobReview(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.PublicationID != nil {
+		return nil, ErrJobAlreadyPublished
+	}
+
+	article, err := s.loadReviewArticle(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	article.Title = job.Title
+	ver, verErr := s.latestVersion(ctx, p, siteID, jobID)
+	if verErr != nil {
+		return nil, verErr
+	}
+	applyVersionOverrides(article, ver)
+
+	newVersion := job.Revision
+	if ver != nil {
+		newVersion = ver.Version
+	}
+	snapshot := &JobVersion{
+		ID:               uuid.New(),
+		SiteID:           siteID,
+		WorkflowJobID:    jobID,
+		Version:          newVersion + 1,
+		Title:            article.Title,
+		Slug:             article.Slug,
+		Content:          article.Content,
+		MetaTitle:        article.MetaTitle,
+		MetaDescription:  article.MetaDescription,
+		Keyword:          article.Keyword,
+		FeaturedImageURL: article.FeaturedImageURL,
+		FeaturedImageAlt: article.FeaturedImageAlt,
+		Language:         job.Language,
+	}
+	if err := s.saveVersion(ctx, p, snapshot); err != nil {
+		s.log.Warn("review regenerate: failed to snapshot current draft", "error", err)
+	}
+
+	if _, err := p.Exec(ctx,
+		`UPDATE workflow_jobs
+		 SET status = 'draft', review_status = 'generated', revision = $1,
+		     approved_by = NULL, approved_at = NULL, rejected_by = NULL,
+		     rejected_at = NULL, rejection_reason = NULL, updated_at = NOW()
+		 WHERE id = $2 AND site_id = $3`,
+		snapshot.Version, jobID, siteID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to reset workflow job for regeneration: %w", err)
+	}
+
+	s.addHistory(ctx, p, siteID, &jobID, nil, "workflow.review.regenerated", "job", &jobID,
+		string(job.ReviewStatus), string(ReviewStatusGenerated),
+		map[string]interface{}{"revision": snapshot.Version}, "", &userID, 0)
+	s.addLog(ctx, p, jobID, "finished", "info", fmt.Sprintf("workflow regenerated as revision %d", snapshot.Version), nil, 0)
+	s.fireEvent(ctx, EventWorkflowReviewRegenerated, map[string]interface{}{
+		"job_id":   jobID.String(),
+		"site_id":  siteID.String(),
+		"revision": snapshot.Version,
+	}, siteID)
+
+	return s.getJobReview(ctx, p, siteID, jobID)
+}
+
+// SaveDraftMeta persists the editable review fields (title, meta, keyword)
+// into the latest version snapshot without changing the lifecycle. The next
+// review/approve picks them up.
+func (s *Service) SaveDraftMeta(ctx context.Context, siteID, jobID uuid.UUID, req SaveDraftRequest) (*WorkflowJob, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.getJobReview(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.PublicationID != nil {
+		return nil, ErrJobAlreadyPublished
+	}
+
+	article, err := s.loadReviewArticle(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	article.Title = job.Title
+	ver, err := s.latestVersion(ctx, p, siteID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	applyVersionOverrides(article, ver)
+
+	if req.Title != nil && *req.Title != "" {
+		article.Title = *req.Title
+	}
+	if req.MetaTitle != nil && *req.MetaTitle != "" {
+		article.MetaTitle = *req.MetaTitle
+	}
+	if req.MetaDescription != nil && *req.MetaDescription != "" {
+		article.MetaDescription = *req.MetaDescription
+	}
+	if req.Keyword != nil && *req.Keyword != "" {
+		article.Keyword = *req.Keyword
+	}
+
+	version := 1
+	if ver != nil {
+		version = ver.Version
+	}
+	if err := s.saveVersion(ctx, p, &JobVersion{
+		ID:               uuid.New(),
+		SiteID:           siteID,
+		WorkflowJobID:    jobID,
+		Version:          version,
+		Title:            article.Title,
+		Slug:             article.Slug,
+		Content:          article.Content,
+		MetaTitle:        article.MetaTitle,
+		MetaDescription:  article.MetaDescription,
+		Keyword:          article.Keyword,
+		FeaturedImageURL: article.FeaturedImageURL,
+		FeaturedImageAlt: article.FeaturedImageAlt,
+		Language:         article.Language,
+	}); err != nil {
+		return nil, err
+	}
+
+	s.addLog(ctx, p, jobID, "finished", "info", "workflow review draft saved", nil, 0)
+	s.fireEvent(ctx, EventWorkflowReviewDraftSaved, map[string]interface{}{
+		"job_id":  jobID.String(),
+		"site_id": siteID.String(),
+	}, siteID)
+	return s.getJobReview(ctx, p, siteID, jobID)
+}
+
+// ListJobVersions returns the immutable revision snapshots of the job.
+func (s *Service) ListJobVersions(ctx context.Context, siteID, jobID uuid.UUID) ([]JobVersion, error) {
+	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.getJobByID(ctx, p, siteID, jobID); err != nil {
+		return nil, err
+	}
+	return s.listVersions(ctx, p, siteID, jobID)
 }

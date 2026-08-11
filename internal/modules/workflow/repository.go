@@ -78,6 +78,178 @@ func (s *Service) getJobByID(ctx context.Context, p database.Pool, siteID, jobID
 	return &j, nil
 }
 
+// getJobReview loads a job including the editorial review columns. It is a
+// separate query so the hot-path getJobByID (used by every job operation)
+// keeps its narrow column set.
+func (s *Service) getJobReview(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID) (*WorkflowJob, error) {
+	var j WorkflowJob
+	err := p.QueryRow(ctx,
+		`SELECT id, site_id, user_id, title, COALESCE(content_type,'article'),
+		        language, COALESCE(target_language,''), status, COALESCE(current_step,''),
+		        COALESCE(progress,0), priority, COALESCE(word_count,0), COALESCE(tone,''),
+		        COALESCE(audience,''), COALESCE(keywords,'{}'), COALESCE(style_slug,''),
+		        source_job_id, publication_id, scheduled_for, COALESCE(error_message,''), COALESCE(retry_count,0),
+		        COALESCE(max_retries,3), generate_pt, generate_en, started_at, completed_at,
+		        cancelled_at, created_by, created_at, updated_at,
+		        COALESCE(review_status,'generated'), COALESCE(revision,1), approved_by, approved_at,
+		        rejected_by, rejected_at, COALESCE(rejection_reason,'')
+		 FROM workflow_jobs WHERE id = $1 AND site_id = $2`,
+		jobID, siteID,
+	).Scan(&j.ID, &j.SiteID, &j.UserID, &j.Title, &j.ContentType,
+		&j.Language, &j.TargetLanguage, &j.Status, &j.CurrentStep,
+		&j.Progress, &j.Priority, &j.WordCount, &j.Tone, &j.Audience, &j.Keywords,
+		&j.StyleSlug, &j.SourceJobID, &j.PublicationID, &j.ScheduledFor, &j.ErrorMessage, &j.RetryCount,
+		&j.MaxRetries, &j.GeneratePT, &j.GenerateEN, &j.StartedAt, &j.CompletedAt,
+		&j.CancelledAt, &j.CreatedBy, &j.CreatedAt, &j.UpdatedAt,
+		&j.ReviewStatus, &j.Revision, &j.ApprovedBy, &j.ApprovedAt,
+		&j.RejectedBy, &j.RejectedAt, &j.RejectionReason)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrJobNotFound
+		}
+		return nil, fmt.Errorf("failed to get workflow job review: %w", err)
+	}
+	return &j, nil
+}
+
+// loadReviewArticle extracts the generated article from the step metadata.
+// The auto-run pipeline persists the accumulated draft under "ai_content" on
+// every mapped step; the finished/publisher steps carry the final one.
+func (s *Service) loadReviewArticle(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID) (*ReviewArticle, error) {
+	rows, err := p.Query(ctx,
+		`SELECT step_name, COALESCE(metadata::text, '{}')
+		 FROM workflow_steps
+		 WHERE workflow_job_id = $1 AND site_id = $2
+		 ORDER BY created_at ASC`,
+		jobID, siteID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load review article: %w", err)
+	}
+	defer rows.Close()
+
+	article := &ReviewArticle{}
+	var content, keyword, slug, metaTitle, metaDesc, imageURL, imageAlt string
+	for rows.Next() {
+		var stepName, metaStr string
+		if err := rows.Scan(&stepName, &metaStr); err != nil {
+			return nil, fmt.Errorf("failed to scan review step: %w", err)
+		}
+		var meta map[string]interface{}
+		if json.Unmarshal([]byte(metaStr), &meta) != nil {
+			continue
+		}
+		if c, ok := meta["ai_content"].(string); ok && c != "" && content == "" {
+			content = c
+		}
+		if kw, ok := meta["keyword"].(string); ok && kw != "" && keyword == "" {
+			keyword = kw
+		}
+		if sl, ok := meta["slug"].(string); ok && sl != "" && slug == "" {
+			slug = sl
+		}
+		if mt, ok := meta["meta_title"].(string); ok && mt != "" && metaTitle == "" {
+			metaTitle = mt
+		}
+		if md, ok := meta["meta_description"].(string); ok && md != "" && metaDesc == "" {
+			metaDesc = md
+		}
+		if iu, ok := meta["featured_image_url"].(string); ok && iu != "" && imageURL == "" {
+			imageURL = iu
+		}
+		if ia, ok := meta["featured_image_alt"].(string); ok && ia != "" && imageAlt == "" {
+			imageAlt = ia
+		}
+	}
+	if content == "" {
+		return nil, ErrReviewArticleNotFound
+	}
+	article.Content = content
+	article.Keyword = keyword
+	article.Slug = slug
+	article.MetaTitle = metaTitle
+	article.MetaDescription = metaDesc
+	article.FeaturedImageURL = imageURL
+	article.FeaturedImageAlt = imageAlt
+	return article, nil
+}
+
+// saveVersion persists an immutable snapshot of the current draft. Upserts on
+// the (job, version) pair so "Save Draft" can refresh the editable fields of
+// the latest version without creating new revisions.
+func (s *Service) saveVersion(ctx context.Context, p database.Pool, v *JobVersion) error {
+	_, err := p.Exec(ctx,
+		`INSERT INTO workflow_job_versions
+		   (id, site_id, workflow_job_id, version, title, slug, content, meta_title,
+		    meta_description, keyword, featured_image_url, featured_image_alt, language, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+		 ON CONFLICT (workflow_job_id, version) DO UPDATE SET
+		   title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content,
+		   meta_title = EXCLUDED.meta_title, meta_description = EXCLUDED.meta_description,
+		   keyword = EXCLUDED.keyword, featured_image_url = EXCLUDED.featured_image_url,
+		   featured_image_alt = EXCLUDED.featured_image_alt, language = EXCLUDED.language`,
+		v.ID, v.SiteID, v.WorkflowJobID, v.Version, v.Title, v.Slug, v.Content,
+		v.MetaTitle, v.MetaDescription, v.Keyword, v.FeaturedImageURL, v.FeaturedImageAlt,
+		v.Language,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save workflow job version: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) latestVersion(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID) (*JobVersion, error) {
+	var v JobVersion
+	err := p.QueryRow(ctx,
+		`SELECT id, site_id, workflow_job_id, version, COALESCE(title,''), COALESCE(slug,''),
+		        COALESCE(content,''), COALESCE(meta_title,''), COALESCE(meta_description,''),
+		        COALESCE(keyword,''), COALESCE(featured_image_url,''), COALESCE(featured_image_alt,''),
+		        COALESCE(language,'en'), created_at
+		 FROM workflow_job_versions
+		 WHERE workflow_job_id = $1 AND site_id = $2
+		 ORDER BY version DESC LIMIT 1`,
+		jobID, siteID,
+	).Scan(&v.ID, &v.SiteID, &v.WorkflowJobID, &v.Version, &v.Title, &v.Slug,
+		&v.Content, &v.MetaTitle, &v.MetaDescription, &v.Keyword, &v.FeaturedImageURL,
+		&v.FeaturedImageAlt, &v.Language, &v.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest workflow job version: %w", err)
+	}
+	return &v, nil
+}
+
+func (s *Service) listVersions(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID) ([]JobVersion, error) {
+	rows, err := p.Query(ctx,
+		`SELECT id, site_id, workflow_job_id, version, COALESCE(title,''), COALESCE(slug,''),
+		        COALESCE(content,''), COALESCE(meta_title,''), COALESCE(meta_description,''),
+		        COALESCE(keyword,''), COALESCE(featured_image_url,''), COALESCE(featured_image_alt,''),
+		        COALESCE(language,'en'), created_at
+		 FROM workflow_job_versions
+		 WHERE workflow_job_id = $1 AND site_id = $2
+		 ORDER BY version DESC`,
+		jobID, siteID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflow job versions: %w", err)
+	}
+	defer rows.Close()
+
+	versions := []JobVersion{}
+	for rows.Next() {
+		var v JobVersion
+		if err := rows.Scan(&v.ID, &v.SiteID, &v.WorkflowJobID, &v.Version, &v.Title, &v.Slug,
+			&v.Content, &v.MetaTitle, &v.MetaDescription, &v.Keyword, &v.FeaturedImageURL,
+			&v.FeaturedImageAlt, &v.Language, &v.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan workflow job version: %w", err)
+		}
+		versions = append(versions, v)
+	}
+	return versions, nil
+}
+
 func (s *Service) listJobs(ctx context.Context, p database.Pool, siteID uuid.UUID, status, language, step string, limit, offset int) ([]WorkflowJob, error) {
 	where := []string{"site_id = $1"}
 	args := []interface{}{siteID}

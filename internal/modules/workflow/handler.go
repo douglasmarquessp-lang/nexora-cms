@@ -11,6 +11,7 @@ import (
 
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
+	"nexora/internal/modules/publisher"
 	"nexora/internal/pkg/logger"
 )
 
@@ -792,4 +793,148 @@ func (h *Handler) ProcessQueue(ctx *rest.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, item)
+}
+
+// --- Editorial Review ---
+
+func (h *Handler) reviewIDs(ctx *rest.Context) (uuid.UUID, uuid.UUID, bool) {
+	siteID, ok := middleware.GetSiteID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
+		return uuid.Nil, uuid.Nil, false
+	}
+	jobID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid job ID")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return siteID, jobID, true
+}
+
+func (h *Handler) reviewJobError(ctx *rest.Context, err error) {
+	switch {
+	case errors.Is(err, ErrJobNotFound):
+		ctx.Error(http.StatusNotFound, "NOT_FOUND", "workflow job not found")
+	case errors.Is(err, ErrReviewArticleNotFound):
+		ctx.Error(http.StatusNotFound, "REVIEW_ARTICLE_NOT_FOUND", "job has no generated article yet")
+	case errors.Is(err, ErrJobAlreadyPublished):
+		ctx.Error(http.StatusConflict, "ALREADY_PUBLISHED", "job is already published")
+	case errors.Is(err, ErrJobReviewRejected):
+		ctx.Error(http.StatusConflict, "REVIEW_REJECTED", "job was rejected; regenerate before publishing")
+	case errors.Is(err, ErrReviewReasonRequired):
+		ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "rejection reason is required")
+	case errors.Is(err, publisher.ErrSEOPublishBlocked):
+		ctx.Error(http.StatusUnprocessableEntity, "SEO_SCORE_BELOW_MINIMUM", err.Error())
+	default:
+		h.log.Error("workflow review operation failed", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "workflow review operation failed")
+	}
+}
+
+func (h *Handler) GetJobReview(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	detail, err := h.svc.GetJobReview(ctx.Request.Context(), siteID, jobID)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, detail)
+}
+
+func (h *Handler) ApproveJobReview(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.GetUserID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "user context required")
+		return
+	}
+	var req ApproveReviewRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	result, err := h.svc.ApproveJob(ctx.Request.Context(), siteID, jobID, userID, req)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) RejectJobReview(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.GetUserID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "user context required")
+		return
+	}
+	var req RejectReviewRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	job, err := h.svc.RejectJob(ctx.Request.Context(), siteID, jobID, userID, req.Reason)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, job)
+}
+
+func (h *Handler) RegenerateJobReview(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.GetUserID(ctx.Request.Context())
+	if !ok {
+		ctx.Error(http.StatusUnauthorized, "UNAUTHORIZED", "user context required")
+		return
+	}
+	job, err := h.svc.RegenerateJob(ctx.Request.Context(), siteID, jobID, userID)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, job)
+}
+
+func (h *Handler) SaveJobDraft(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	var req SaveDraftRequest
+	if err := ctx.Decode(&req); err != nil {
+		ctx.Error(http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	job, err := h.svc.SaveDraftMeta(ctx.Request.Context(), siteID, jobID, req)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, job)
+}
+
+func (h *Handler) ListJobVersions(ctx *rest.Context) {
+	siteID, jobID, ok := h.reviewIDs(ctx)
+	if !ok {
+		return
+	}
+	versions, err := h.svc.ListJobVersions(ctx.Request.Context(), siteID, jobID)
+	if err != nil {
+		h.reviewJobError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, versions)
 }

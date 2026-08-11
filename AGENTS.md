@@ -1494,3 +1494,64 @@
 **Testes:** `internal/modules/publisher/gate_test.go` — novo `TestCheckPublishGate_ThresholdBoundaries` (tabela com min=70): 69.99 → bloqueado, 70.00 → permitido, 70.31 → permitido, 65.14 → bloqueado, 66.53 → bloqueado, 80.00 → permitido; erro bloqueado contém o score atual e "70.00". Testes existentes do gate já eram parametrizados por `gateSvc(min, gate)` — intactos.
 
 **Validação:** EXECUTADO — `go test ./...` 34 pacotes ok (apenas as 6 falhas pré-existentes de `internal/ai`: rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4), `go build ./...` (0), `go vet ./...` (0). Nenhum commit feito.
+
+### Sprint 7.0 — Workflow Editorial Review (2026-08-11)
+
+**Objetivo:** tela de revisão humana antes da publicação. O job sai da automação com conteúdo pronto (`generated`), o editor vê o draft já enriquecido + breakdown SEO completo do gate, e aprova (publicação atômica), rejeita (com motivo) ou regenera (nova revisão imutável). Nada é publicado sem passar pelo funnel oficial (enhance → gate → ISR).
+
+**Migration `000036_add_workflow_review.{up,down}.sql` (NOVO):**
+- `ALTER TABLE workflow_jobs` — +7 colunas: `review_status TEXT NOT NULL DEFAULT 'generated'`, `approved_by UUID REFERENCES users(id) ON DELETE SET NULL`, `approved_at TIMESTAMPTZ`, `rejected_by` (mesma FK), `rejected_at`, `rejection_reason TEXT`, `revision INTEGER NOT NULL DEFAULT 1` + índice `idx_wf_jobs_review_status (site_id, review_status)`
+- `CREATE TABLE workflow_job_versions` (NOVO) — snapshot imutável do draft (id, site_id FK sites CASCADE, workflow_job_id FK jobs CASCADE, version, title, slug, content, meta_title, meta_description, keyword, featured_image_url, featured_image_alt, language, created_at) com `UNIQUE (workflow_job_id, version)` + 2 índices + RLS + policy `workflow_job_versions_isolation` (site_id = current_setting)
+
+**Modelo (`internal/modules/workflow/model.go`):**
+- `ReviewStatus` enum: `generated` (content ready) / `approved` / `rejected` / `published`
+- `WorkflowJob` — 7 novos campos de review (após `PublicationID`, antes de `ScheduledFor`)
+- `JobVersion` — snapshot imutável (14 campos)
+- `ReviewArticle` — draft para a tela (title, slug, content, keyword, meta_title/desc, featured_image_url/alt, author_name, language, word_count, reading_time)
+- `ReviewSEO` — breakdown por dimensão (score, min_score, passes, title/meta/headings/keyword/readability/internal/external/eeat/images, keyword_density, word_count, issues)
+- `JobReviewDetail` — payload da tela (job + article + seo + version + approver_id)
+- DTOs: `ApproveReviewRequest` (meta_title/meta_description/keyword *string — overrides opcionais antes de publicar), `RejectReviewRequest` (reason), `SaveDraftRequest`
+- 4 eventos: `EventWorkflowReviewApproved/Rejected/Regenerated/DraftSaved`
+- 4 erros: `ErrReviewArticleNotFound`, `ErrJobAlreadyPublished`, `ErrJobReviewRejected`, `ErrReviewReasonRequired`
+
+**Service (`internal/modules/workflow/service.go`, +493 linhas):**
+- `SetEnhancer(contentEnhancer)` / `SetSEOReviewer(seoReviewer)` — interfaces locais satisfeitas por `*seoengine.Service` (wired em `cmd/api/main.go`)
+- `GetJobReview(ctx, siteID, jobID)` — job + `buildReviewArticle` (metadata dos steps + overrides da última versão via `applyVersionOverrides`) + `reviewEnhancement` (determinístico, NUNCA busca imagem) + `ReviewSEO` contra o mínimo configurado do gate
+- `ApproveJob` — valida `ErrJobAlreadyPublished`/`ErrJobReviewRejected` → overrides aplicados → `PublishGeneratedArticle` (funnel oficial: enhance → gate → ISR) → grava approved_by/at → linka `publication_id` → persiste versão final → eventos/history
+- `RejectJob` — grava rejected_by/at + motivo; nunca publica; draft preservado nos steps/versions p/ regenerar
+- `RegenerateJob` — snapshot imutável do draft atual (novo `JobVersion`), bump de `revision`, `UPDATE ... status='draft', review_status='generated', revision=$1`, history + log (`workflow regenerated as revision %d`); conteúdo anterior nunca é deletado
+- `SaveDraftMeta` — persiste title/meta/keyword na versão mais recente sem mudar o ciclo
+- `ListJobVersions` — histórico de revisões imutáveis
+
+**Repository (`internal/modules/workflow/repository.go`, +172 linhas):**
+- `getJobReview` — query ampla (30 colunas base + 7 de review), separada do hot-path `getJobByID`; `COALESCE(review_status,'generated')`, `COALESCE(revision,1)`
+- `loadReviewArticle` — extrai draft dos steps (`ai_content`/`keyword`/`slug`/meta/imagem do metadata), calcula word_count/reading_time
+- `saveVersion` / `latestVersion` / `listVersions` — CRUD do histórico de versões (ORDER BY version DESC LIMIT 1 / ORDER BY version ASC)
+
+**Handler (`internal/modules/workflow/handler.go`, +145 linhas):** 6 endpoints sob `/api/v1/workflow/{id}/`:
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/workflow/{id}/review` | `GetJobReview` |
+| POST | `/workflow/{id}/review/approve` | `ApproveJobReview` (body: overrides opcionais) |
+| POST | `/workflow/{id}/review/reject` | `RejectJobReview` (400 sem reason) |
+| POST | `/workflow/{id}/review/regenerate` | `RegenerateJobReview` |
+| PUT | `/workflow/{id}/review/draft` | `SaveJobDraft` |
+| GET | `/workflow/{id}/versions` | `ListJobVersions` |
+- Helpers `reviewIDs(ctx)` (site+job do middleware/chi) e `reviewJobError` (mapa de erros → status HTTP)
+
+**Publisher gate (`internal/modules/publisher/gate.go`):**
+- `SEOReviewReport` — mesmo shape do `ReviewSEO` do workflow (score, min_score, passes, 9 dimensões, density, word_count, issues)
+- Interface `PublishGateReviewer` — `ReviewSEO(ctx, PublishGateInput) (*SEOReviewReport, error)`, fail-open
+
+**Seoengine:**
+- `enhance.go` — `EnhanceBeforePublish` → `enhance(ctx, in, false)`; NOVO `EnhanceForReview` → `enhance(ctx, in, true)` (skipImageSearch: NUNCA chama o image provider — a tela de review renderiza rápido/estável; a busca de imagem real só acontece no funnel de publicação)
+- `service.go` — refactor `gateInput(in)` compartilhado (page-level rendering, `FocusKeyword` fallback, `defaultAuthor` fallback, lang default pt) usado pelos 3 caminhos: `CheckPublishScore`, `CheckPublishScoreWithIssues` e NOVO `ReviewSEO` (implementa `publisher.PublishGateReviewer`); `minPublishScore` no struct do Service (default 70)
+
+**Wiring (`cmd/api/main.go`):** `workflowSvc.SetEnhancer(seoengineSvc)` + `workflowSvc.SetSEOReviewer(seoengineSvc)` após o módulo workflow — o review usa o MESMO engine determinístico do gate de publicação.
+
+**Testes (`internal/modules/workflow/review_test.go`, NOVO, 748 linhas, 22 testes):**
+- Service: `TestGetJobReview_Full` / `_VersionOverrides` (overrides da versão aplicados ao draft), `TestApproveJob_*` (gate pass → publish via fake + publication_id linkado + approved_by; gate block → ErrSEOPublishBlocked sem publicação; já publicado → ErrJobAlreadyPublished; rejeitado → ErrJobReviewRejected; meta overrides enviados ao publisher), `TestRejectJob_*` (sucesso grava motivo; reason vazio → ErrReviewReasonRequired), `TestRegenerateJob_*` (snapshot v1→v2, bump revision, reset draft/generated, versões preservadas), `TestSaveDraftMeta`, `TestListJobVersions`, `TestApplyVersionOverrides`, `TestLoadReviewArticle` (draft dos steps, word_count/reading_time), etc.
+- Handler: 6 endpoints (GET review 200, approve 200/422 gate/404 not found, reject 400 sem reason, regenerate 200, PUT draft, versions 200)
+- **Pitfall pgxmock descoberto (documentado):** célula `time.Time` (ex.: `time.Now()`) em dest `*time.Time` faz o scan ABORTAR silenciosamente TODO o row (connRow.Scan engole o erro; tudo após a coluna fica zero). Fix: `nil` para campos de tempo ponteiro (started_at/completed_at/cancelled_at), `time.Now()` só para value types (created_at/updated_at). (`wfJobRow` antigo do publish_flow_test convivia com isso porque nunca assertava colunas ≥25.)
+
+**Validação:** EXECUTADO — `go build ./...` (0), `go vet ./...` (0), `go test ./...` 34 pacotes ok; apenas as 6 falhas pré-existentes de `internal/ai` (rede Gemini ×2 + Sprint 3.9 gramática/sílabas ×4). Commit `SONO` + push feitos.

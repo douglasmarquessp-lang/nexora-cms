@@ -43,6 +43,7 @@ type Service struct {
 	internalLinkMax            int
 	externalLinkMinReliability int
 	defaultAuthor              string
+	minPublishScore            float64
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -62,6 +63,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		s.internalLinkMax = cfg.SEO.InternalLinkMax
 		s.externalLinkMinReliability = cfg.SEO.ExternalLinkMinReliability
 		s.defaultAuthor = cfg.SEO.DefaultAuthor
+		s.minPublishScore = cfg.SEO.MinPublishScore
 	}
 	if s.internalLinkMinScore == 0 {
 		s.internalLinkMinScore = 40
@@ -1704,6 +1706,35 @@ func (s *Service) GetMetrics(ctx context.Context, siteID uuid.UUID) (*SEOMetrics
 
 // --- Publish Gate ---
 
+// gateInput builds the analyzer input exactly like the publish gate evaluates
+// it: page-level rendering (title becomes H1 when the body has none), keyword
+// derived deterministically when absent, and the configured default author as
+// the EEAT byline fallback. Deterministic and shared by the gate, the
+// detailed gate, and the review report.
+func (s *Service) gateInput(in publisher.PublishGateInput) ArticleAnalysisInput {
+	input := ArticleAnalysisInput{
+		Title:           in.Title,
+		MetaDescription: in.MetaDescription,
+		Content:         pageContent(in.Title, in.Content),
+		Keyword:         in.Keyword,
+		Language:        in.Language,
+		AuthorName:      in.AuthorName,
+	}
+	if input.Keyword == "" {
+		input.Keyword = FocusKeyword(in.Title, in.Content)
+	}
+	if input.AuthorName == "" {
+		// Fallback: a configurable default byline so EEAT always sees an
+		// author even when the pipeline did not carry one. Never fabricated
+		// per-article — a single site-level value.
+		input.AuthorName = s.defaultAuthor
+	}
+	if input.Language == "" {
+		input.Language = "pt"
+	}
+	return input
+}
+
 // CheckPublishScore implements publisher.PublishGate. It returns the last
 // stored audit score for the linked post, or evaluates the content inline
 // (deterministically) when no stored audit exists.
@@ -1725,26 +1756,7 @@ func (s *Service) CheckPublishScore(ctx context.Context, in publisher.PublishGat
 		}
 	}
 
-	input := ArticleAnalysisInput{
-		Title:           in.Title,
-		MetaDescription: in.MetaDescription,
-		Content:         pageContent(in.Title, in.Content),
-		Keyword:         in.Keyword,
-		Language:        in.Language,
-		AuthorName:      in.AuthorName,
-	}
-	if input.Keyword == "" {
-		input.Keyword = FocusKeyword(in.Title, in.Content)
-	}
-	if input.AuthorName == "" {
-		// Fallback: a configurable default byline so EEAT always sees an
-		// author even when the pipeline did not carry one. Never fabricated
-		// per-article — a single site-level value.
-		input.AuthorName = s.defaultAuthor
-	}
-	if input.Language == "" {
-		input.Language = "pt"
-	}
+	input := s.gateInput(in)
 	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
 	logScoreBreakdown(s.log, in.SiteID, in.Title, input.Keyword, analysis)
 	return analysis.OverallScore, nil
@@ -1785,25 +1797,45 @@ func (s *Service) CheckPublishScoreWithIssues(ctx context.Context, in publisher.
 		}
 	}
 
-	input := ArticleAnalysisInput{
-		Title:           in.Title,
-		MetaDescription: in.MetaDescription,
-		Content:         pageContent(in.Title, in.Content),
-		Keyword:         in.Keyword,
-		Language:        in.Language,
-		AuthorName:      in.AuthorName,
-	}
-	if input.Keyword == "" {
-		input.Keyword = FocusKeyword(in.Title, in.Content)
-	}
-	if input.AuthorName == "" {
-		input.AuthorName = s.defaultAuthor
-	}
-	if input.Language == "" {
-		input.Language = "pt"
-	}
+	input := s.gateInput(in)
 	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
 	return analysis.OverallScore, buildGateIssues(analysis), nil
+}
+
+// ReviewSEO implements publisher.PublishGateReviewer: the full per-dimension
+// breakdown of the publish gate evaluation for the editorial review screen.
+// Same evaluation path as the gate (page-level rendering, deterministic
+// keyword, default author, same threshold), fail-open.
+func (s *Service) ReviewSEO(ctx context.Context, in publisher.PublishGateInput) (*publisher.SEOReviewReport, error) {
+	if s == nil {
+		return nil, nil
+	}
+	input := s.gateInput(in)
+	analysis := AnalyzeArticle(ctx, input, s.qualityChecker)
+	if analysis == nil {
+		return nil, nil
+	}
+	minScore := s.minPublishScore
+	if minScore <= 0 {
+		minScore = 70
+	}
+	return &publisher.SEOReviewReport{
+		Score:          analysis.OverallScore,
+		MinScore:       minScore,
+		Passes:         analysis.OverallScore >= minScore,
+		Title:          analysis.TitleScore,
+		Meta:           analysis.MetaScore,
+		Headings:       analysis.HeadingScore,
+		Keyword:        analysis.KeywordScore,
+		Readability:    analysis.ReadabilityScore,
+		InternalLinks:  analysis.InternalLinksScore,
+		ExternalLinks:  analysis.ExternalLinksScore,
+		EEAT:           analysis.EEATScore,
+		Images:         analysis.ImagesScore,
+		KeywordDensity: analysis.KeywordDensity,
+		WordCount:      analysis.WordCount,
+		Issues:         buildGateIssues(analysis),
+	}, nil
 }
 
 // buildGateIssues reports the weighted dimensions scoring below 60/100 (the
@@ -1923,3 +1955,4 @@ func avgKeywordScore(keywords []SEOKeyword) float64 {
 
 var _ publisher.PublishGate = (*Service)(nil)
 var _ publisher.PublishGateDetailer = (*Service)(nil)
+var _ publisher.PublishGateReviewer = (*Service)(nil)
