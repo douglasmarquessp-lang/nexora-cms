@@ -15,6 +15,7 @@ import (
 
 	"nexora/internal/api/rest"
 	"nexora/internal/modules/publisher"
+	"nexora/internal/modules/research"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
@@ -744,5 +745,231 @@ func TestHandler_ListJobVersions_NoDB(t *testing.T) {
 	rest.AdaptHandler(h.ListJobVersions).ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 (no db), got %d", rec.Code)
+	}
+}
+
+// --- Sprint 7.0 finalization tests ---
+
+// reviewJobRowWithKeywords is reviewJobRow with explicit keywords (tags) so the
+// review payload can assert the tag passthrough.
+func reviewJobRowWithKeywords(jobID, siteID uuid.UUID, review ReviewStatus, pubID *uuid.UUID, keywords []string) *pgxmock.Rows {
+	now := time.Now()
+	return pgxmock.NewRows(reviewJobCols).AddRow(
+		jobID, siteID, &wfJobUserID, "Test Article", "article", "en", "", JobStatus("completed"), "", float64(100),
+		5, 0, "", "", keywords, "", nil, pubID, nil, "", 0, 3, false, false, nil, nil, nil, &wfJobUserID, now, now,
+		review, 1, nil, nil, nil, nil, "",
+	)
+}
+
+// reviewStepRowsWithCredit is reviewStepRows with a featured image + credit in
+// the step metadata (the honest "image already found" case).
+func reviewStepRowsWithCredit(jobID uuid.UUID) *pgxmock.Rows {
+	meta, _ := json.Marshal(map[string]interface{}{
+		"ai_content": "# Test Article\n\nThis is the generated article body with enough content to analyze.",
+		"keyword":    "test article",
+		"featured_image_url":  "https://img.example.com/photo.jpg",
+		"featured_image_alt":  "a photograph of the subject",
+		"featured_image_credit": map[string]interface{}{
+			"photographer":     "Jane Doe",
+			"photographer_url": "https://pexels.com/jane-doe",
+			"source_url":       "https://www.pexels.com",
+		},
+	})
+	return pgxmock.NewRows([]string{"step_name", "metadata"}).AddRow("finished", string(meta))
+}
+
+// reviewSourcesRows feeds the research SourcesForTopic JOIN query.
+func reviewSourcesRows(now time.Time) *pgxmock.Rows {
+	return pgxmock.NewRows([]string{
+		"id", "research_job_id", "title", "url", "domain", "reliability_score",
+		"language", "author", "published_at", "summary", "main_facts", "statistics",
+		"relevance_score", "position", "freshness_score", "is_verified", "retrieved_at",
+		"grounding_metadata", "created_at",
+	}).AddRow(
+		uuid.New(), uuid.New(), "Google AI Blog", "https://blog.google/ai/tools/", "blog.google", 90,
+		"en", "", nil, "A summary of the research source.", "", "", 85, 1, float64(0.9), true, nil,
+		"{}", now,
+	).AddRow(
+		uuid.New(), uuid.New(), "Low Trust Source", "https://untrusted.example.com/x", "untrusted.example.com", 30,
+		"en", "", nil, "", "", "", 40, 2, float64(0), false, nil,
+		"{}", now,
+	)
+}
+
+func TestGetJobReview_SourcesExcerptTagsCredit(t *testing.T) {
+	svc, mock := newReviewService(t)
+	jobID, siteID := uuid.New(), uuid.New()
+
+	// Research service wired on the same pool: the review reads the grounded
+	// sources for the job topic.
+	researchSvc := research.NewService(&config.Config{}, logger.New(&config.Config{}), &database.Database{Pool: mock}, nil)
+	svc.SetResearchSvc(researchSvc)
+
+	now := time.Now()
+	mock.ExpectQuery(`FROM workflow_jobs WHERE id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(reviewJobRowWithKeywords(jobID, siteID, ReviewStatusGenerated, nil, []string{"ai-tools", "automation"}))
+	mock.ExpectQuery(`FROM workflow_steps\s+WHERE workflow_job_id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).WillReturnRows(reviewStepRowsWithCredit(jobID))
+	mock.ExpectQuery(`FROM workflow_job_versions\s+WHERE workflow_job_id = \$1 AND site_id = \$2\s+ORDER BY version DESC LIMIT 1`).
+		WithArgs(jobID, siteID).WillReturnRows(pgxmock.NewRows(versionCols()))
+	mock.ExpectQuery(`JOIN research_jobs rj ON rj.id = rs.research_job_id`).
+		WithArgs(siteID, "Test Article").WillReturnRows(reviewSourcesRows(now))
+
+	detail, err := svc.GetJobReview(context.Background(), siteID, jobID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if detail.Article.Excerpt == "" {
+		t.Error("expected a deterministic excerpt derived from the content")
+	}
+	if !strings.Contains(detail.Article.Excerpt, "generated article body") {
+		t.Errorf("excerpt should come from the article body, got %q", detail.Article.Excerpt)
+	}
+	if len(detail.Article.Tags) != 2 || detail.Article.Tags[0] != "ai-tools" {
+		t.Errorf("expected job keywords as tags, got %v", detail.Article.Tags)
+	}
+	if len(detail.Article.Categories) != 0 {
+		t.Errorf("expected honest empty categories, got %v", detail.Article.Categories)
+	}
+	if detail.Article.FeaturedImageURL != "https://img.example.com/photo.jpg" {
+		t.Error("expected featured image from step metadata")
+	}
+	if detail.Article.FeaturedImageCredit == nil || detail.Article.FeaturedImageCredit.Photographer != "Jane Doe" {
+		t.Errorf("expected credit from step metadata, got %+v", detail.Article.FeaturedImageCredit)
+	}
+	if len(detail.Sources) != 2 {
+		t.Fatalf("expected 2 research sources, got %d", len(detail.Sources))
+	}
+	if detail.Sources[0].URL != "https://blog.google/ai/tools/" || detail.Sources[0].ReliabilityScore != 90 {
+		t.Errorf("unexpected first source: %+v", detail.Sources[0])
+	}
+	if !detail.Sources[0].IsVerified || detail.Sources[1].IsVerified {
+		t.Error("is_verified must come from the source rows")
+	}
+	if detail.Sources[0].Snippet != "A summary of the research source." {
+		t.Errorf("snippet should fall back to summary, got %q", detail.Sources[0].Snippet)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestGetJobReview_NoResearchSvcKeepsSourcesEmpty(t *testing.T) {
+	svc, mock := newReviewService(t)
+	jobID, siteID := uuid.New(), uuid.New()
+
+	mock.ExpectQuery(`FROM workflow_jobs WHERE id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).WillReturnRows(reviewJobRowWithKeywords(jobID, siteID, ReviewStatusGenerated, nil, []string{"kw"}))
+	mock.ExpectQuery(`FROM workflow_steps\s+WHERE workflow_job_id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).WillReturnRows(reviewStepRows(jobID))
+	mock.ExpectQuery(`FROM workflow_job_versions\s+WHERE workflow_job_id = \$1 AND site_id = \$2\s+ORDER BY version DESC LIMIT 1`).
+		WithArgs(jobID, siteID).WillReturnRows(pgxmock.NewRows(versionCols()))
+
+	detail, err := svc.GetJobReview(context.Background(), siteID, jobID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if detail.Sources != nil && len(detail.Sources) != 0 {
+		t.Errorf("expected empty sources without research service, got %d items", len(detail.Sources))
+	}
+	if len(detail.Article.Tags) != 1 || detail.Article.Tags[0] != "kw" {
+		t.Errorf("expected tags from job keywords, got %v", detail.Article.Tags)
+	}
+	if detail.Article.Excerpt == "" {
+		t.Error("expected excerpt even without research service")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestApproveJob_PassesExcerptCategoriesCredit(t *testing.T) {
+	svc, mock := newReviewService(t)
+	jobID, siteID := uuid.New(), uuid.New()
+	pubID := uuid.New()
+	fakePub := &fakeGeneratedPublisher{pub: &publisher.Publication{
+		ID: pubID, SiteID: siteID, Title: "Test Article", Slug: "test-article", Status: "published", Language: "en",
+	}}
+	svc.publisherSvc = fakePub
+	svc.SetEnhancer(&fakeEnhancer{out: &publisher.ContentEnhancement{
+		Content: "enhanced body", MetaDescription: "enhanced meta", Keyword: "test article",
+	}})
+
+	userID := uuid.New()
+	mock.ExpectQuery(`FROM workflow_jobs WHERE id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(reviewJobRowWithKeywords(jobID, siteID, ReviewStatusGenerated, nil, []string{"ai-tools"}))
+	mock.ExpectQuery(`FROM workflow_steps\s+WHERE workflow_job_id = \$1 AND site_id = \$2`).
+		WithArgs(jobID, siteID).WillReturnRows(reviewStepRowsWithCredit(jobID))
+	mock.ExpectQuery(`FROM workflow_job_versions\s+WHERE workflow_job_id = \$1 AND site_id = \$2\s+ORDER BY version DESC LIMIT 1`).
+		WithArgs(jobID, siteID).WillReturnRows(pgxmock.NewRows(versionCols()))
+	mock.ExpectExec(`UPDATE workflow_jobs\s+SET review_status = 'published', approved_by = \$1, approved_at = \$2,.*publication_id = \$3.*WHERE id = \$4 AND site_id = \$5`).
+		WithArgs(userID, pgxmock.AnyArg(), pubID, jobID, siteID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	expectSaveVersion(mock)
+	expectJobHistoryLog(t, mock)
+
+	_, err := svc.ApproveJob(context.Background(), siteID, jobID, userID, ApproveReviewRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fakePub.lastReq == nil {
+		t.Fatal("expected publish request")
+	}
+	if fakePub.lastReq.Excerpt == "" {
+		t.Error("approve must pass the review excerpt to the publish funnel")
+	}
+	if fakePub.lastReq.Categories == nil || len(fakePub.lastReq.Categories) != 0 {
+		t.Errorf("expected honest empty categories, got %v", fakePub.lastReq.Categories)
+	}
+	if fakePub.lastReq.FeaturedImageURL != "https://img.example.com/photo.jpg" {
+		t.Errorf("approve must reuse the reviewed image URL, got %q", fakePub.lastReq.FeaturedImageURL)
+	}
+	if fakePub.lastReq.FeaturedImageCredit == nil || fakePub.lastReq.FeaturedImageCredit.Photographer != "Jane Doe" {
+		t.Errorf("approve must pass the reviewed image credit, got %+v", fakePub.lastReq.FeaturedImageCredit)
+	}
+	if len(fakePub.lastReq.Tags) != 1 || fakePub.lastReq.Tags[0] != "ai-tools" {
+		t.Errorf("expected job keywords as tags, got %v", fakePub.lastReq.Tags)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestSiteAllowed_Whitelist(t *testing.T) {
+	allowedSite := uuid.MustParse("a64d7d72-b97f-4f31-96fd-8aeb15f6184c")
+	otherSite := uuid.New()
+
+	svc := NewService(&config.Config{SitesWhitelist: []string{allowedSite.String()}},
+		logger.New(&config.Config{}), nil, nil)
+	if !svc.SiteAllowed(allowedSite) {
+		t.Error("whitelisted site must be allowed")
+	}
+	if svc.SiteAllowed(otherSite) {
+		t.Error("non-whitelisted site must be rejected in the review flow")
+	}
+
+	open := NewService(&config.Config{}, logger.New(&config.Config{}), nil, nil)
+	if !open.SiteAllowed(otherSite) {
+		t.Error("without a whitelist every site must be allowed")
+	}
+}
+
+func TestHandler_GetJobReview_ForbiddenSite(t *testing.T) {
+	allowedSite := uuid.MustParse("a64d7d72-b97f-4f31-96fd-8aeb15f6184c")
+	svc := NewService(&config.Config{SitesWhitelist: []string{allowedSite.String()}},
+		logger.New(&config.Config{}), nil, nil)
+	h := NewHandler(svc, logger.New(&config.Config{}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/workflow/"+uuid.New().String()+"/review", nil)
+	req = withSiteID(req)
+	req = withChiParams(req, map[string]string{"id": uuid.New().String()})
+	rest.AdaptHandler(h.GetJobReview).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for non-whitelisted site, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "SITE_NOT_ALLOWED") {
+		t.Errorf("expected SITE_NOT_ALLOWED, got %s", rec.Body.String())
 	}
 }

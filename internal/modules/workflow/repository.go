@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"nexora/internal/modules/publisher"
 	"nexora/internal/pkg/database"
 )
 
@@ -130,6 +131,8 @@ func (s *Service) loadReviewArticle(ctx context.Context, p database.Pool, siteID
 
 	article := &ReviewArticle{}
 	var content, keyword, slug, metaTitle, metaDesc, imageURL, imageAlt string
+	var imageCredit *publisher.ImageCredit
+	var tags []string
 	for rows.Next() {
 		var stepName, metaStr string
 		if err := rows.Scan(&stepName, &metaStr); err != nil {
@@ -160,6 +163,25 @@ func (s *Service) loadReviewArticle(ctx context.Context, p database.Pool, siteID
 		if ia, ok := meta["featured_image_alt"].(string); ok && ia != "" && imageAlt == "" {
 			imageAlt = ia
 		}
+		if imageCredit == nil {
+			if cr, ok := meta["featured_image_credit"].(map[string]interface{}); ok && len(cr) > 0 {
+				imageCredit = creditFromMeta(cr)
+			} else if crStr, ok := meta["featured_image_credit"].(string); ok && crStr != "" {
+				var cr map[string]interface{}
+				if json.Unmarshal([]byte(crStr), &cr) == nil && len(cr) > 0 {
+					imageCredit = creditFromMeta(cr)
+				}
+			}
+		}
+		if len(tags) == 0 {
+			if kw, ok := meta["tags"].([]interface{}); ok {
+				for _, t := range kw {
+					if s, ok := t.(string); ok && s != "" {
+						tags = append(tags, s)
+					}
+				}
+			}
+		}
 	}
 	if content == "" {
 		return nil, ErrReviewArticleNotFound
@@ -171,7 +193,28 @@ func (s *Service) loadReviewArticle(ctx context.Context, p database.Pool, siteID
 	article.MetaDescription = metaDesc
 	article.FeaturedImageURL = imageURL
 	article.FeaturedImageAlt = imageAlt
+	article.FeaturedImageCredit = imageCredit
+	article.Tags = tags
 	return article, nil
+}
+
+// creditFromMeta converts a step-metadata credit map into a typed
+// publisher.ImageCredit. Never fabricates: empty fields stay empty.
+func creditFromMeta(m map[string]interface{}) *publisher.ImageCredit {
+	c := &publisher.ImageCredit{}
+	if v, ok := m["photographer"].(string); ok {
+		c.Photographer = v
+	}
+	if v, ok := m["photographer_url"].(string); ok {
+		c.PhotographerURL = v
+	}
+	if v, ok := m["source_url"].(string); ok {
+		c.SourceURL = v
+	}
+	if c.Photographer == "" && c.PhotographerURL == "" && c.SourceURL == "" {
+		return nil
+	}
+	return c
 }
 
 // saveVersion persists an immutable snapshot of the current draft. Upserts on

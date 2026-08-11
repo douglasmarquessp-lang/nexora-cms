@@ -115,20 +115,21 @@ func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, post
 // produced none). It also returns the enhancement object itself so callers can
 // persist its artifacts (featured image, internal/external links). Fails open:
 // on any error the content is returned unchanged and enh is nil.
-func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string, featuredURL, featuredAlt string) (string, string, *ContentEnhancement) {
+func (s *Service) enhanceContent(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, keyword, category, lang string, featuredURL, featuredAlt string, featuredCredit *ImageCredit) (string, string, *ContentEnhancement) {
 	if s.contentEnhancer == nil || strings.TrimSpace(content) == "" {
 		return content, "", nil
 	}
 	out, err := s.contentEnhancer.EnhanceBeforePublish(ctx, ContentEnhancerInput{
-		SiteID:           siteID,
-		PostID:           postID,
-		Title:            title,
-		Content:          content,
-		Keyword:          keyword,
-		Category:         category,
-		Language:         lang,
-		FeaturedImageURL: featuredURL,
-		FeaturedImageAlt: featuredAlt,
+		SiteID:              siteID,
+		PostID:              postID,
+		Title:               title,
+		Content:             content,
+		Keyword:             keyword,
+		Category:            category,
+		Language:            lang,
+		FeaturedImageURL:    featuredURL,
+		FeaturedImageAlt:    featuredAlt,
+		FeaturedImageCredit: featuredCredit,
 	})
 	if err != nil {
 		s.log.Warn("content enhancement failed, publishing original", "error", err)
@@ -320,6 +321,8 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		MetaDescription:  req.MetaDescription,
 		OgImage:          req.OgImage,
 		FeaturedImageURL: req.FeaturedImageURL,
+		FeaturedImageAlt: req.FeaturedImageAlt,
+		FeaturedImageCredit: req.FeaturedImageCredit,
 		Tags:             req.Tags,
 		Categories:       req.Categories,
 		WordCount:        wordCount,
@@ -384,6 +387,8 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 		MetaTitle:        req.MetaTitle,
 		MetaDescription:  req.MetaDescription,
 		FeaturedImageURL: req.FeaturedImageURL,
+		FeaturedImageAlt: req.FeaturedImageAlt,
+		FeaturedImageCredit: req.FeaturedImageCredit,
 		Tags:             req.Tags,
 		Categories:       req.Categories,
 		Source:           coalesceStr(req.Source, "generated"),
@@ -395,10 +400,16 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	keyword := req.Keyword // "" → enhancer/gate derive deterministically from title+content
 	var enhMeta string
 	var enh *ContentEnhancement
-	pubReq.Content, enhMeta, enh = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language, req.FeaturedImageURL, "")
+	pubReq.Content, enhMeta, enh = s.enhanceContent(ctx, req.SiteID, nil, req.Title, req.Content, keyword, firstCategory(req.Categories), pubReq.Language, req.FeaturedImageURL, req.FeaturedImageAlt, req.FeaturedImageCredit)
 	if enh != nil {
 		if enh.FeaturedImageURL != "" {
 			pubReq.FeaturedImageURL = enh.FeaturedImageURL
+		}
+		if enh.FeaturedImageAlt != "" {
+			pubReq.FeaturedImageAlt = enh.FeaturedImageAlt
+		}
+		if enh.FeaturedImageCredit != nil {
+			pubReq.FeaturedImageCredit = enh.FeaturedImageCredit
 		}
 		// The enhancer may derive a sharper focus keyword than the caller's;
 		// the gate must evaluate the same keyword the content was enriched

@@ -209,7 +209,7 @@ func (f *fakeEnhancer) EnhanceBeforePublish(ctx context.Context, in ContentEnhan
 
 func TestEnhanceContent_NilEnhancer(t *testing.T) {
 	svc := NewService(&config.Config{}, logger.New(&config.Config{}), nil, nil)
-	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "kw", "cat", "pt", "", "")
+	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "kw", "cat", "pt", "", "", nil)
 	if out != "conteúdo original" {
 		t.Errorf("expected unchanged content, got %q", out)
 	}
@@ -218,7 +218,7 @@ func TestEnhanceContent_NilEnhancer(t *testing.T) {
 func TestEnhanceContent_EmptyContent(t *testing.T) {
 	svc := NewService(&config.Config{}, logger.New(&config.Config{}), nil, nil)
 	svc.SetContentEnhancer(&fakeEnhancer{out: &ContentEnhancement{Content: "enhanced"}})
-	if out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "", "", "", "pt", "", ""); out != "" {
+	if out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "", "", "", "pt", "", "", nil); out != "" {
 		t.Errorf("expected empty content unchanged, got %q", out)
 	}
 }
@@ -228,7 +228,7 @@ func TestEnhanceContent_AppliesResult(t *testing.T) {
 	enh := &fakeEnhancer{out: &ContentEnhancement{Content: "conteúdo enriquecido com links"}}
 	svc.SetContentEnhancer(enh)
 
-	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "Titulo", "conteúdo original", "kw", "cat", "pt", "", "")
+	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "Titulo", "conteúdo original", "kw", "cat", "pt", "", "", nil)
 	if out != "conteúdo enriquecido com links" {
 		t.Errorf("expected enhanced content, got %q", out)
 	}
@@ -246,7 +246,7 @@ func TestEnhanceContent_AppliesResult(t *testing.T) {
 func TestEnhanceContent_FailsOpen(t *testing.T) {
 	svc := NewService(&config.Config{}, logger.New(&config.Config{}), nil, nil)
 	svc.SetContentEnhancer(&fakeEnhancer{err: errors.New("enhancement boom")})
-	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "", "", "pt", "", "")
+	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "", "", "pt", "", "", nil)
 	if out != "conteúdo original" {
 		t.Errorf("expected original content on enhancer error, got %q", out)
 	}
@@ -255,7 +255,7 @@ func TestEnhanceContent_FailsOpen(t *testing.T) {
 func TestEnhanceContent_EmptyResultFallsBack(t *testing.T) {
 	svc := NewService(&config.Config{}, logger.New(&config.Config{}), nil, nil)
 	svc.SetContentEnhancer(&fakeEnhancer{out: &ContentEnhancement{Content: ""}})
-	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "", "", "pt", "", "")
+	out, _, _ := svc.enhanceContent(context.Background(), uuid.New(), nil, "T", "conteúdo original", "", "", "pt", "", "", nil)
 	if out != "conteúdo original" {
 		t.Errorf("expected original content when enhancer returns empty, got %q", out)
 	}

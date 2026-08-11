@@ -98,7 +98,12 @@ type Publication struct {
 	MetaDescription  string                 `json:"meta_description,omitempty"`
 	OgImage          string                 `json:"og_image,omitempty"`
 	FeaturedImageURL string                 `json:"featured_image_url,omitempty"`
-	Tags             []string               `json:"tags,omitempty"`
+	FeaturedImageAlt string                 `json:"featured_image_alt,omitempty"`
+	// FeaturedImageCredit is transient (never persisted to the publications
+	// row): it carries the image attribution from the funnel so the API
+	// response can include it right after publishing.
+	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
+	Tags                []string     `json:"tags,omitempty"`
 	Categories       []string               `json:"categories,omitempty"`
 	WordCount        int                    `json:"word_count"`
 	ReadingTime      int                    `json:"reading_time"`
@@ -201,12 +206,19 @@ type PublishRequest struct {
 	MetaDescription  string                 `json:"meta_description,omitempty"`
 	OgImage          string                 `json:"og_image,omitempty"`
 	FeaturedImageURL string                 `json:"featured_image_url,omitempty"`
-	Tags             []string               `json:"tags,omitempty"`
-	Categories       []string               `json:"categories,omitempty"`
-	CanonicalURL     string                 `json:"canonical_url,omitempty"`
-	Translations     map[string]interface{} `json:"translations,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
-	Source           string                 `json:"source,omitempty"`
+	// FeaturedImageAlt is the honest alt text of the featured image.
+	FeaturedImageAlt string `json:"featured_image_alt,omitempty"`
+	// FeaturedImageCredit is the optional attribution of the featured image
+	// (photographer + source links). Transient: not persisted to the
+	// publications row, carried through the publish funnel so the public
+	// article body can render the credit the reviewer saw.
+	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
+	Tags                []string     `json:"tags,omitempty"`
+	Categories          []string     `json:"categories,omitempty"`
+	CanonicalURL        string       `json:"canonical_url,omitempty"`
+	Translations        map[string]interface{} `json:"translations,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
+	Source              string                 `json:"source,omitempty"`
 }
 
 type UpdatePublicationRequest struct {
@@ -283,7 +295,13 @@ type PublishGeneratedRequest struct {
 	MetaTitle        string    `json:"meta_title,omitempty"`
 	MetaDescription  string    `json:"meta_description,omitempty"`
 	FeaturedImageURL string    `json:"featured_image_url,omitempty"`
-	Tags             []string  `json:"tags,omitempty"`
+	// FeaturedImageAlt is the honest alt text of the featured image.
+	FeaturedImageAlt string `json:"featured_image_alt,omitempty"`
+	// FeaturedImageCredit is the optional attribution of the featured image.
+	// The publisher forwards it to the enhancer so the published body keeps
+	// the same credit the reviewer saw.
+	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
+	Tags                []string     `json:"tags,omitempty"`
 	Categories       []string  `json:"categories,omitempty"`
 	Source           string    `json:"source,omitempty"`
 	SourceJobID      uuid.UUID `json:"source_job_id,omitempty"`

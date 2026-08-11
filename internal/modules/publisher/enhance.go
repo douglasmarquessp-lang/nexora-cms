@@ -22,6 +22,19 @@ type ContentEnhancerInput struct {
 	FeaturedImageURL string
 	// FeaturedImageAlt is the honest alt text of the featured image.
 	FeaturedImageAlt string
+	// FeaturedImageCredit is the attribution of the already-known featured
+	// image (photographer + source links). Optional; the enhancer renders it
+	// as the figure caption when both URL and credit are set.
+	FeaturedImageCredit *ImageCredit
+}
+
+// ImageCredit is the attribution of a featured image. It is optional — when
+// absent the enhancer may still fetch/embed an image, it just has no credit
+// to display.
+type ImageCredit struct {
+	Photographer    string `json:"photographer"`
+	PhotographerURL string `json:"photographer_url"`
+	SourceURL       string `json:"source_url"`
 }
 
 // ContentEnhancement is what the enhancer returns: the (possibly modified)
@@ -44,6 +57,10 @@ type ContentEnhancement struct {
 	// consistent with the stored article.
 	FeaturedImageURL string
 	FeaturedImageAlt string
+	// FeaturedImageCredit carries the attribution of the embedded image (the
+	// caller-provided credit, or the one gathered by the enhancer when it
+	// fetched the image itself).
+	FeaturedImageCredit *ImageCredit
 }
 
 // ContentEnhancer is implemented by the SEO engine. It may add internal links,

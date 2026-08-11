@@ -82,6 +82,7 @@ func (s *Service) enhance(ctx context.Context, in publisher.ContentEnhancerInput
 	// on image fetching: on any error the article proceeds without an image.
 	featuredURL := strings.TrimSpace(in.FeaturedImageURL)
 	featuredAlt := strings.TrimSpace(in.FeaturedImageAlt)
+	var featuredCredit *publisher.ImageCredit
 	if featuredURL == "" && !skipImageSearch && s.imageProvider != nil {
 		img, ierr := s.imageProvider.SearchImage(ctx, keyword)
 		if ierr == nil && img != nil && img.URL != "" {
@@ -91,6 +92,11 @@ func (s *Service) enhance(ctx context.Context, in publisher.ContentEnhancerInput
 				featuredAlt = deriveImageAlt(in.Title)
 			}
 			content = embedFeaturedImage(content, img, featuredAlt, lang)
+			featuredCredit = &publisher.ImageCredit{
+				Photographer:    strings.TrimSpace(img.Photographer),
+				PhotographerURL: strings.TrimSpace(img.PhotographerURL),
+				SourceURL:       strings.TrimSpace(img.SourceURL),
+			}
 		} else {
 			s.log.Warn("enhance: image provider failed, publishing without image", "error", ierr)
 		}
@@ -102,7 +108,13 @@ func (s *Service) enhance(ctx context.Context, in publisher.ContentEnhancerInput
 		if featuredAlt == "" {
 			featuredAlt = deriveImageAlt(in.Title)
 		}
-		content = embedPlainImage(content, featuredURL, featuredAlt)
+		if in.FeaturedImageCredit != nil {
+			// The reviewer saw this exact image + attribution: keep both.
+			content = embedPlainImageWithCredit(content, featuredURL, featuredAlt, in.FeaturedImageCredit, lang)
+			featuredCredit = in.FeaturedImageCredit
+		} else {
+			content = embedPlainImage(content, featuredURL, featuredAlt)
+		}
 	}
 	if len(internal) > 0 {
 		content = appendRelatedLinks(content, internal, lang)
@@ -144,6 +156,7 @@ func (s *Service) enhance(ctx context.Context, in publisher.ContentEnhancerInput
 		Suggestions:      suggestions,
 		FeaturedImageURL: featuredURL,
 		FeaturedImageAlt: featuredAlt,
+		FeaturedImageCredit: featuredCredit,
 	}, nil
 }
 
@@ -392,6 +405,58 @@ func embedPlainImage(content, src, alt string) string {
 	sb.WriteString("\" alt=\"")
 	sb.WriteString(sanitizeAttr(alt))
 	sb.WriteString("\" loading=\"lazy\" /></figure>")
+
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return sb.String()
+	}
+	if idx := strings.Index(trimmed, "\n\n"); idx > 0 {
+		head := strings.TrimSuffix(trimmed[:idx], "\n")
+		rest := strings.TrimPrefix(trimmed[idx:], "\n")
+		return head + "\n\n" + sb.String() + "\n\n" + strings.TrimSpace(rest)
+	}
+	return sb.String() + "\n\n" + trimmed
+}
+
+// embedPlainImageWithCredit inserts a <figure> with the caller-provided image
+// and its attribution (photographer + source links) when the credit carries a
+// photographer name. Same placement as embedPlainImage; identical output to
+// embedPlainImage when the credit is empty so publish never depends on credit.
+func embedPlainImageWithCredit(content, src, alt string, credit *publisher.ImageCredit, lang string) string {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return content
+	}
+	photo := ""
+	if credit != nil {
+		photo = strings.TrimSpace(credit.Photographer)
+	}
+	if photo == "" {
+		return embedPlainImage(content, src, alt)
+	}
+	photoURL := strings.TrimSpace(credit.PhotographerURL)
+	sourceURL := strings.TrimSpace(credit.SourceURL)
+	if sourceURL == "" {
+		sourceURL = "https://www.pexels.com"
+	}
+	fig := "Photo by"
+	if lang == "pt" {
+		fig = "Foto de"
+	}
+	var sb strings.Builder
+	sb.WriteString("<figure><img src=\"")
+	sb.WriteString(sanitizeAttr(src))
+	sb.WriteString("\" alt=\"")
+	sb.WriteString(sanitizeAttr(alt))
+	sb.WriteString("\" loading=\"lazy\" /><figcaption>")
+	sb.WriteString(fig)
+	sb.WriteString(" <a href=\"")
+	sb.WriteString(sanitizeAttr(photoURL))
+	sb.WriteString("\" rel=\"nofollow noopener\" target=\"_blank\">")
+	sb.WriteString(sanitizeAttr(photo))
+	sb.WriteString("</a> on <a href=\"")
+	sb.WriteString(sanitizeAttr(sourceURL))
+	sb.WriteString("\" rel=\"nofollow noopener\" target=\"_blank\">Pexels</a></figcaption></figure>")
 
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {

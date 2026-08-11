@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type Service struct {
 	researchSvc  *research.Service
 	enhancer     contentEnhancer
 	seoReviewer  seoReviewer
+	cfg          *config.Config
 }
 
 // generatedPublisher is the minimal subset of the publisher service used by
@@ -52,7 +54,24 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		db:       db,
 		cache:    ch,
 		auditLog: audit.New(pool, log),
+		cfg:      cfg,
 	}
+}
+
+// SiteAllowed reports whether the site may be used in the workflow review
+// flow. When SITES_WHITELIST is configured (e.g. AIWorkSimple only), any
+// other site is rejected — the review flow never touches other sites.
+func (s *Service) SiteAllowed(siteID uuid.UUID) bool {
+	if s.cfg == nil || len(s.cfg.SitesWhitelist) == 0 {
+		return true
+	}
+	want := siteID.String()
+	for _, id := range s.cfg.SitesWhitelist {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
@@ -754,11 +773,27 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		}
 	}
 
+	// A job may only complete when a publication exists: the workflow's
+	// objective is a published article. When the publisher step was skipped
+	// (no content / no publisher wired) the job must NOT look completed —
+	// it stays failed so the editorial review screen can pick it up.
+	if publicationID != nil {
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET status = 'completed', progress = 100,
+			 review_status = 'published', completed_at = NOW(), updated_at = NOW()
+			 WHERE id = $1 AND status = 'running'`,
+			jobID,
+		)
+		return
+	}
 	_, _ = p.Exec(ctx,
-		`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+		`UPDATE workflow_jobs SET status = 'failed',
+		 error_message = 'no publication produced: publisher unavailable or no content generated; review manually',
+		 updated_at = NOW()
 		 WHERE id = $1 AND status = 'running'`,
 		jobID,
 	)
+	s.log.Warn("workflow executeWorkflow: job finished without a publication", "job_id", jobID)
 }
 
 // publishWorkflowJob executes the real publisher inside the "publisher" step.
@@ -828,6 +863,19 @@ func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteI
 	pubMeta := map[string]interface{}{
 		"publication_id": pub.ID.String(),
 		"ai_source":      "workflow",
+	}
+	if pub.FeaturedImageURL != "" {
+		pubMeta["featured_image_url"] = pub.FeaturedImageURL
+	}
+	if pub.FeaturedImageAlt != "" {
+		pubMeta["featured_image_alt"] = pub.FeaturedImageAlt
+	}
+	if pub.FeaturedImageCredit != nil {
+		pubMeta["featured_image_credit"] = map[string]interface{}{
+			"photographer":     pub.FeaturedImageCredit.Photographer,
+			"photographer_url": pub.FeaturedImageCredit.PhotographerURL,
+			"source_url":       pub.FeaturedImageCredit.SourceURL,
+		}
 	}
 	pubMetaJSON, _ := json.Marshal(pubMeta)
 	now := time.Now()
@@ -1565,13 +1613,14 @@ func (s *Service) reviewEnhancement(ctx context.Context, siteID uuid.UUID, artic
 		return nil
 	}
 	enh, err := s.enhancer.EnhanceForReview(ctx, publisher.ContentEnhancerInput{
-		SiteID:           siteID,
-		Title:            article.Title,
-		Content:          article.Content,
-		Keyword:          article.Keyword,
-		Language:         jobLang,
-		FeaturedImageURL: article.FeaturedImageURL,
-		FeaturedImageAlt: article.FeaturedImageAlt,
+		SiteID:              siteID,
+		Title:               article.Title,
+		Content:             article.Content,
+		Keyword:             article.Keyword,
+		Language:            jobLang,
+		FeaturedImageURL:    article.FeaturedImageURL,
+		FeaturedImageAlt:    article.FeaturedImageAlt,
+		FeaturedImageCredit: article.FeaturedImageCredit,
 	})
 	if err != nil {
 		s.log.Warn("review: enhancement failed, evaluating raw draft", "error", err)
@@ -1583,6 +1632,54 @@ func (s *Service) reviewEnhancement(ctx context.Context, siteID uuid.UUID, artic
 // buildReviewArticle loads the generated draft (step metadata + latest
 // version overrides) and applies the deterministic enhancement so the review
 // screen shows exactly what the publish funnel would produce.
+// deriveExcerpt produces a deterministic ~160-char plain-text summary from
+// the article content (markdown/HTML stripped, first sentences, word-boundary
+// truncation). Falls back to the title when the content is empty — never
+// fabricated content.
+func deriveExcerpt(content, title string) string {
+	text := stripContentToText(content)
+	if text == "" {
+		text = strings.TrimSpace(title)
+	}
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= 160 {
+		return text
+	}
+	cut := 160
+	if idx := strings.LastIndex(string(runes[:160]), " "); idx > 80 {
+		cut = idx
+	}
+	return strings.TrimRight(string(runes[:cut]), " ") + "..."
+}
+
+// stripContentToText converts article content (markdown + HTML fragments) to
+// a single plain-text line, like the meta description derivation does.
+func stripContentToText(content string) string {
+	re := regexp.MustCompile(`(?s)<[^>]+>`)
+	text := re.ReplaceAllString(content, "")
+	text = regexp.MustCompile(`(?m)^#{1,6}\s+`).ReplaceAllString(text, "")
+	text = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`).ReplaceAllString(text, "$1")
+	text = strings.ReplaceAll(text, "**", "")
+	text = strings.ReplaceAll(text, "__", "")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "  ", " ")
+	text = strings.ReplaceAll(text, "  ", " ")
+	return strings.TrimSpace(text)
+}
+
+// firstNonEmpty returns the first non-empty string of the arguments.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func (s *Service) buildReviewArticle(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, job *WorkflowJob) (*ReviewArticle, error) {
 	article, err := s.loadReviewArticle(ctx, p, siteID, jobID)
 	if err != nil {
@@ -1615,6 +1712,20 @@ func (s *Service) buildReviewArticle(ctx context.Context, p database.Pool, siteI
 		if enh.FeaturedImageAlt != "" {
 			article.FeaturedImageAlt = enh.FeaturedImageAlt
 		}
+		if enh.FeaturedImageCredit != nil {
+			article.FeaturedImageCredit = enh.FeaturedImageCredit
+		}
+	}
+	// Editorial metadata for the review screen (and the approve funnel):
+	// excerpt is derived deterministically from the enhanced article, tags
+	// mirror the job keywords, categories stay honest (empty when the job
+	// has none).
+	article.Excerpt = deriveExcerpt(article.Content, article.Title)
+	if len(article.Tags) == 0 && len(job.Keywords) > 0 {
+		article.Tags = append([]string(nil), job.Keywords...)
+	}
+	if article.Categories == nil {
+		article.Categories = []string{}
 	}
 	return article, nil
 }
@@ -1637,6 +1748,32 @@ func (s *Service) GetJobReview(ctx context.Context, siteID, jobID uuid.UUID) (*J
 	}
 
 	detail := &JobReviewDetail{Job: job, Article: article, Version: job.Revision}
+
+	// Research evidence the article was grounded on (most recent research job
+	// for this topic, site-scoped). Best-effort: never blocks the review.
+	if s.researchSvc != nil {
+		sources, serr := s.researchSvc.SourcesForTopic(ctx, siteID, job.Title)
+		if serr == nil {
+			detail.Sources = make([]ReviewSource, 0, len(sources))
+			for _, src := range sources {
+				detail.Sources = append(detail.Sources, ReviewSource{
+					ID:               src.ID,
+					URL:              src.URL,
+					Title:            src.Title,
+					Snippet:          firstNonEmpty(src.Summary, src.MainFacts, src.Statistics),
+					Domain:           src.Domain,
+					ReliabilityScore: src.ReliabilityScore,
+					ReliabilityLabel: src.ReliabilityLabel,
+					IsVerified:       src.IsVerified,
+					PublishedAt:      src.PublishedAt,
+					RetrievedAt:      src.RetrievedAt,
+				})
+			}
+		} else {
+			s.log.Warn("review: research sources unavailable", "job_id", jobID, "error", serr)
+		}
+	}
+
 	if s.seoReviewer == nil {
 		return detail, nil
 	}
@@ -1719,19 +1856,23 @@ func (s *Service) ApproveJob(ctx context.Context, siteID, jobID, userID uuid.UUI
 		return nil, fmt.Errorf("publisher service not configured")
 	}
 	pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, publisher.PublishGeneratedRequest{
-		SiteID:           siteID,
-		Title:            article.Title,
-		Content:          article.Content,
-		Language:         lang,
-		Slug:             article.Slug,
-		MetaTitle:        article.MetaTitle,
-		MetaDescription:  article.MetaDescription,
-		Keyword:          article.Keyword,
-		AuthorName:       article.AuthorName,
-		FeaturedImageURL: article.FeaturedImageURL,
-		Tags:             job.Keywords,
-		Source:           "workflow",
-		SourceJobID:      jobID,
+		SiteID:              siteID,
+		Title:               article.Title,
+		Content:             article.Content,
+		Excerpt:             article.Excerpt,
+		Language:            lang,
+		Slug:                article.Slug,
+		MetaTitle:           article.MetaTitle,
+		MetaDescription:     article.MetaDescription,
+		Keyword:             article.Keyword,
+		AuthorName:          article.AuthorName,
+		FeaturedImageURL:    article.FeaturedImageURL,
+		FeaturedImageAlt:    article.FeaturedImageAlt,
+		FeaturedImageCredit: article.FeaturedImageCredit,
+		Tags:                job.Keywords,
+		Categories:          article.Categories,
+		Source:              "workflow",
+		SourceJobID:         jobID,
 	})
 	if pubErr != nil {
 		s.log.Error("review approve: publish blocked", "job_id", jobID, "error", pubErr)

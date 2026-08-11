@@ -449,6 +449,8 @@ func TestExecuteWorkflow_PostPublishFailureCompletesJob(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	// the article was already published: job must be completed, not failed
+	// (the completed UPDATE also sets review_status = 'published' — the
+	// editorial review screen only handles generated/rejected jobs)
 	mock.ExpectExec(`UPDATE workflow_jobs SET status = 'completed', progress = 100`).
 		WithArgs(jobID).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -463,5 +465,88 @@ func TestExecuteWorkflow_PostPublishFailureCompletesJob(t *testing.T) {
 	}
 	if !rp.reviewHit {
 		t.Error("expected the final-review prompt to have failed the provider")
+	}
+}
+
+// TestExecuteWorkflow_NoPublicationFailsJob guards the "never fake completed"
+// invariant: when the publisher step is skipped (publisher not wired / no
+// content) the job must be marked FAILED — never completed with a NULL
+// publication_id — so the editorial review screen can pick it up.
+func TestExecuteWorkflow_NoPublicationFailsJob(t *testing.T) {
+	cfg := &config.Config{}
+	log := logger.New(cfg)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	jobID := uuid.New()
+	siteID := uuid.New()
+
+	// No publisherSvc on purpose: the publisher step is skipped.
+	svc := NewService(cfg, log, &database.Database{Pool: mock}, nil)
+	svc.aiManager = workflowAIManager()
+
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, 0))
+
+	for _, step := range wfMockStepOrder {
+		if step == "human_writer" {
+			mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
+				WithArgs(jobID, step).
+				WillReturnRows(wfStepRow(jobID, step, StepStatusPending))
+			mock.ExpectExec(`UPDATE workflow_steps SET status = 'skipped'`).
+				WithArgs(jobID, step).
+				WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			continue
+		}
+		done := stepsBefore(step, wfMappedSteps)
+		expectMappedStep(t, mock, jobID, step, done)
+	}
+
+	// publisher step: skipped (nil publisherSvc), no publication produced
+	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
+		WithArgs(jobID, "publisher").
+		WillReturnRows(wfStepRow(jobID, "publisher", StepStatusPending))
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'skipped'`).
+		WithArgs(jobID, "publisher").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	// finished: the last AI-mapped step still runs...
+	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
+		WithArgs(jobID, "finished").
+		WillReturnRows(wfStepRow(jobID, "finished", StepStatusPending))
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'running'`).
+		WithArgs(jobID, "finished").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectExec(`UPDATE workflow_steps SET status = 'completed'`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), jobID, "finished").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectExec(`UPDATE workflow_jobs SET current_step`).
+		WithArgs("finished", jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	progress := float64(len(wfMappedSteps)) / float64(len(AllWorkflowSteps)) * 100 // 62.5
+	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 ORDER BY created_at ASC`).
+		WithArgs(jobID).
+		WillReturnRows(wfStepsRows(jobID, wfMappedSteps))
+	mock.ExpectExec(`UPDATE workflow_jobs SET progress`).
+		WithArgs(progress, jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
+		WithArgs(jobID, siteID).
+		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, progress))
+
+	// ...but the job must NOT be completed: no publication → failed with a
+	// clear message (any "completed" UPDATE would leave an unmet expectation).
+	mock.ExpectExec(`UPDATE workflow_jobs SET status = 'failed'`).
+		WithArgs(jobID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	svc.executeWorkflowAsync(context.Background(), siteID, jobID)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
 	}
 }

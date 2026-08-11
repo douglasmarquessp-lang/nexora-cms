@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"nexora/internal/kernel"
+	"nexora/internal/modules/publisher"
 )
 
 const ModuleName = "workflow"
@@ -388,10 +389,21 @@ type ReviewArticle struct {
 	MetaDescription  string `json:"meta_description,omitempty"`
 	FeaturedImageURL string `json:"featured_image_url,omitempty"`
 	FeaturedImageAlt string `json:"featured_image_alt,omitempty"`
-	AuthorName       string `json:"author_name,omitempty"`
-	Language         string `json:"language"`
-	WordCount        int    `json:"word_count"`
-	ReadingTime      int    `json:"reading_time"`
+	// FeaturedImageCredit is the attribution of the featured image (if known).
+	// Never fabricated: it is only set when the image came with credit (Pexels
+	// fetch or caller-provided attribution) — otherwise the review screen
+	// shows "No featured image available" instead of faking one.
+	FeaturedImageCredit *publisher.ImageCredit `json:"featured_image_credit,omitempty"`
+	AuthorName          string                 `json:"author_name,omitempty"`
+	Language            string                 `json:"language"`
+	// Excerpt is a deterministic ~160-char plain-text summary of the content.
+	Excerpt string `json:"excerpt,omitempty"`
+	// Categories is the (possibly empty) category list of the article.
+	Categories []string `json:"categories,omitempty"`
+	// Tags is the keyword list of the job, shown as article tags.
+	Tags   []string `json:"tags,omitempty"`
+	WordCount int    `json:"word_count"`
+	ReadingTime int  `json:"reading_time"`
 }
 
 type ReviewSEO struct {
@@ -418,6 +430,25 @@ type JobReviewDetail struct {
 	SEO        *ReviewSEO     `json:"seo,omitempty"`
 	Version    int            `json:"version"`
 	ApproverID *uuid.UUID     `json:"approver_id,omitempty"`
+	// Sources are the research sources the article was grounded on (most
+	// recent research job matching the job title, site-scoped). Empty when no
+	// research evidence exists for the topic.
+	Sources []ReviewSource `json:"sources,omitempty"`
+}
+
+// ReviewSource is a research source shown on the review screen. Domain and
+// reliability are deterministic derivations — never fabricated.
+type ReviewSource struct {
+	ID               uuid.UUID  `json:"id"`
+	URL              string     `json:"url"`
+	Title            string     `json:"title,omitempty"`
+	Snippet          string     `json:"snippet,omitempty"`
+	Domain           string     `json:"domain,omitempty"`
+	ReliabilityScore int        `json:"reliability_score"`
+	ReliabilityLabel string     `json:"reliability_label,omitempty"`
+	IsVerified       bool       `json:"is_verified,omitempty"`
+	PublishedAt      *time.Time `json:"published_at,omitempty"`
+	RetrievedAt      *time.Time `json:"retrieved_at,omitempty"`
 }
 
 type ApproveReviewRequest struct {

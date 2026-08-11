@@ -636,8 +636,58 @@ func (s *Service) AddSource(ctx context.Context, jobID uuid.UUID, source Researc
 	return &source, nil
 }
 
-func (s *Service) listSources(ctx context.Context, jobID uuid.UUID) ([]ResearchSource, error) {
+// SourcesForTopic returns the persisted research sources of the most recent
+// research job(s) matching the topic, site-scoped, ordered by research recency
+// then reliability. It feeds the workflow review screen so the editor can see
+// the exact evidence the article was grounded on. Fails open: empty list on
+// any error.
+func (s *Service) SourcesForTopic(ctx context.Context, siteID uuid.UUID, topic string) ([]ResearchSource, error) {
 	p, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := p.Query(ctx,
+		`SELECT rs.id, rs.research_job_id, COALESCE(rs.title,''), rs.url,
+		        COALESCE(rs.domain,''), COALESCE(rs.reliability_score,0),
+		        COALESCE(rs.language,''), COALESCE(rs.author,''),
+		        rs.published_at, COALESCE(rs.summary,''), COALESCE(rs.main_facts,''),
+		        COALESCE(rs.statistics,''), COALESCE(rs.relevance_score,0), COALESCE(rs.position,0),
+		        COALESCE(rs.freshness_score,0), COALESCE(rs.is_verified,false), rs.retrieved_at,
+		        COALESCE(rs.grounding_metadata::text,'{}'), rs.created_at
+		 FROM research_sources rs
+		 JOIN research_jobs rj ON rj.id = rs.research_job_id
+		 WHERE rj.site_id = $1 AND rj.topic = $2
+		 ORDER BY rj.created_at DESC, rs.reliability_score DESC, rs.position ASC`,
+		siteID, topic,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sources for topic: %w", err)
+	}
+	defer rows.Close()
+
+	var sources []ResearchSource
+	for rows.Next() {
+		var src ResearchSource
+		var gmStr string
+		if err := rows.Scan(&src.ID, &src.ResearchJobID, &src.Title, &src.URL, &src.Domain,
+			&src.ReliabilityScore, &src.Language, &src.Author, &src.PublishedAt, &src.Summary,
+			&src.MainFacts, &src.Statistics, &src.RelevanceScore, &src.Position,
+			&src.FreshnessScore, &src.IsVerified, &src.RetrievedAt, &gmStr, &src.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan source for topic: %w", err)
+		}
+		if gmStr != "" && gmStr != "{}" {
+			_ = json.Unmarshal([]byte(gmStr), &src.GroundingMetadata)
+		}
+		sources = append(sources, src)
+	}
+	if sources == nil {
+		sources = []ResearchSource{}
+	}
+	return sources, nil
+}
+
+func (s *Service) listSources(ctx context.Context, jobID uuid.UUID) ([]ResearchSource, error) {	p, err := s.pool()
 	if err != nil {
 		return nil, err
 	}

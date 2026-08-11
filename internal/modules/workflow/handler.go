@@ -803,6 +803,12 @@ func (h *Handler) reviewIDs(ctx *rest.Context) (uuid.UUID, uuid.UUID, bool) {
 		ctx.Error(http.StatusBadRequest, "MISSING_SITE", "site context required")
 		return uuid.Nil, uuid.Nil, false
 	}
+	// SITES_WHITELIST (e.g. AIWorkSimple only): the review flow never accepts
+	// another site, even when a foreign X-Site-ID header is supplied.
+	if !h.svc.SiteAllowed(siteID) {
+		ctx.Error(http.StatusForbidden, "SITE_NOT_ALLOWED", "site is not allowed in this deployment")
+		return uuid.Nil, uuid.Nil, false
+	}
 	jobID, err := uuid.Parse(chi.URLParam(ctx.Request, "id"))
 	if err != nil {
 		ctx.Error(http.StatusBadRequest, "INVALID_ID", "invalid job ID")

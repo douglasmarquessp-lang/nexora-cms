@@ -9,7 +9,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState } from "@/components/ErrorState";
 import { cn, formatDate, formatRelativeTime } from "@/lib/utils";
 import { useCurrentSiteId, siteQueryKey } from "@/lib/queryKeys";
-import { CheckCheck, ExternalLink } from "lucide-react";
+import { CheckCheck, ExternalLink, FileSearch } from "lucide-react";
+import { Link } from "react-router-dom";
 
 interface Dashboard {
   total_jobs: number;
@@ -38,6 +39,8 @@ interface WorkflowJob {
   language: string;
   error_message?: string;
   publication_id?: string;
+  review_status?: string;
+  revision?: number;
   created_at: string;
 }
 
@@ -386,6 +389,14 @@ export function WorkflowDashboardPage() {
                           </>
                         )}
                         {job.status === "completed" && <span className="text-xs text-muted-foreground">Concluído</span>}
+                        {job.review_status === "generated" && (
+                          <Button size="sm" variant="default" asChild data-testid={`job-review-${job.id}`}>
+                            <Link to={`/admin/workflow/review/${job.id}`}>
+                              <FileSearch className="h-4 w-4" />
+                              Revisar
+                            </Link>
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
