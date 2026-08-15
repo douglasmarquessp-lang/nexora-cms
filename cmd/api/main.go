@@ -44,6 +44,7 @@ import (
 	"nexora/internal/pkg/migrate"
 	"nexora/internal/pkg/ratelimit"
 	"nexora/internal/pkg/revalidate"
+	"nexora/internal/pkg/sitedomain"
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
 	publisherModule "nexora/internal/modules/publisher"
@@ -270,6 +271,14 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 
 	publisherSvc := publisherMod.Service()
 	publisherMod.SetEventBus(k.EventBus())
+	// Per-site domain + primary language resolver (site_domains + sites.locale).
+	// Publisher URLs and public SEO schemas use the site's own configuration
+	// instead of the legacy global fallbacks.
+	var siteResolver sitedomain.Resolver
+	if db != nil && db.Pool != nil {
+		siteResolver = sitedomain.New(sitedomain.NewPGStore(db.Pool))
+	}
+	publisherSvc.SetSiteResolver(siteResolver)
 
 	autocontentMod.SetPublisherSvc(publisherSvc)
 	generatorMod.SetPublisherSvc(publisherSvc)
@@ -410,6 +419,7 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 		ArticlePipelineSvc: articlepipelineSvc,
 		AIManager:          aiSvc,
 		PublisherSvc:       publisherSvc,
+		SiteResolver:       siteResolver,
 		SeoEngineSvc:       seoengineSvc,
 		WorkflowSvc:        workflowSvc,
 		TranslationSvc:     translationSvc,

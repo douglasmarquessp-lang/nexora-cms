@@ -9,12 +9,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/pashagolub/pgxmock/v3"
 
 	"nexora/internal/api/middleware"
 	"nexora/internal/api/rest"
 	"nexora/internal/modules/auth"
 	"nexora/internal/pkg/config"
+	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitedomain"
 )
 
 func withSiteID(r *http.Request) *http.Request {
@@ -423,6 +426,47 @@ func TestHandler_GenerateSlug(t *testing.T) {
 		rest.AdaptHandler(h.GenerateSlug).ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("resolved domain and language", func(t *testing.T) {
+		cfg := &config.Config{}
+		log := logger.New(cfg)
+		mock, err := pgxmock.NewPool()
+		if err != nil {
+			t.Fatalf("mock pool: %v", err)
+		}
+		defer mock.Close()
+		svc := NewService(cfg, log, &database.Database{Pool: mock}, nil)
+		svc.SetSiteResolver(&fakeSiteResolver{sc: sitedomain.SiteContext{
+			Domain:          "https://aiworksimple.com",
+			PrimaryLanguage: "en",
+		}})
+		h := NewHandler(svc, log)
+
+		mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM publications`).
+			WithArgs(pgxmock.AnyArg(), "my-test-article").
+			WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/publisher/generate-slug?title=My%20Test%20Article", nil)
+		req = withSiteID(req)
+		rest.AdaptHandler(h.GenerateSlug).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"slug":"my-test-article"`) {
+			t.Errorf("unexpected body: %s", body)
+		}
+		if strings.Contains(body, "example.com") {
+			t.Errorf("generate-slug must not return example.com when a domain is resolved: %s", body)
+		}
+		if !strings.Contains(body, `"url":"https://aiworksimple.com/my-test-article"`) {
+			t.Errorf("expected resolved domain root URL, got: %s", body)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("unmet expectations: %v", err)
 		}
 	})
 }

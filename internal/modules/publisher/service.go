@@ -15,6 +15,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitedomain"
 	"nexora/internal/pkg/sitelang"
 )
 
@@ -27,6 +28,7 @@ type Service struct {
 	eventBus          *kernel.EventBus
 	auditLog          *audit.Logger
 	siteDomain        string
+	siteResolver      sitedomain.Resolver
 	publishGate       PublishGate
 	contentEnhancer   ContentEnhancer
 	editorialGate     EditorialGate
@@ -59,9 +61,54 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-// SiteDomain returns the configured site base domain.
+// SiteDomain returns the configured fallback site base domain. It is used
+// only when the site resolver is unavailable or has no resolvable domain;
+// with a resolver, production URLs come from the site's own configuration.
 func (s *Service) SiteDomain() string {
 	return s.siteDomain
+}
+
+// SetSiteResolver registers the per-site context resolver (domain + primary
+// language). When nil, the service falls back to its legacy defaults.
+func (s *Service) SetSiteResolver(r sitedomain.Resolver) {
+	s.siteResolver = r
+}
+
+// resolveSiteContext resolves the public domain and primary language for a
+// site. Falls back to the legacy defaults when no resolver is registered or
+// resolution fails (degraded DB, missing site). When the resolver succeeds
+// but the site has no verified domain/locale, the defensive fallbacks keep
+// existing behavior for sites that were never configured.
+func (s *Service) resolveSiteContext(ctx context.Context, siteID uuid.UUID) sitedomain.SiteContext {
+	fallback := sitedomain.SiteContext{Domain: s.siteDomain, PrimaryLanguage: "pt"}
+	if s.siteResolver == nil {
+		return fallback
+	}
+	sc, err := s.siteResolver.Resolve(ctx, siteID)
+	if err != nil {
+		s.log.Warn("site resolver failed, using fallback domain/language",
+			"site_id", siteID.String(), "error", err)
+		return fallback
+	}
+	if sc.Domain == "" {
+		sc.Domain = s.siteDomain
+	}
+	if sc.PrimaryLanguage == "" {
+		sc.PrimaryLanguage = "pt"
+	}
+	return sc
+}
+
+// effectiveLanguage returns the publish language for a site: an explicit
+// request is honored (subject to the caller's validation), an empty request
+// falls back to the site's primary language, and the site-level pin
+// (sitelang) keeps its existing precedence as the top layer.
+func (s *Service) effectiveLanguage(ctx context.Context, siteID uuid.UUID, requested string) string {
+	lang := strings.ToLower(requested)
+	if lang == "" {
+		lang = s.resolveSiteContext(ctx, siteID).PrimaryLanguage
+	}
+	return sitelang.Resolve(siteID, lang)
 }
 
 // SetPublishGate registers the SEO publish gate. When set and the configured
@@ -239,9 +286,14 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		return nil, ErrTitleRequired
 	}
 
+	sc := s.resolveSiteContext(ctx, siteID)
+	// The site's primary language is the root URL language; the pin (sitelang
+	// override) supersedes the locale-derived primary wherever it applies.
+	prim := sitelang.Resolve(siteID, sc.PrimaryLanguage)
+
 	lang := strings.ToLower(req.Language)
 	if lang == "" {
-		lang = "pt"
+		lang = prim
 	}
 	if lang != "pt" && lang != "en" {
 		return nil, ErrInvalidLanguage
@@ -289,10 +341,10 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	now := time.Now()
 	pubID := uuid.New()
 
-	url := s.val.GenerateURL(slug, lang, s.siteDomain)
+	url := s.val.GenerateURL(slug, lang, prim, sc.Domain)
 	canonical := req.CanonicalURL
 	if canonical == "" {
-		canonical = s.val.GenerateCanonicalURL(slug, lang, "pt", s.siteDomain)
+		canonical = s.val.GenerateCanonicalURL(slug, lang, prim, sc.Domain)
 	}
 
 	wordCount := countWords(req.Content)
@@ -310,7 +362,7 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		CanonicalURL:     canonical,
 		Language:         lang,
 		Translations:     req.Translations,
-		MultilingualURLs: buildMultilingualURLs(req.Translations, slug, s.siteDomain),
+		MultilingualURLs: buildMultilingualURLs(req.Translations, slug, sc.Domain, prim),
 		Status:           PubStatusPublished,
 		Visibility:       vis,
 		AuthorID:         req.AuthorID,
@@ -395,8 +447,8 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	}
 	// Site-level pin (e.g. AIWorkSimple = English-only): generated content
 	// is always published in the site's pinned language when no explicit
-	// language was requested.
-	pubReq.Language = sitelang.Resolve(req.SiteID, req.Language)
+	// language was requested; otherwise the site's primary language applies.
+	pubReq.Language = s.effectiveLanguage(ctx, req.SiteID, req.Language)
 	keyword := req.Keyword // "" → enhancer/gate derive deterministically from title+content
 	var enhMeta string
 	var enh *ContentEnhancement
@@ -556,10 +608,11 @@ func (s *Service) UpdatePublication(ctx context.Context, siteID, userID uuid.UUI
 		if exists {
 			return nil, ErrDuplicateSlug
 		}
+		sc := s.resolveSiteContext(ctx, siteID)
 		updates["slug"] = newSlug
-		updates["url"] = s.val.GenerateURL(newSlug, existing.Language, s.siteDomain)
+		updates["url"] = s.val.GenerateURL(newSlug, existing.Language, sitelang.Resolve(siteID, sc.PrimaryLanguage), sc.Domain)
 		if existing.CanonicalURL == "" || strings.Contains(existing.CanonicalURL, existing.Slug) {
-			updates["canonical_url"] = s.val.GenerateCanonicalURL(newSlug, existing.Language, "pt", s.siteDomain)
+			updates["canonical_url"] = s.val.GenerateCanonicalURL(newSlug, existing.Language, sitelang.Resolve(siteID, sc.PrimaryLanguage), sc.Domain)
 		}
 		changes["slug"] = map[string]interface{}{"old": existing.Slug, "new": newSlug}
 	}
@@ -604,8 +657,9 @@ func (s *Service) UpdatePublication(ctx context.Context, siteID, userID uuid.UUI
 		updates["canonical_url"] = s.val.SanitizeURL(*req.CanonicalURL)
 	}
 	if req.Translations != nil {
+		sc := s.resolveSiteContext(ctx, siteID)
 		updates["translations"] = *req.Translations
-		updates["multilingual_urls"] = buildMultilingualURLs(*req.Translations, existing.Slug, s.siteDomain)
+		updates["multilingual_urls"] = buildMultilingualURLs(*req.Translations, existing.Slug, sc.Domain, sitelang.Resolve(siteID, sc.PrimaryLanguage))
 		changes["translations"] = map[string]interface{}{"changed": true}
 	}
 	if req.Metadata != nil {
@@ -964,6 +1018,15 @@ func (s *Service) GenerateSlug(ctx context.Context, siteID uuid.UUID, title stri
 	return slug, nil
 }
 
+// GenerateSlugURL returns the preview URL for a slug in the site's effective
+// (primary + pinned) language and resolved domain. It is used by the
+// generate-slug endpoint so the returned URL reflects the real site.
+func (s *Service) GenerateSlugURL(ctx context.Context, siteID uuid.UUID, slug string) string {
+	sc := s.resolveSiteContext(ctx, siteID)
+	prim := sitelang.Resolve(siteID, sc.PrimaryLanguage)
+	return s.val.GenerateURL(slug, prim, prim, sc.Domain)
+}
+
 // --- SEO Events ---
 
 func (s *Service) fireSEOEvents(ctx context.Context, siteID uuid.UUID) {
@@ -1002,17 +1065,25 @@ func countWords(s string) int {
 	return len(words)
 }
 
-func buildMultilingualURLs(translations map[string]interface{}, baseSlug, siteDomain string) map[string]interface{} {
+// buildMultilingualURLs builds the per-language URL map for a publication.
+// The site's primary language maps to the root; every other language gets a
+// /{lang}/ prefix (legacy behavior treated "pt" as the universal root).
+func buildMultilingualURLs(translations map[string]interface{}, baseSlug, siteDomain, primaryLanguage string) map[string]interface{} {
 	if translations == nil {
 		return map[string]interface{}{}
 	}
+	prim := strings.ToLower(primaryLanguage)
+	if prim == "" {
+		prim = "pt"
+	}
+	base := strings.TrimRight(siteDomain, "/")
 	result := make(map[string]interface{})
-	for lang, _ := range translations {
+	for lang := range translations {
 		langStr := strings.ToLower(lang)
-		if langStr == "pt" {
-			result[langStr] = fmt.Sprintf("%s/%s", strings.TrimRight(siteDomain, "/"), baseSlug)
+		if langStr == prim {
+			result[langStr] = fmt.Sprintf("%s/%s", base, baseSlug)
 		} else {
-			result[langStr] = fmt.Sprintf("%s/%s/%s", strings.TrimRight(siteDomain, "/"), langStr, baseSlug)
+			result[langStr] = fmt.Sprintf("%s/%s/%s", base, langStr, baseSlug)
 		}
 	}
 	return result

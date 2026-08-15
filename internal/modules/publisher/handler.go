@@ -597,6 +597,6 @@ func (h *Handler) GenerateSlug(ctx *rest.Context) {
 
 	ctx.JSON(http.StatusOK, map[string]interface{}{
 		"slug": slug,
-		"url":  h.svc.val.GenerateURL(slug, "pt", "https://example.com"),
+		"url":  h.svc.GenerateSlugURL(ctx.Request.Context(), siteID, slug),
 	})
 }

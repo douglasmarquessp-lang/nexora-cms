@@ -12,6 +12,7 @@ import (
 	"nexora/internal/api/rest"
 	publisherModule "nexora/internal/modules/publisher"
 	seoengineModule "nexora/internal/modules/seoengine"
+	"nexora/internal/pkg/sitedomain"
 )
 
 // siteSchemaResponse is the public site-level JSON-LD payload (Organization +
@@ -24,10 +25,14 @@ type siteSchemaResponse struct {
 // publicSiteSchemaHandler serves the site-level JSON-LD schemas.
 type publicSiteSchemaHandler struct {
 	publisherSvc *publisherModule.Service
+	siteResolver sitedomain.Resolver
 }
 
 func newPublicSiteSchemaHandler(deps *Dependencies) *publicSiteSchemaHandler {
-	return &publicSiteSchemaHandler{publisherSvc: deps.PublisherSvc}
+	return &publicSiteSchemaHandler{
+		publisherSvc: deps.PublisherSvc,
+		siteResolver: deps.SiteResolver,
+	}
 }
 
 func (h *publicSiteSchemaHandler) Get(c *rest.Context) {
@@ -38,8 +43,22 @@ func (h *publicSiteSchemaHandler) Get(c *rest.Context) {
 	}
 
 	domain := "https://example.com"
+	language := "pt"
 	if h.publisherSvc != nil {
 		domain = h.publisherSvc.SiteDomain()
+	}
+	// The site's own configuration wins whenever it can be resolved; the
+	// fallbacks above only apply when the resolver is unavailable or the
+	// site has no configured domain/language.
+	if h.siteResolver != nil {
+		if sc, err := h.siteResolver.Resolve(c.Request.Context(), siteID); err == nil {
+			if sc.Domain != "" {
+				domain = sc.Domain
+			}
+			if sc.PrimaryLanguage != "" {
+				language = sc.PrimaryLanguage
+			}
+		}
 	}
 	siteName := siteNameFromDomain(domain)
 	base := strings.TrimRight(domain, "/") + "/"
@@ -48,7 +67,7 @@ func (h *publicSiteSchemaHandler) Get(c *rest.Context) {
 	if org, err := seoengineModule.BuildOrganizationSchema(siteName, base, "", "", nil); err == nil {
 		resp.Organization = org
 	}
-	if ws, err := seoengineModule.BuildWebSiteSchema(siteName, base, base+"busca?q={search_term_string}", "pt"); err == nil {
+	if ws, err := seoengineModule.BuildWebSiteSchema(siteName, base, base+searchURL(language), language); err == nil {
 		resp.WebSite = ws
 	}
 
@@ -157,11 +176,21 @@ func buildArticleSEO(pub *publisherModule.Publication, siteDomain string) Public
 	if org, err := seoengineModule.BuildOrganizationSchema(siteName, strings.TrimRight(siteDomain, "/")+"/", image, "", nil); err == nil && org != "" {
 		seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, org)
 	}
-	if site, err := seoengineModule.BuildWebSiteSchema(siteName, strings.TrimRight(siteDomain, "/")+"/", strings.TrimRight(siteDomain, "/")+"/busca?q={search_term_string}", pub.Language); err == nil && site != "" {
+	if site, err := seoengineModule.BuildWebSiteSchema(siteName, strings.TrimRight(siteDomain, "/")+"/", strings.TrimRight(siteDomain, "/")+"/"+searchURL(pub.Language), pub.Language); err == nil && site != "" {
 		seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, site)
 	}
 
 	return seo
+}
+
+// searchURL returns the site's search route including the search-term
+// placeholder for the WebSite schema. English uses /search, other languages
+// keep the existing /busca convention.
+func searchURL(language string) string {
+	if strings.ToLower(language) == "en" {
+		return "search?q={search_term_string}"
+	}
+	return "busca?q={search_term_string}"
 }
 
 func isNewsArticle(categories []string) bool {

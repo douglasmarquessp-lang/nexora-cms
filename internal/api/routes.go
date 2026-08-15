@@ -36,6 +36,7 @@ import (
 	casbinPkg "nexora/internal/pkg/casbin"
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/ratelimit"
+	"nexora/internal/pkg/sitedomain"
 	pluginsModule "nexora/internal/plugins"
 	"nexora/internal/webui"
 )
@@ -67,6 +68,7 @@ type Dependencies struct {
 	HumanWriterSvc     *humanwriterModule.Service
 	ArticlePipelineSvc *articlepipelineModule.Service
 	PublisherSvc       *publisherModule.Service
+	SiteResolver       sitedomain.Resolver
 	SeoEngineSvc       *seoengineModule.Service
 	WorkflowSvc        *workflowModule.Service
 	TranslationSvc     *translationModule.Service

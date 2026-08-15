@@ -61,10 +61,12 @@ func (v *Validator) GenerateSlug(title string) string {
 	return s
 }
 
-func (v *Validator) GenerateURL(slug, language string, siteDomain string) string {
+func (v *Validator) GenerateURL(slug, language, primaryLanguage, siteDomain string) string {
 	base := strings.TrimRight(siteDomain, "/")
 	lang := strings.ToLower(language)
-	if lang == "" || lang == "pt" {
+	prim := strings.ToLower(primaryLanguage)
+
+	if lang == prim || lang == "" {
 		return fmt.Sprintf("%s/%s", base, slug)
 	}
 	return fmt.Sprintf("%s/%s/%s", base, lang, slug)
