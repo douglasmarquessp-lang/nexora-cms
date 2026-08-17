@@ -3,11 +3,13 @@ package editorialbrain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"nexora/internal/ai"
 	"nexora/internal/modules/seoengine"
@@ -284,23 +286,50 @@ func (s *Service) ReviewArticle(ctx context.Context, siteID uuid.UUID, req Revie
 }
 
 // CheckEditorialScore implements the publisher editorial gate: it returns the
-// final score of the most recent review for the same content. When no review
-// exists the gate fails open (100).
+// final score of the most recent review for the same content. It never
+// fabricates a score:
+//   - review found → its final score (real, deterministic)
+//   - no review → publisher.ErrNoEditorialReview (caller decides: manual
+//     publishes fail open, auto-publishes generate one via ReviewForGate)
+//   - infrastructure error → the real error (never 100)
 func (s *Service) CheckEditorialScore(ctx context.Context, in publisher.EditorialGateInput) (float64, error) {
 	hash := contentHash(in.Title, in.Content)
 	p, err := s.pool()
 	if err != nil {
-		return 100, nil
+		return 0, err
 	}
 	var final float64
 	err = p.QueryRow(ctx, `SELECT final_score FROM editorial_reviews
 		WHERE site_id = $1 AND content_hash = $2 ORDER BY created_at DESC LIMIT 1`,
 		in.SiteID, hash).Scan(&final)
 	if err != nil {
-		return 100, nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, publisher.ErrNoEditorialReview
+		}
+		return 0, err
 	}
 	return final, nil
 }
+
+// ReviewForGate implements publisher.EditorialReviewer: it runs a full,
+// deterministic editorial review of the exact content being published and
+// persists it, so the auto-publish path always evaluates against a real note.
+func (s *Service) ReviewForGate(ctx context.Context, in publisher.EditorialGateInput) (float64, error) {
+	review, err := s.ReviewArticle(ctx, in.SiteID, ReviewRequest{
+		Title:    in.Title,
+		Content:  in.Content,
+		Language: in.Language,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return review.Scores.Final, nil
+}
+
+var (
+	_ publisher.EditorialGate     = (*Service)(nil)
+	_ publisher.EditorialReviewer = (*Service)(nil)
+)
 
 // GetBrief loads a brief by id (site-scoped).
 func (s *Service) GetBrief(ctx context.Context, siteID, briefID uuid.UUID) (*EditorialBrief, error) {

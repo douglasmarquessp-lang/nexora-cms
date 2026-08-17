@@ -13,6 +13,17 @@ var (
 	htmlH2RE     = regexp.MustCompile(`(?i)<h2[^>]*>.*?</h2>`)
 )
 
+const (
+	// DefaultWordCount is the article target applied when a caller does not
+	// provide one (AI_DEFAULT_WORD_COUNT). It guarantees the draft prompt
+	// never receives "Word Count: 0".
+	DefaultWordCount = 1200
+	// DefaultMinWordCount is the minimum length the draft prompt advertises
+	// when the caller does not provide one (SEO_MIN_WORD_COUNT). The
+	// publisher quality gate enforces the same floor independently.
+	DefaultMinWordCount = 1000
+)
+
 type PipelineStage int
 
 const (
@@ -42,11 +53,11 @@ var stageNames = map[PipelineStage]string{
 }
 
 type ResearchFact struct {
-	Type        string `json:"type"`
-	Entity      string `json:"entity"`
-	Value       string `json:"value"`
-	Source      string `json:"source,omitempty"`
-	Confidence  int    `json:"confidence,omitempty"`
+	Type       string `json:"type"`
+	Entity     string `json:"entity"`
+	Value      string `json:"value"`
+	Source     string `json:"source,omitempty"`
+	Confidence int    `json:"confidence,omitempty"`
 }
 
 type ResearchSourceSummary struct {
@@ -75,28 +86,32 @@ type ResearchSummary struct {
 type ResearchFn func(ctx context.Context, topic, language string) (*ResearchSummary, error)
 
 type PipelineInput struct {
-	Title       string            `json:"title"`
-	ContentType string            `json:"content_type"`
-	Language    string            `json:"language"`
-	Topic       string            `json:"topic,omitempty"`
-	Briefing    string            `json:"briefing,omitempty"`
-	Outline     string            `json:"outline,omitempty"`
-	Content     string            `json:"content,omitempty"`
-	Style       map[string]string `json:"style,omitempty"`
-	Keywords    []string          `json:"keywords,omitempty"`
-	WordCount   int               `json:"word_count,omitempty"`
-	Tone        string            `json:"tone,omitempty"`
-	Audience    string            `json:"audience,omitempty"`
+	Title             string             `json:"title"`
+	ContentType       string             `json:"content_type"`
+	Language          string             `json:"language"`
+	Topic             string             `json:"topic,omitempty"`
+	Briefing          string             `json:"briefing,omitempty"`
+	Outline           string             `json:"outline,omitempty"`
+	Content           string             `json:"content,omitempty"`
+	Style             map[string]string  `json:"style,omitempty"`
+	Keywords          []string           `json:"keywords,omitempty"`
+	WordCount         int                `json:"word_count,omitempty"`
+	Tone              string             `json:"tone,omitempty"`
+	Audience          string             `json:"audience,omitempty"`
 	References        []string           `json:"references,omitempty"`
 	Entities          []string           `json:"entities,omitempty"`
 	GroundingMetadata *GroundingMetadata `json:"grounding_metadata,omitempty"`
 	Research          *ResearchSummary   `json:"research,omitempty"`
 	ResearchFn        ResearchFn         `json:"-"`
+	// WordCountMin is the minimum article length the draft prompt advertises
+	// (fallback DefaultMinWordCount). It is guidance for the model — the
+	// enforceable floor lives in the publisher quality gate.
+	WordCountMin int `json:"word_count_min,omitempty"`
 }
 
 type PipelineResult struct {
-	Stage             PipelineStage      `json:"stage"`
-	Content           string             `json:"content"`
+	Stage   PipelineStage `json:"stage"`
+	Content string        `json:"content"`
 	// Analysis carries the stage's diagnostic report (e.g. quality check,
 	// final review, SEO recommendations). It is never the article itself:
 	// downstream callers publish Content, so diagnostic stages must keep the
@@ -349,7 +364,7 @@ func (pe *PipelineExecutor) runOutline(ctx context.Context, input PipelineInput)
 		"title":      input.Title,
 		"briefing":   input.Briefing,
 		"keywords":   joinStrings(input.Keywords, ", "),
-		"word_count": fmt.Sprintf("%d", input.WordCount),
+		"word_count": fmt.Sprintf("%d", effectiveWordCount(input)),
 	})
 	if err != nil {
 		return nil, err
@@ -364,6 +379,25 @@ func (pe *PipelineExecutor) runOutline(ctx context.Context, input PipelineInput)
 		Stage:   StageOutlineGen,
 		Content: result.Content,
 	}, nil
+}
+
+// effectiveWordCount returns the article target for prompt variables: the
+// caller's request when positive, otherwise the package default. A zero value
+// must never reach a prompt as "Word Count: 0".
+func effectiveWordCount(input PipelineInput) int {
+	if input.WordCount > 0 {
+		return input.WordCount
+	}
+	return DefaultWordCount
+}
+
+// effectiveMinWordCount returns the minimum length for prompt variables with
+// the same zero-value protection as effectiveWordCount.
+func effectiveMinWordCount(input PipelineInput) int {
+	if input.WordCountMin > 0 {
+		return input.WordCountMin
+	}
+	return DefaultMinWordCount
 }
 
 func (pe *PipelineExecutor) runDraft(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
@@ -388,15 +422,16 @@ func (pe *PipelineExecutor) runDraft(ctx context.Context, input PipelineInput) (
 	}
 
 	req, err := pe.manager.Prompts().Build(ctx, promptID, map[string]string{
-		"title":        input.Title,
-		"article_type": input.ContentType,
-		"word_count":   fmt.Sprintf("%d", input.WordCount),
-		"keywords":     keywords,
-		"instructions": styleGuide,
-		"briefing":     input.Briefing + researchContext(input),
-		"outline":      input.Outline,
-		"tone":         input.Tone,
-		"audience":     input.Audience,
+		"title":          input.Title,
+		"article_type":   input.ContentType,
+		"word_count":     fmt.Sprintf("%d", effectiveWordCount(input)),
+		"word_count_min": fmt.Sprintf("%d", effectiveMinWordCount(input)),
+		"keywords":       keywords,
+		"instructions":   styleGuide,
+		"briefing":       input.Briefing + researchContext(input),
+		"outline":        input.Outline,
+		"tone":           input.Tone,
+		"audience":       input.Audience,
 	})
 	if err != nil {
 		return nil, err
@@ -610,10 +645,10 @@ func (pe *PipelineExecutor) runReview(ctx context.Context, input PipelineInput) 
 
 func (pe *PipelineExecutor) runTopic(ctx context.Context, input PipelineInput) (*PipelineResult, error) {
 	req, err := pe.manager.Prompts().Build(ctx, PromptTypeTopic, map[string]string{
-		"topic":       input.Topic,
-		"content":     sourceText(input),
+		"topic":        input.Topic,
+		"content":      sourceText(input),
 		"content_type": input.ContentType,
-		"language":    input.Language,
+		"language":     input.Language,
 	})
 	if err != nil {
 		return nil, err

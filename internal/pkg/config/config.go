@@ -128,6 +128,11 @@ type AIConfig struct {
 	CBFailureThreshold int
 	CBRecoveryTimeout  time.Duration
 	CBHalfOpenMaxReqs  int
+	// DefaultWordCount is the target article length applied to generated
+	// content when the caller did not request one (AI_DEFAULT_WORD_COUNT,
+	// default 1200). The prompt receives this target; the publish quality
+	// gate enforces the separate SEO_MIN_WORD_COUNT minimum.
+	DefaultWordCount int
 }
 
 // SEOConfig controls the SEO Intelligence Engine behavior.
@@ -158,6 +163,12 @@ type SEOConfig struct {
 	// analysis so author presence never silently disappears between the
 	// generation pipeline and the publish gate.
 	DefaultAuthor string
+
+	// MinWordCount is the minimum article length (SEO_MIN_WORD_COUNT,
+	// default 1000) enforced by the publish quality gate. Content below it
+	// is rejected for publication regardless of its SEO/readability score —
+	// readability can never compensate for depth.
+	MinWordCount int
 }
 
 // PexelsConfig controls the Pexels image provider used to enrich generated
@@ -321,6 +332,7 @@ func Load() (*Config, error) {
 		CBFailureThreshold: getEnvInt("AI_CB_FAILURE_THRESHOLD", 5),
 		CBRecoveryTimeout:  getEnvDuration("AI_CB_RECOVERY_TIMEOUT", 30*time.Second),
 		CBHalfOpenMaxReqs:  getEnvInt("AI_CB_HALF_OPEN_MAX_REQS", 3),
+		DefaultWordCount:   getEnvInt("AI_DEFAULT_WORD_COUNT", 1200),
 	}
 
 	cfg.SEO = SEOConfig{
@@ -329,7 +341,8 @@ func Load() (*Config, error) {
 		InternalLinkMinScore:     getEnvInt("SEO_INTERNAL_LINK_MIN_SCORE", 40),
 		InternalLinkMax:          getEnvInt("SEO_INTERNAL_LINK_MAX", 5),
 		ExternalLinkMinReliability: getEnvInt("SEO_EXTERNAL_LINK_MIN_RELIABILITY", 75),
-		DefaultAuthor:        getEnv("SEO_DEFAULT_AUTHOR", ""),
+		DefaultAuthor:              getEnv("SEO_DEFAULT_AUTHOR", ""),
+		MinWordCount:               getEnvInt("SEO_MIN_WORD_COUNT", 1000),
 	}
 
 	cfg.Pexels = PexelsConfig{

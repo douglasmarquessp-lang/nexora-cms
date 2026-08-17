@@ -12,23 +12,24 @@ import (
 
 	"nexora/internal/ai"
 	"nexora/internal/kernel"
+	"nexora/internal/modules/publisher"
+	"nexora/internal/modules/research"
 	"nexora/internal/pkg/audit"
 	"nexora/internal/pkg/cache"
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
 	"nexora/internal/pkg/sitelang"
-	"nexora/internal/modules/publisher"
-	"nexora/internal/modules/research"
 )
 
 type Service struct {
 	log         *logger.Logger
 	db          *database.Database
 	cache       *cache.Cache
-	eventBus    *kernel.EventBus
-	auditLog    *audit.Logger
-	aiManager   *ai.Manager
+	eventBus     *kernel.EventBus
+	auditLog     *audit.Logger
+	cfg          *config.Config
+	aiManager    *ai.Manager
 	publisherSvc *publisher.Service
 	researchSvc  *research.Service
 }
@@ -43,7 +44,17 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		db:       db,
 		cache:    ch,
 		auditLog: audit.New(pool, log),
+		cfg:      cfg,
 	}
+}
+
+// pipelineWordCount returns the configured article target
+// (AI_DEFAULT_WORD_COUNT) — never zero.
+func (s *Service) pipelineWordCount() int {
+	if s.cfg != nil && s.cfg.AI.DefaultWordCount > 0 {
+		return s.cfg.AI.DefaultWordCount
+	}
+	return ai.DefaultWordCount
 }
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
@@ -499,12 +510,14 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 
 	pe := ai.NewPipelineExecutor(s.aiManager)
 	input := buildArticlePipelineInput(job)
+	input.WordCount = s.pipelineWordCount()
 	if s.researchSvc != nil {
 		input.ResearchFn = s.researchFn(siteID)
 	}
 
 	var accumulatedContent string
 	var groundingMeta *ai.GroundingMetadata
+	var currentResearch *ai.ResearchSummary
 
 	for _, stage := range AllStages {
 		stageStr := string(stage)
@@ -554,6 +567,10 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 		if pipeStage == ai.StageResearchGen && result.GroundingMetadata != nil {
 			groundingMeta = result.GroundingMetadata
 		}
+		if pipeStage == ai.StageResearchGen {
+			currentResearch = result.Research
+			input.Research = result.Research
+		}
 
 		if groundingMeta != nil {
 			input.GroundingMetadata = groundingMeta
@@ -582,6 +599,7 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 				input.ResearchFn = s.researchFn(siteID)
 			}
 			input.Content = accumulatedContent
+			input.Research = currentResearch
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta
 			}
@@ -596,12 +614,18 @@ func (s *Service) executePipelineAsync(ctx context.Context, siteID, jobID uuid.U
 
 	finalJob, _ := s.GetPipeline(ctx, siteID, jobID)
 	if finalJob != nil && s.publisherSvc != nil && accumulatedContent != "" {
+		facts := 0
+		if currentResearch != nil {
+			facts = len(currentResearch.Facts)
+		}
 		pubReq := publisher.PublishGeneratedRequest{
-			SiteID:   siteID,
-			Title:    finalJob.Title,
-			Content:  accumulatedContent,
-			Language: finalJob.Language,
-			Source:   "articlepipeline",
+			SiteID:        siteID,
+			Title:         finalJob.Title,
+			Content:       accumulatedContent,
+			Language:      finalJob.Language,
+			Source:        "articlepipeline",
+			ContentType:   finalJob.ContentType,
+			ResearchFacts: facts,
 		}
 		pub, pubErr := s.publisherSvc.PublishGeneratedArticle(ctx, pubReq)
 		if pubErr == nil && pub != nil && groundingMeta != nil && s.researchSvc != nil {

@@ -44,6 +44,8 @@ type Service struct {
 	externalLinkMinReliability int
 	defaultAuthor              string
 	minPublishScore            float64
+	minWordCount               int
+	minQualityScore            float64
 }
 
 func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, ch *cache.Cache) *Service {
@@ -64,6 +66,7 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		s.externalLinkMinReliability = cfg.SEO.ExternalLinkMinReliability
 		s.defaultAuthor = cfg.SEO.DefaultAuthor
 		s.minPublishScore = cfg.SEO.MinPublishScore
+		s.minWordCount = cfg.SEO.MinWordCount
 	}
 	if s.internalLinkMinScore == 0 {
 		s.internalLinkMinScore = 40
@@ -73,6 +76,12 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 	}
 	if s.externalLinkMinReliability == 0 {
 		s.externalLinkMinReliability = 75
+	}
+	if s.minWordCount == 0 {
+		s.minWordCount = 1000
+	}
+	if s.minQualityScore == 0 {
+		s.minQualityScore = publisher.MinQualityGateScore
 	}
 	return s
 }

@@ -616,7 +616,53 @@ func buildWorkflowPipelineInput(job *WorkflowJob) ai.PipelineInput {
 		Keywords:    job.Keywords,
 		Tone:        job.Tone,
 		Audience:    job.Audience,
+		WordCount:   job.WordCount,
 	}
+}
+
+// applyInputDefaults fills pipeline defaults from configuration so prompts and
+// downstream stages never see zero values. The word target defaults to
+// AI_DEFAULT_WORD_COUNT and the minimum to SEO_MIN_WORD_COUNT; the ai package
+// constants are the last-resort fallback.
+func (s *Service) applyInputDefaults(input *ai.PipelineInput) {
+	if input.WordCount <= 0 {
+		input.WordCount = ai.DefaultWordCount
+		if s.cfg != nil && s.cfg.AI.DefaultWordCount > 0 {
+			input.WordCount = s.cfg.AI.DefaultWordCount
+		}
+	}
+	if input.WordCountMin <= 0 {
+		input.WordCountMin = ai.DefaultMinWordCount
+		if s.cfg != nil && s.cfg.SEO.MinWordCount > 0 {
+			input.WordCountMin = s.cfg.SEO.MinWordCount
+		}
+	}
+}
+
+// failStepAndJob is the single failure path of the workflow loop: it marks the
+// current step failed with the real error and, unless the article was already
+// published, marks the job failed with the same message. Post-publication
+// stage failures complete the job instead (the objective was met; the failing
+// stage can be re-run via retry).
+func (s *Service) failStepAndJob(ctx context.Context, p database.Pool, jobID uuid.UUID, stepStr string, err error, publicationID *uuid.UUID) {
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_steps SET status = 'failed', error_message = $1, updated_at = NOW()
+		 WHERE workflow_job_id = $2 AND step_name = $3`,
+		err.Error(), jobID, stepStr,
+	)
+	if publicationID != nil {
+		_, _ = p.Exec(ctx,
+			`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
+			 WHERE id = $1 AND status = 'running'`,
+			jobID,
+		)
+		return
+	}
+	_, _ = p.Exec(ctx,
+		`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
+		 WHERE id = $2`,
+		err.Error(), jobID,
+	)
 }
 
 func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.UUID) {
@@ -634,11 +680,13 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 
 	pe := ai.NewPipelineExecutor(s.aiManager)
 	input := buildWorkflowPipelineInput(job)
+	s.applyInputDefaults(&input)
 	if s.researchSvc != nil {
 		input.ResearchFn = s.researchFn(siteID)
 	}
 
 	var accumulatedContent string
+	var currentResearch *ai.ResearchSummary
 	var groundingMeta *ai.GroundingMetadata
 	var publicationID *uuid.UUID
 
@@ -653,7 +701,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 
 		if stepState.Status != StepStatusPending && stepState.Status != StepStatusRunning {
 			// Relaunched pipeline (e.g. after RetryStep): completed steps never
-			// execute again, so their accumulated content is recovered from the
+			// execute again, so their accumulated state is recovered from the
 			// per-step metadata. Without this, the publisher step would see an
 			// empty draft and be skipped, and a retried job could never publish.
 			if stepState.Metadata != nil {
@@ -661,12 +709,29 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 					accumulatedContent = c
 					input.Content = c
 				}
+				if r, ok := stepState.Metadata["ai_research"].(string); ok && r != "" {
+					var summary ai.ResearchSummary
+					if json.Unmarshal([]byte(r), &summary) == nil {
+						currentResearch = &summary
+						input.Research = &summary
+					}
+				}
+				if b, ok := stepState.Metadata["ai_briefing"].(string); ok && b != "" && input.Briefing == "" {
+					input.Briefing = b
+				}
+				if o, ok := stepState.Metadata["ai_outline"].(string); ok && o != "" && input.Outline == "" {
+					input.Outline = o
+				}
 			}
 			continue
 		}
 
 		if step == StepPublisher {
-			published, publishErr := s.publishWorkflowJob(ctx, p, siteID, jobID, stepStr, job, accumulatedContent, groundingMeta)
+			facts := 0
+			if currentResearch != nil {
+				facts = len(currentResearch.Facts)
+			}
+			published, publishErr := s.publishWorkflowJob(ctx, p, siteID, jobID, stepStr, job, accumulatedContent, groundingMeta, facts)
 			if publishErr != nil {
 				return
 			}
@@ -697,34 +762,38 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			jobID, stepStr,
 		)
 
+		// The workflow has no briefing/outline steps: they run inline, right
+		// before the writer, so every draft is built from a real briefing and
+		// a real outline instead of empty prompt sections.
+		if step == StepWriter && input.Briefing == "" {
+			briefResult, briefErr := pe.ExecuteStage(ctx, ai.StageBriefingGen, input)
+			if briefErr != nil {
+				s.log.Error("workflow executeWorkflow: briefing generation failed", "job_id", jobID, "error", briefErr)
+				s.failStepAndJob(ctx, p, jobID, stepStr, briefErr, publicationID)
+				return
+			}
+			input.Briefing = briefResult.Content
+
+			outlineResult, outlineErr := pe.ExecuteStage(ctx, ai.StageOutlineGen, input)
+			if outlineErr != nil {
+				s.log.Error("workflow executeWorkflow: outline generation failed", "job_id", jobID, "error", outlineErr)
+				s.failStepAndJob(ctx, p, jobID, stepStr, outlineErr, publicationID)
+				return
+			}
+			input.Outline = outlineResult.Content
+		}
+
 		result, err := pe.ExecuteStage(ctx, pipeStage, input)
 		if err != nil {
 			s.log.Error("workflow executeWorkflow: pipeline stage failed", "job_id", jobID, "step", stepStr, "pipe_stage", pipeStage, "error", err)
-			_, _ = p.Exec(ctx,
-				`UPDATE workflow_steps SET status = 'failed', error_message = $1, updated_at = NOW()
-				 WHERE workflow_job_id = $2 AND step_name = $3`,
-				err.Error(), jobID, stepStr,
-			)
-			if publicationID != nil {
-				// The article was already published: a post-publication stage
-				// failure (e.g. the final review) must not mark the job failed.
-				_, _ = p.Exec(ctx,
-					`UPDATE workflow_jobs SET status = 'completed', progress = 100, completed_at = NOW(), updated_at = NOW()
-					 WHERE id = $1 AND status = 'running'`,
-					jobID,
-				)
-				return
-			}
-			_, _ = p.Exec(ctx,
-				`UPDATE workflow_jobs SET status = 'failed', error_message = $1, updated_at = NOW()
-				 WHERE id = $2`,
-				err.Error(), jobID,
-			)
+			s.failStepAndJob(ctx, p, jobID, stepStr, err, publicationID)
 			return
 		}
 
-		if pipeStage == ai.StageResearchGen && result.GroundingMetadata != nil {
+		if pipeStage == ai.StageResearchGen {
 			groundingMeta = result.GroundingMetadata
+			currentResearch = result.Research
+			input.Research = result.Research
 		}
 
 		if groundingMeta != nil {
@@ -738,6 +807,22 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			"ai_content":  result.Content,
 			"ai_stage":    int(pipeStage),
 			"ai_duration": result.Duration,
+		}
+		if result.Analysis != "" {
+			metaData["ai_analysis"] = result.Analysis
+		}
+		if pipeStage == ai.StageResearchGen && currentResearch != nil {
+			if rJSON, err := json.Marshal(currentResearch); err == nil {
+				metaData["ai_research"] = string(rJSON)
+			}
+		}
+		if step == StepWriter {
+			if input.Briefing != "" {
+				metaData["ai_briefing"] = input.Briefing
+			}
+			if input.Outline != "" {
+				metaData["ai_outline"] = input.Outline
+			}
 		}
 		metaJSON, _ := json.Marshal(metaData)
 		_, _ = p.Exec(ctx,
@@ -763,10 +848,12 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		updatedJob, _ := s.getJobByID(ctx, p, siteID, jobID)
 		if updatedJob != nil {
 			input = buildWorkflowPipelineInput(updatedJob)
+			s.applyInputDefaults(&input)
 			if s.researchSvc != nil {
 				input.ResearchFn = s.researchFn(siteID)
 			}
 			input.Content = accumulatedContent
+			input.Research = currentResearch
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta
 			}
@@ -801,7 +888,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 //   - success: step completed, publication_id returned (persisted by the caller)
 //   - failure: step failed, job failed with current_step = publisher, progress < 100,
 //     history written, and no further step (finished) is executed.
-func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stepStr string, job *WorkflowJob, content string, groundingMeta *ai.GroundingMetadata) (*uuid.UUID, error) {
+func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteID, jobID uuid.UUID, stepStr string, job *WorkflowJob, content string, groundingMeta *ai.GroundingMetadata, researchFacts int) (*uuid.UUID, error) {
 	if s.publisherSvc == nil || content == "" {
 		s.log.Warn("workflow publisher not wired or no content available, publisher step skipped", "job_id", jobID)
 		_, _ = p.Exec(ctx,
@@ -819,11 +906,13 @@ func (s *Service) publishWorkflowJob(ctx context.Context, p database.Pool, siteI
 	)
 
 	pubReq := publisher.PublishGeneratedRequest{
-		SiteID:   siteID,
-		Title:    job.Title,
-		Content:  content,
-		Language: job.Language,
-		Source:   "workflow",
+		SiteID:        siteID,
+		Title:         job.Title,
+		Content:       content,
+		Language:      job.Language,
+		Source:        "workflow",
+		ContentType:   job.ContentType,
+		ResearchFacts: researchFacts,
 	}
 	if len(job.Keywords) > 0 {
 		pubReq.Tags = job.Keywords
@@ -1873,6 +1962,10 @@ func (s *Service) ApproveJob(ctx context.Context, siteID, jobID, userID uuid.UUI
 		Categories:          article.Categories,
 		Source:              "workflow",
 		SourceJobID:         jobID,
+		// A human approved this content on the review screen: the editorial
+		// gate is skipped transparently (no fabricated note — the approval
+		// IS the editorial decision). The SEO/quality gates still apply.
+		EditorialApproved: true,
 	})
 	if pubErr != nil {
 		s.log.Error("review approve: publish blocked", "job_id", jobID, "error", pubErr)

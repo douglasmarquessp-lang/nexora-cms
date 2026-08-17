@@ -17,24 +17,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	aiModule "nexora/internal/ai"
-	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	"nexora/internal/api"
 	"nexora/internal/api/rest"
 	"nexora/internal/kernel"
+	articlepipelineModule "nexora/internal/modules/articlepipeline"
 	assetsModule "nexora/internal/modules/assets"
 	authModule "nexora/internal/modules/auth"
 	autocontentModule "nexora/internal/modules/autocontent"
 	categoriesModule "nexora/internal/modules/categories"
 	generatorModule "nexora/internal/modules/contentgenerator"
 	editorialModule "nexora/internal/modules/editorial"
-	humanwriterModule "nexora/internal/modules/humanwriter"
+	editorialbrainModule "nexora/internal/modules/editorialbrain"
 	editorialEngineModule "nexora/internal/modules/editorialengine"
+	freshnessModule "nexora/internal/modules/freshness"
+	humanwriterModule "nexora/internal/modules/humanwriter"
 	mediaModule "nexora/internal/modules/media"
 	postsModule "nexora/internal/modules/posts"
+	publisherModule "nexora/internal/modules/publisher"
 	researchModule "nexora/internal/modules/research"
+	seoengineModule "nexora/internal/modules/seoengine"
 	setupModule "nexora/internal/modules/setup"
 	siteModule "nexora/internal/modules/site"
 	tagsModule "nexora/internal/modules/tags"
+	translationModule "nexora/internal/modules/translation"
+	workflowModule "nexora/internal/modules/workflow"
 	writerModule "nexora/internal/modules/writer"
 	"nexora/internal/pkg/cache"
 	casbinPkg "nexora/internal/pkg/casbin"
@@ -47,12 +53,6 @@ import (
 	"nexora/internal/pkg/sitedomain"
 	"nexora/internal/pkg/storage"
 	pluginsModule "nexora/internal/plugins"
-	publisherModule "nexora/internal/modules/publisher"
-	seoengineModule "nexora/internal/modules/seoengine"
-	translationModule "nexora/internal/modules/translation"
-	workflowModule "nexora/internal/modules/workflow"
-	freshnessModule "nexora/internal/modules/freshness"
-	editorialbrainModule "nexora/internal/modules/editorialbrain"
 )
 
 type eventBusAdapter struct {
@@ -302,6 +302,10 @@ func runServer(cfg *config.Config, log *logger.Logger, ctx context.Context, db *
 	}
 	publisherSvc.SetPublishGate(seoengineSvc)
 	publisherSvc.SetContentEnhancer(seoengineSvc)
+	// Depth/structure quality gate: applied to auto-generated content before
+	// the SEO gate (word count floor, headings, substance, research
+	// grounding). Fail-open on evaluation errors; blocks below threshold.
+	publisherSvc.SetQualityGate(seoengineSvc)
 	editorialSvc.SetLinkSuggestor(seoengineSvc)
 
 	workflowSvc := workflowMod.Service()

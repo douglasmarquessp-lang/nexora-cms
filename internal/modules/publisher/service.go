@@ -32,6 +32,7 @@ type Service struct {
 	publishGate       PublishGate
 	contentEnhancer   ContentEnhancer
 	editorialGate     EditorialGate
+	qualityGate       QualityGate
 	minPublishScore   float64
 	minEditorialScore float64
 	defaultAuthor     string
@@ -127,9 +128,25 @@ func (s *Service) SetEditorialGate(g EditorialGate) {
 	s.editorialGate = g
 }
 
-// checkEditorialGate enforces the editorial note threshold. Fails open: gate
-// errors and missing reviews never block publication.
-func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang string) error {
+// SetQualityGate registers the publish quality gate (depth/structure/substance
+// analysis) applied to auto-generated content before the SEO gate. The gate
+// never blocks on its own evaluation errors — only on a below-threshold
+// verdict.
+func (s *Service) SetQualityGate(g QualityGate) {
+	s.qualityGate = g
+}
+
+// checkEditorialGate enforces the editorial note threshold.
+//
+// Manual publishes (autoPublish=false) fail open: an unavailable evaluation
+// (missing review or infra error) never blocks a human-initiated publish —
+// no fabricated score is produced, the gate is simply skipped.
+//
+// Auto-publishes (autoPublish=true) never publish without a real note: a
+// missing review triggers a deterministic ReviewForGate; if the note cannot
+// be produced the publish blocks with ErrEditorialReviewUnavailable so the
+// article goes to the manual review screen instead of the front page.
+func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, postID *uuid.UUID, title, content, lang string, autoPublish bool) error {
 	if s.editorialGate == nil || s.minEditorialScore <= 0 {
 		return nil
 	}
@@ -144,11 +161,72 @@ func (s *Service) checkEditorialGate(ctx context.Context, siteID uuid.UUID, post
 		Language: lang,
 	})
 	if err != nil {
-		s.log.Warn("editorial gate evaluation failed, allowing publish", "error", err)
-		return nil
+		if errors.Is(err, ErrNoEditorialReview) {
+			if !autoPublish {
+				s.log.Info("no editorial review for manual publish, skipping gate transparently")
+				return nil
+			}
+			// Auto-publish: generate the note right here (deterministic,
+			// real review of the exact content being published) instead of
+			// fabricating one. If the note cannot be produced, block: the
+			// article must go through the manual review screen.
+			if reviewer, ok := s.editorialGate.(EditorialReviewer); ok {
+				score, err = reviewer.ReviewForGate(ctx, EditorialGateInput{
+					SiteID:   siteID,
+					PostID:   postID,
+					Title:    title,
+					Content:  content,
+					Language: lang,
+				})
+				if err != nil {
+					return fmt.Errorf("%w: %v", ErrEditorialReviewUnavailable, err)
+				}
+			} else {
+				return fmt.Errorf("%w: gate cannot produce an editorial note", ErrEditorialReviewUnavailable)
+			}
+		} else {
+			if autoPublish {
+				return fmt.Errorf("%w: %v", ErrEditorialReviewUnavailable, err)
+			}
+			s.log.Warn("editorial gate evaluation failed, allowing manual publish", "error", err)
+			return nil
+		}
 	}
 	if score < s.minEditorialScore {
 		return fmt.Errorf("%w: editorial score %.2f below minimum %.2f", ErrEditorialScoreBelowMinimum, score, s.minEditorialScore)
+	}
+	return nil
+}
+
+// checkQualityGate enforces the publish quality gate for auto-generated
+// content. It is fail-open on evaluation errors (never on the verdict): a
+// real below-threshold result blocks with the full breakdown.
+func (s *Service) checkQualityGate(ctx context.Context, in QualityGateInput) error {
+	if s.qualityGate == nil {
+		return nil
+	}
+	if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.Content) == "" {
+		return nil
+	}
+	res, err := s.qualityGate.CheckQuality(ctx, in)
+	if err != nil {
+		s.log.Warn("quality gate evaluation failed, allowing publish", "error", err)
+		return nil
+	}
+	if res == nil {
+		return nil
+	}
+	if !res.Passed {
+		detail := ""
+		if len(res.Issues) > 0 {
+			msgs := make([]string, 0, len(res.Issues))
+			for _, i := range res.Issues {
+				msgs = append(msgs, i.Field+": "+i.Message)
+			}
+			detail = ": " + strings.Join(msgs, "; ")
+		}
+		return fmt.Errorf("%w: score %.2f below minimum %.2f (words %d, h2 %d)%s",
+			ErrQualityGateBlocked, res.Score, res.MinScore, res.WordCount, res.H2Count, detail)
 	}
 	return nil
 }
@@ -240,6 +318,14 @@ func (s *Service) pool() (database.Pool, error) {
 // --- Publish ---
 
 func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, req PublishRequest) (*PublishResponse, error) {
+	return s.publishArticleInternal(ctx, siteID, userID, req, false)
+}
+
+// publishArticleInternal is the shared publish funnel. skipEditorialGate is
+// true only for content a human approved on a review screen: the approval is
+// the editorial decision, so the gate is skipped transparently (no
+// fabricated note). SEO gate and quality gate always apply.
+func (s *Service) publishArticleInternal(ctx context.Context, siteID, userID uuid.UUID, req PublishRequest, skipEditorialGate bool) (*PublishResponse, error) {
 	if req.Title == "" && req.PostID != nil {
 		rec, err := s.repo.GetPostForPublish(ctx, siteID, *req.PostID)
 		if err != nil {
@@ -332,8 +418,10 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		if err := s.checkPublishGate(ctx, siteID, req.PostID, req.Title, req.Content, lang, req.MetaDescription, "", ""); err != nil {
 			return nil, err
 		}
-		if err := s.checkEditorialGate(ctx, siteID, req.PostID, req.Title, req.Content, lang); err != nil {
-			return nil, err
+		if !skipEditorialGate {
+			if err := s.checkEditorialGate(ctx, siteID, req.PostID, req.Title, req.Content, lang, false); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -482,13 +570,28 @@ func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGenera
 	if author == "" {
 		author = s.defaultAuthor
 	}
+	if err := s.checkQualityGate(ctx, QualityGateInput{
+		SiteID:        req.SiteID,
+		Title:         req.Title,
+		Content:       pubReq.Content,
+		Language:      pubReq.Language,
+		ContentType:   req.ContentType,
+		ResearchFacts: req.ResearchFacts,
+	}); err != nil {
+		return nil, err
+	}
 	if err := s.checkPublishGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, pubReq.MetaDescription, keyword, author); err != nil {
 		return nil, err
 	}
-	if err := s.checkEditorialGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language); err != nil {
-		return nil, err
+	if !req.EditorialApproved {
+		// Human-approved content skips the editorial gate: the approval is
+		// the editorial decision. Everything else is evaluated against a
+		// real review note — never a fabricated 100.
+		if err := s.checkEditorialGate(ctx, req.SiteID, nil, req.Title, pubReq.Content, pubReq.Language, true); err != nil {
+			return nil, err
+		}
 	}
-	resp, err := s.PublishArticle(ctx, req.SiteID, uuid.Nil, pubReq)
+	resp, err := s.publishArticleInternal(ctx, req.SiteID, uuid.Nil, pubReq, req.EditorialApproved)
 	if err != nil {
 		return nil, err
 	}

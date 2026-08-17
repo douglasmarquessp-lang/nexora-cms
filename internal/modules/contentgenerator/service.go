@@ -25,9 +25,10 @@ type Service struct {
 	log         *logger.Logger
 	db          *database.Database
 	cache       *cache.Cache
-	eventBus    *kernel.EventBus
-	auditLog    *audit.Logger
-	aiManager   *ai.Manager
+	eventBus     *kernel.EventBus
+	auditLog     *audit.Logger
+	cfg          *config.Config
+	aiManager    *ai.Manager
 	publisherSvc *publisher.Service
 	researchSvc  *research.Service
 }
@@ -42,7 +43,17 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		db:       db,
 		cache:    ch,
 		auditLog: audit.New(pool, log),
+		cfg:      cfg,
 	}
+}
+
+// pipelineWordCount returns the configured article target
+// (AI_DEFAULT_WORD_COUNT) — never zero.
+func (s *Service) pipelineWordCount() int {
+	if s.cfg != nil && s.cfg.AI.DefaultWordCount > 0 {
+		return s.cfg.AI.DefaultWordCount
+	}
+	return ai.DefaultWordCount
 }
 
 func (s *Service) SetEventBus(bus *kernel.EventBus) {
@@ -436,6 +447,7 @@ func buildGeneratorPipelineInput(job *GenerationJob) ai.PipelineInput {
 	}
 	if job.Category != "" {
 		input.Topic = job.Category
+		input.Title = job.Category
 	}
 	return input
 }
@@ -455,12 +467,14 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 
 	pe := ai.NewPipelineExecutor(s.aiManager)
 	input := buildGeneratorPipelineInput(job)
+	input.WordCount = s.pipelineWordCount()
 	if s.researchSvc != nil {
 		input.ResearchFn = s.researchFn(siteID)
 	}
 
 	var accumulatedContent string
 	var groundingMeta *ai.GroundingMetadata
+	var currentResearch *ai.ResearchSummary
 
 	for _, stage := range ValidStages {
 		stageStr := string(stage)
@@ -510,6 +524,10 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		if pipeStage == ai.StageResearchGen && result.GroundingMetadata != nil {
 			groundingMeta = result.GroundingMetadata
 		}
+		if pipeStage == ai.StageResearchGen {
+			currentResearch = result.Research
+			input.Research = result.Research
+		}
 
 		if groundingMeta != nil {
 			input.GroundingMetadata = groundingMeta
@@ -522,6 +540,14 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 			"ai_content":  result.Content,
 			"ai_stage":    int(pipeStage),
 			"ai_duration": result.Duration,
+		}
+		if result.Analysis != "" {
+			metaData["ai_analysis"] = result.Analysis
+		}
+		if pipeStage == ai.StageResearchGen && currentResearch != nil {
+			if rJSON, err := json.Marshal(currentResearch); err == nil {
+				metaData["ai_research"] = string(rJSON)
+			}
 		}
 		metaJSON, _ := json.Marshal(metaData)
 		_, _ = p.Exec(ctx,
@@ -544,6 +570,7 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 				input.ResearchFn = s.researchFn(siteID)
 			}
 			input.Content = accumulatedContent
+			input.Research = currentResearch
 			if groundingMeta != nil {
 				input.GroundingMetadata = groundingMeta
 			}
@@ -562,12 +589,18 @@ func (s *Service) executeWorkflowAsync(ctx context.Context, siteID, jobID uuid.U
 		if title == "" {
 			title = "Untitled"
 		}
+		facts := 0
+		if currentResearch != nil {
+			facts = len(currentResearch.Facts)
+		}
 		pubReq := publisher.PublishGeneratedRequest{
-			SiteID:   siteID,
-			Title:    title,
-			Content:  accumulatedContent,
-			Language: finalJob.Language,
-			Source:   "contentgenerator",
+			SiteID:        siteID,
+			Title:         title,
+			Content:       accumulatedContent,
+			Language:      finalJob.Language,
+			Source:        "contentgenerator",
+			ContentType:   finalJob.ArticleType,
+			ResearchFacts: facts,
 		}
 		if len(finalJob.Keywords) > 0 {
 			pubReq.Tags = finalJob.Keywords

@@ -311,6 +311,19 @@ type PublishGeneratedRequest struct {
 	// AuthorName (optional) is the byline used by the EEAT analysis. Empty →
 	// the configured site default author is used.
 	AuthorName string `json:"author_name,omitempty"`
+	// ContentType (optional) is the generation engine's article type
+	// (e.g. "how_to", "comparison"). It tunes the publish quality gate
+	// thresholds (news → fewer H2; list/comparison → H3 + examples).
+	ContentType string `json:"content_type,omitempty"`
+	// ResearchFacts is the number of verified facts the generation pipeline
+	// had available. When > 0 the quality gate requires the article to cite
+	// its research (external links or a Sources section).
+	ResearchFacts int `json:"research_facts,omitempty"`
+	// EditorialApproved marks content that a human approved on a review
+	// screen. It skips the editorial gate transparently (the approval is the
+	// editorial decision; no fabricated note is produced). Never sent over
+	// the wire — it is an internal funnel signal.
+	EditorialApproved bool `json:"-"`
 }
 
 // --- Events ---
