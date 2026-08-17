@@ -64,6 +64,8 @@ func (h *Handler) Publish(ctx *rest.Context) {
 			ctx.Error(http.StatusUnprocessableEntity, "SEO_SCORE_BELOW_MINIMUM", "seo score below minimum for publishing")
 		} else if errors.Is(err, ErrEditorialScoreBelowMinimum) {
 			ctx.Error(http.StatusUnprocessableEntity, "EDITORIAL_SCORE_BELOW_MINIMUM", "editorial score below minimum: article returned to review")
+		} else if domainUnresolved(err) {
+			ctx.Error(http.StatusUnprocessableEntity, "DOMAIN_UNRESOLVED", "site has no verified domain configured")
 		} else {
 			h.log.Error("failed to publish article", "error", err)
 			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to publish article")
@@ -144,6 +146,8 @@ func (h *Handler) Update(ctx *rest.Context) {
 			ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "language must be 'pt' or 'en'")
 		} else if errors.Is(err, ErrTitleRequired) {
 			ctx.Error(http.StatusBadRequest, "INVALID_INPUT", "title is required")
+		} else if domainUnresolved(err) {
+			ctx.Error(http.StatusUnprocessableEntity, "DOMAIN_UNRESOLVED", "site has no verified domain configured")
 		} else {
 			h.log.Error("failed to update publication", "error", err)
 			ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to update publication")
@@ -595,8 +599,26 @@ func (h *Handler) GenerateSlug(ctx *rest.Context) {
 		return
 	}
 
+	url, err := h.svc.GenerateSlugURL(ctx.Request.Context(), siteID, slug)
+	if err != nil {
+		if domainUnresolved(err) {
+			ctx.Error(http.StatusUnprocessableEntity, "DOMAIN_UNRESOLVED", "site has no verified domain configured")
+			return
+		}
+		h.log.Error("failed to resolve site domain for slug URL", "error", err)
+		ctx.Error(http.StatusInternalServerError, "INTERNAL", "failed to resolve site domain")
+		return
+	}
+
 	ctx.JSON(http.StatusOK, map[string]interface{}{
 		"slug": slug,
-		"url":  h.svc.GenerateSlugURL(ctx.Request.Context(), siteID, slug),
+		"url":  url,
 	})
+}
+
+// domainUnresolved reports whether the error indicates that the site has no
+// resolvable verified domain (publishing must fail explicitly rather than
+// emit a placeholder domain).
+func domainUnresolved(err error) bool {
+	return errors.Is(err, ErrNoVerifiedDomain) || errors.Is(err, ErrDomainUnresolved)
 }

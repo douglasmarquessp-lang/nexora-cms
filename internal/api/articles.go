@@ -2,6 +2,7 @@ package api
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,11 +13,13 @@ import (
 	publisherModule "nexora/internal/modules/publisher"
 	researchModule "nexora/internal/modules/research"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitedomain"
 )
 
 type publicArticleHandler struct {
 	publisherSvc *publisherModule.Service
 	researchSvc  *researchModule.Service
+	siteResolver sitedomain.Resolver
 	log          *logger.Logger
 }
 
@@ -24,32 +27,51 @@ func newPublicArticleHandler(deps *Dependencies) *publicArticleHandler {
 	return &publicArticleHandler{
 		publisherSvc: deps.PublisherSvc,
 		researchSvc:  deps.ResearchSvc,
+		siteResolver: deps.SiteResolver,
 		log:          deps.Log,
 	}
 }
 
+// domainFor resolves the site's verified public domain once per request. It
+// returns "" (never a placeholder domain) when resolution is unavailable or
+// the site has no verified domain — the SEO layer then simply omits
+// domain-dependent fields instead of emitting example.com.
+func (h *publicArticleHandler) domainFor(c *rest.Context, siteID uuid.UUID) string {
+	if h.siteResolver == nil {
+		return ""
+	}
+	sc, err := h.siteResolver.Resolve(c.Request.Context(), siteID)
+	if err != nil || sc.Domain == "" {
+		return ""
+	}
+	if isExampleDomain(hostOf(sc.Domain)) {
+		return ""
+	}
+	return strings.TrimRight(sc.Domain, "/")
+}
+
 type PublicArticleResponse struct {
-	ID               uuid.UUID              `json:"id"`
-	SiteID           uuid.UUID              `json:"site_id"`
-	Title            string                 `json:"title"`
-	Slug             string                 `json:"slug"`
-	Excerpt          string                 `json:"excerpt,omitempty"`
-	Content          string                 `json:"content,omitempty"`
-	FeaturedImageURL string                 `json:"featured_image_url,omitempty"`
-	AuthorID         *uuid.UUID             `json:"author_id,omitempty"`
-	PublishedAt      *time.Time             `json:"published_at"`
-	MetaTitle        string                 `json:"meta_title,omitempty"`
-	MetaDescription  string                 `json:"meta_description,omitempty"`
-	OgImage          string                 `json:"og_image,omitempty"`
-	CanonicalURL     string                 `json:"canonical_url,omitempty"`
-	Language         string                 `json:"language"`
-	Tags             []string               `json:"tags,omitempty"`
-	Categories       []string               `json:"categories,omitempty"`
-	WordCount        int                    `json:"word_count"`
-	ReadingTime      int                    `json:"reading_time"`
-	FreshnessScore   float64                `json:"freshness_score,omitempty"`
-	Sources          []PublicArticleSource  `json:"sources,omitempty"`
-	SEO              PublicArticleSEO       `json:"seo,omitempty"`
+	ID               uuid.UUID             `json:"id"`
+	SiteID           uuid.UUID             `json:"site_id"`
+	Title            string                `json:"title"`
+	Slug             string                `json:"slug"`
+	Excerpt          string                `json:"excerpt,omitempty"`
+	Content          string                `json:"content,omitempty"`
+	FeaturedImageURL string                `json:"featured_image_url,omitempty"`
+	AuthorID         *uuid.UUID            `json:"author_id,omitempty"`
+	PublishedAt      *time.Time            `json:"published_at"`
+	MetaTitle        string                `json:"meta_title,omitempty"`
+	MetaDescription  string                `json:"meta_description,omitempty"`
+	OgImage          string                `json:"og_image,omitempty"`
+	CanonicalURL     string                `json:"canonical_url,omitempty"`
+	Language         string                `json:"language"`
+	Tags             []string              `json:"tags,omitempty"`
+	Categories       []string              `json:"categories,omitempty"`
+	WordCount        int                   `json:"word_count"`
+	ReadingTime      int                   `json:"reading_time"`
+	FreshnessScore   float64               `json:"freshness_score,omitempty"`
+	Sources          []PublicArticleSource `json:"sources,omitempty"`
+	SEO              PublicArticleSEO      `json:"seo,omitempty"`
 }
 
 type PublicArticleSource struct {
@@ -101,15 +123,20 @@ func (h *publicArticleHandler) List(c *rest.Context) {
 	}
 
 	articles := make([]PublicArticleResponse, 0, len(pubs))
+	domain := h.domainFor(c, siteID)
 	for _, pub := range pubs {
-		articles = append(articles, toPublicArticleResponse(&pub, h.researchSvc, siteID, c))
+		articles = append(articles, toPublicArticleResponse(&pub, h.researchSvc, siteID, domain, c))
 	}
 
 	c.JSON(200, PublicArticleListResponse{Articles: articles, Total: total})
 }
 
-func toPublicArticleResponse(pub *publisherModule.Publication, researchSvc *researchModule.Service, siteID uuid.UUID, c *rest.Context) PublicArticleResponse {
-	domain := deriveSiteDomain(pub.URL, pub.CanonicalURL)
+func toPublicArticleResponse(pub *publisherModule.Publication, researchSvc *researchModule.Service, siteID uuid.UUID, domain string, c *rest.Context) PublicArticleResponse {
+	if domain == "" {
+		// Legacy records may still carry a real domain even when resolution
+		// failed; deriveSiteDomain never returns a placeholder.
+		domain = deriveSiteDomain(pub.URL, pub.CanonicalURL)
+	}
 	resp := PublicArticleResponse{
 		ID:               pub.ID,
 		SiteID:           pub.SiteID,
@@ -190,7 +217,7 @@ func (h *publicArticleHandler) GetBySlug(c *rest.Context) {
 		return
 	}
 
-	c.JSON(200, toPublicArticleResponse(pub, h.researchSvc, siteID, c))
+	c.JSON(200, toPublicArticleResponse(pub, h.researchSvc, siteID, h.domainFor(c, siteID), c))
 }
 
 // --- Public Categories Handler ---

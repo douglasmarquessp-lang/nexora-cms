@@ -85,29 +85,24 @@ func TestSiteSchemaHandler_PTSite(t *testing.T) {
 	}
 }
 
-func TestSiteSchemaHandler_Fallback(t *testing.T) {
-	// No resolver / no domain → defensive fallback stays compatible.
+func TestSiteSchemaHandler_NoResolver_ExplicitError(t *testing.T) {
+	// No resolver → the schema endpoint must fail explicitly instead of
+	// serving schemas with a placeholder domain.
 	h := newPublicSiteSchemaHandler(&Dependencies{})
 
 	rec := httptest.NewRecorder()
 	rest.AdaptHandler(h.Get).ServeHTTP(rec, schemaRequest(uuid.New()))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 without resolver, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "example.com") {
-		t.Errorf("expected fallback domain, got: %s", body)
-	}
-	if !strings.Contains(body, `busca?q={search_term_string}`) {
-		t.Errorf("expected fallback search route /busca, got: %s", body)
-	}
-	if !strings.Contains(body, `inLanguage\":\"pt`) {
-		t.Errorf("expected fallback pt inLanguage, got: %s", body)
+	if strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("placeholder domain must never appear: %s", rec.Body.String())
 	}
 }
 
-func TestSiteSchemaHandler_ResolverErrorFallsBack(t *testing.T) {
+func TestSiteSchemaHandler_ResolverError_ExplicitError(t *testing.T) {
+	// Resolver failure (degraded DB) → explicit 422, never a fake domain.
 	h := newPublicSiteSchemaHandler(&Dependencies{
 		SiteResolver: &fakeSiteResolver{err: context.DeadlineExceeded},
 	})
@@ -115,11 +110,51 @@ func TestSiteSchemaHandler_ResolverErrorFallsBack(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rest.AdaptHandler(h.Get).ServeHTTP(rec, schemaRequest(uuid.New()))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (fail-open), got %d", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 on resolver error, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "example.com") {
-		t.Errorf("expected fallback domain on resolver error, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "DOMAIN_UNRESOLVED") {
+		t.Errorf("expected DOMAIN_UNRESOLVED, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("placeholder domain must never appear: %s", rec.Body.String())
+	}
+}
+
+func TestSiteSchemaHandler_NoVerifiedDomain_ExplicitError(t *testing.T) {
+	// Resolver succeeds but the site has no verified domain → explicit 422.
+	h := newPublicSiteSchemaHandler(&Dependencies{
+		SiteResolver: &fakeSiteResolver{sc: sitedomain.SiteContext{
+			Domain:          "",
+			PrimaryLanguage: "pt",
+		}},
+	})
+
+	rec := httptest.NewRecorder()
+	rest.AdaptHandler(h.Get).ServeHTTP(rec, schemaRequest(uuid.New()))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 without verified domain, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("placeholder domain must never appear: %s", rec.Body.String())
+	}
+}
+
+func TestSiteSchemaHandler_PlaceholderDomain_ExplicitError(t *testing.T) {
+	// A resolver returning example.com is treated as unresolvable.
+	h := newPublicSiteSchemaHandler(&Dependencies{
+		SiteResolver: &fakeSiteResolver{sc: sitedomain.SiteContext{
+			Domain:          "https://example.com",
+			PrimaryLanguage: "pt",
+		}},
+	})
+
+	rec := httptest.NewRecorder()
+	rest.AdaptHandler(h.Get).ServeHTTP(rec, schemaRequest(uuid.New()))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for placeholder domain, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

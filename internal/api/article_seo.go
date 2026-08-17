@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -24,13 +25,11 @@ type siteSchemaResponse struct {
 
 // publicSiteSchemaHandler serves the site-level JSON-LD schemas.
 type publicSiteSchemaHandler struct {
-	publisherSvc *publisherModule.Service
 	siteResolver sitedomain.Resolver
 }
 
 func newPublicSiteSchemaHandler(deps *Dependencies) *publicSiteSchemaHandler {
 	return &publicSiteSchemaHandler{
-		publisherSvc: deps.PublisherSvc,
 		siteResolver: deps.SiteResolver,
 	}
 }
@@ -41,27 +40,24 @@ func (h *publicSiteSchemaHandler) Get(c *rest.Context) {
 		c.Error(400, "SITE_REQUIRED", "site identifier is required")
 		return
 	}
+	if h.siteResolver == nil {
+		c.Error(503, "DOMAIN_UNRESOLVED", "site domain resolution unavailable")
+		return
+	}
+	sc, err := h.siteResolver.Resolve(c.Request.Context(), siteID)
+	if err != nil || sc.Domain == "" {
+		c.Error(422, "DOMAIN_UNRESOLVED", "site has no verified domain configured")
+		return
+	}
+	if isExampleDomain(hostOf(sc.Domain)) {
+		c.Error(422, "DOMAIN_UNRESOLVED", "site domain is not a real verified domain")
+		return
+	}
+	domain := strings.TrimRight(sc.Domain, "/")
+	language := sc.PrimaryLanguage
 
-	domain := "https://example.com"
-	language := "pt"
-	if h.publisherSvc != nil {
-		domain = h.publisherSvc.SiteDomain()
-	}
-	// The site's own configuration wins whenever it can be resolved; the
-	// fallbacks above only apply when the resolver is unavailable or the
-	// site has no configured domain/language.
-	if h.siteResolver != nil {
-		if sc, err := h.siteResolver.Resolve(c.Request.Context(), siteID); err == nil {
-			if sc.Domain != "" {
-				domain = sc.Domain
-			}
-			if sc.PrimaryLanguage != "" {
-				language = sc.PrimaryLanguage
-			}
-		}
-	}
 	siteName := siteNameFromDomain(domain)
-	base := strings.TrimRight(domain, "/") + "/"
+	base := domain + "/"
 
 	resp := siteSchemaResponse{}
 	if org, err := seoengineModule.BuildOrganizationSchema(siteName, base, "", "", nil); err == nil {
@@ -92,17 +88,26 @@ type PublicArticleSEO struct {
 
 // buildArticleSEO generates hreflang alternates, Open Graph/Twitter card data
 // and the JSON-LD rich snippets (Article/NewsArticle, FAQ, HowTo, Breadcrumb)
-// for a publication. Pure and deterministic.
+// for a publication. Pure and deterministic. URLs on example.com are never
+// emitted: legacy records that still carry a placeholder domain get their
+// SEO fields suppressed until the domain is backfilled.
 func buildArticleSEO(pub *publisherModule.Publication, siteDomain string) PublicArticleSEO {
 	seo := PublicArticleSEO{
 		OgType:      "article",
 		TwitterCard: "summary_large_image",
 	}
 
+	// A placeholder site domain is treated as absent: breadcrumb and
+	// site-level schemas must never reference example.com.
+	siteDomainClean := ""
+	if siteDomain != "" && !isExampleDomain(hostOf(siteDomain)) {
+		siteDomainClean = strings.TrimRight(siteDomain, "/")
+	}
+
 	// Hreflang alternates from multilingual URLs (self + siblings).
-	self := pub.URL
+	self := cleanArticleURL(pub.URL)
 	if self == "" {
-		self = pub.CanonicalURL
+		self = cleanArticleURL(pub.CanonicalURL)
 	}
 	if self != "" {
 		seo.Hreflang = append(seo.Hreflang, HreflangLink{Lang: pub.Language, URL: self})
@@ -110,6 +115,7 @@ func buildArticleSEO(pub *publisherModule.Publication, siteDomain string) Public
 	langs := []string{}
 	for lang, u := range pub.MultilingualURLs {
 		urlStr, _ := u.(string)
+		urlStr = cleanArticleURL(urlStr)
 		if urlStr == "" {
 			continue
 		}
@@ -162,22 +168,25 @@ func buildArticleSEO(pub *publisherModule.Publication, siteDomain string) Public
 		}
 	}
 
-	if url != "" {
+	if url != "" && siteDomainClean != "" {
 		if breadcrumb, err := seoengineModule.BuildBreadcrumbSchema([]seoengineModule.BreadcrumbItem{
-			{Name: "Home", URL: strings.TrimRight(siteDomain, "/") + "/"},
+			{Name: "Home", URL: siteDomainClean + "/"},
 			{Name: pub.Title, URL: url},
 		}); err == nil && breadcrumb != "" {
 			seo.SchemaJSONLD = append(seo.SchemaJSONLD, breadcrumb)
 		}
 	}
 
-	// Site-level schemas (Organization + WebSite).
-	siteName := siteNameFromDomain(siteDomain)
-	if org, err := seoengineModule.BuildOrganizationSchema(siteName, strings.TrimRight(siteDomain, "/")+"/", image, "", nil); err == nil && org != "" {
-		seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, org)
-	}
-	if site, err := seoengineModule.BuildWebSiteSchema(siteName, strings.TrimRight(siteDomain, "/")+"/", strings.TrimRight(siteDomain, "/")+"/"+searchURL(pub.Language), pub.Language); err == nil && site != "" {
-		seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, site)
+	// Site-level schemas (Organization + WebSite) only when the site has a
+	// real resolved domain; a placeholder domain would pollute every schema.
+	if siteDomainClean != "" {
+		siteName := siteNameFromDomain(siteDomainClean)
+		if org, err := seoengineModule.BuildOrganizationSchema(siteName, siteDomainClean+"/", image, "", nil); err == nil && org != "" {
+			seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, org)
+		}
+		if site, err := seoengineModule.BuildWebSiteSchema(siteName, siteDomainClean+"/", siteDomainClean+"/"+searchURL(pub.Language), pub.Language); err == nil && site != "" {
+			seo.SiteSchemaJSONLD = append(seo.SiteSchemaJSONLD, site)
+		}
 	}
 
 	return seo
@@ -259,24 +268,73 @@ func extractHowToSteps(content string) []seoengineModule.HowToStep {
 }
 
 // deriveSiteDomain extracts the scheme+host base from a publication URL so the
-// SEO layer can build absolute hreflang/breadcrumb/schema URLs.
+// SEO layer can build absolute hreflang/breadcrumb/schema URLs. It returns ""
+// when no usable URL is available or the URL belongs to a placeholder domain
+// (example.com), so callers never emit fake domains.
 func deriveSiteDomain(urls ...string) string {
 	for _, u := range urls {
 		if u == "" {
 			continue
 		}
-		if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
-			lower := strings.ToLower(u)
-			if i := strings.Index(lower, "//"); i >= 0 {
-				rest := lower[i+2:]
-				if j := strings.IndexAny(rest, "/"); j >= 0 {
-					return lower[:i+2] + rest[:j]
-				}
-				return lower
-			}
+		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			continue
 		}
+		if hostOf(u) == "" || isExampleDomain(hostOf(u)) {
+			continue
+		}
+		schemeEnd := strings.Index(u, "//") + 2
+		rest := u[schemeEnd:]
+		if j := strings.IndexAny(rest, "/"); j >= 0 {
+			return u[:schemeEnd] + rest[:j]
+		}
+		return u
 	}
-	return "https://example.com"
+	return ""
+}
+
+// hostOf returns the lowercased host of an http(s) URL, or "" when the URL is
+// missing, malformed, or not an http(s) URL.
+func hostOf(u string) string {
+	if u == "" {
+		return ""
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return ""
+	}
+	return strings.ToLower(parsed.Host)
+}
+
+// isExampleDomain reports whether the host is example.com or one of its
+// subdomains (the placeholder domain never leaves the codebase as a real
+// production URL).
+func isExampleDomain(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "example.com" || strings.HasSuffix(host, ".example.com")
+}
+
+// cleanArticleURL returns the URL unchanged when it is a well-formed http(s)
+// URL on a real host, and "" otherwise. Legacy publications that still carry
+// a placeholder domain (example.com) are suppressed from hreflang/schema
+// output until their domain is backfilled.
+func cleanArticleURL(u string) string {
+	if u == "" {
+		return ""
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return ""
+	}
+	if isExampleDomain(strings.ToLower(parsed.Host)) {
+		return ""
+	}
+	return u
 }
 
 func siteNameFromDomain(siteDomain string) string {

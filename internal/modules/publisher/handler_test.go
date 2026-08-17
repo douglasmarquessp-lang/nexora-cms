@@ -47,6 +47,10 @@ func setupHandlerTest(t *testing.T) (*Handler, *Service) {
 	cfg := &config.Config{}
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
+	svc.SetSiteResolver(&fakeSiteResolver{sc: sitedomain.SiteContext{
+		Domain:          "https://testsite.local",
+		PrimaryLanguage: "pt",
+	}})
 	h := NewHandler(svc, log)
 	return h, svc
 }
@@ -125,6 +129,28 @@ func TestHandler_Publish(t *testing.T) {
 		rest.AdaptHandler(h.Publish).ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+
+	t.Run("domain unresolved", func(t *testing.T) {
+		// No resolver → the service refuses to publish without a verified
+		// domain; the handler must surface the explicit 422, never a fake URL.
+		cfg := &config.Config{}
+		log := logger.New(cfg)
+		svc := NewService(cfg, log, nil, nil)
+		h := NewHandler(svc, log)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/publisher/publish", strings.NewReader(`{"title":"Test","language":"pt"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = withSiteID(req)
+		req = withUserID(req)
+		rest.AdaptHandler(h.Publish).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "DOMAIN_UNRESOLVED") {
+			t.Errorf("expected DOMAIN_UNRESOLVED error code, got: %s", rec.Body.String())
 		}
 	})
 }

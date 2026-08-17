@@ -102,18 +102,18 @@ type Publication struct {
 	// FeaturedImageCredit is transient (never persisted to the publications
 	// row): it carries the image attribution from the funnel so the API
 	// response can include it right after publishing.
-	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
-	Tags                []string     `json:"tags,omitempty"`
-	Categories       []string               `json:"categories,omitempty"`
-	WordCount        int                    `json:"word_count"`
-	ReadingTime      int                    `json:"reading_time"`
-	Revision         int                    `json:"revision"`
-	Checksum         string                 `json:"checksum,omitempty"`
-	Source           string                 `json:"source,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
-	CreatedBy        *uuid.UUID             `json:"created_by,omitempty"`
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
+	FeaturedImageCredit *ImageCredit           `json:"featured_image_credit,omitempty"`
+	Tags                []string               `json:"tags,omitempty"`
+	Categories          []string               `json:"categories,omitempty"`
+	WordCount           int                    `json:"word_count"`
+	ReadingTime         int                    `json:"reading_time"`
+	Revision            int                    `json:"revision"`
+	Checksum            string                 `json:"checksum,omitempty"`
+	Source              string                 `json:"source,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
+	CreatedBy           *uuid.UUID             `json:"created_by,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
 }
 
 type PublicationHistory struct {
@@ -193,29 +193,29 @@ type PublicationMetrics struct {
 // --- DTOs ---
 
 type PublishRequest struct {
-	PostID           *uuid.UUID             `json:"post_id,omitempty"`
-	Title            string                 `json:"title"`
-	Content          string                 `json:"content,omitempty"`
-	Excerpt          string                 `json:"excerpt,omitempty"`
-	Slug             string                 `json:"slug,omitempty"`
-	Language         string                 `json:"language,omitempty"`
-	Visibility       Visibility             `json:"visibility,omitempty"`
-	AuthorID         *uuid.UUID             `json:"author_id,omitempty"`
-	IsFeatured       bool                   `json:"is_featured,omitempty"`
-	MetaTitle        string                 `json:"meta_title,omitempty"`
-	MetaDescription  string                 `json:"meta_description,omitempty"`
-	OgImage          string                 `json:"og_image,omitempty"`
-	FeaturedImageURL string                 `json:"featured_image_url,omitempty"`
+	PostID           *uuid.UUID `json:"post_id,omitempty"`
+	Title            string     `json:"title"`
+	Content          string     `json:"content,omitempty"`
+	Excerpt          string     `json:"excerpt,omitempty"`
+	Slug             string     `json:"slug,omitempty"`
+	Language         string     `json:"language,omitempty"`
+	Visibility       Visibility `json:"visibility,omitempty"`
+	AuthorID         *uuid.UUID `json:"author_id,omitempty"`
+	IsFeatured       bool       `json:"is_featured,omitempty"`
+	MetaTitle        string     `json:"meta_title,omitempty"`
+	MetaDescription  string     `json:"meta_description,omitempty"`
+	OgImage          string     `json:"og_image,omitempty"`
+	FeaturedImageURL string     `json:"featured_image_url,omitempty"`
 	// FeaturedImageAlt is the honest alt text of the featured image.
 	FeaturedImageAlt string `json:"featured_image_alt,omitempty"`
 	// FeaturedImageCredit is the optional attribution of the featured image
 	// (photographer + source links). Transient: not persisted to the
 	// publications row, carried through the publish funnel so the public
 	// article body can render the credit the reviewer saw.
-	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
-	Tags                []string     `json:"tags,omitempty"`
-	Categories          []string     `json:"categories,omitempty"`
-	CanonicalURL        string       `json:"canonical_url,omitempty"`
+	FeaturedImageCredit *ImageCredit           `json:"featured_image_credit,omitempty"`
+	Tags                []string               `json:"tags,omitempty"`
+	Categories          []string               `json:"categories,omitempty"`
+	CanonicalURL        string                 `json:"canonical_url,omitempty"`
 	Translations        map[string]interface{} `json:"translations,omitempty"`
 	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 	Source              string                 `json:"source,omitempty"`
@@ -302,9 +302,9 @@ type PublishGeneratedRequest struct {
 	// the same credit the reviewer saw.
 	FeaturedImageCredit *ImageCredit `json:"featured_image_credit,omitempty"`
 	Tags                []string     `json:"tags,omitempty"`
-	Categories       []string  `json:"categories,omitempty"`
-	Source           string    `json:"source,omitempty"`
-	SourceJobID      uuid.UUID `json:"source_job_id,omitempty"`
+	Categories          []string     `json:"categories,omitempty"`
+	Source              string       `json:"source,omitempty"`
+	SourceJobID         uuid.UUID    `json:"source_job_id,omitempty"`
 	// Keyword (optional) is the focus keyword the generation pipeline
 	// identified. Empty → derived deterministically from title+content.
 	Keyword string `json:"keyword,omitempty"`
@@ -359,4 +359,6 @@ var (
 	ErrCannotModifyPublished       = errors.New("cannot modify published publication, use update instead")
 	ErrHistoryNotFound             = errors.New("history entry not found")
 	ErrMetricsNotFound             = errors.New("metrics not found")
+	ErrNoVerifiedDomain            = errors.New("site has no verified domain configured")
+	ErrDomainUnresolved            = errors.New("site domain could not be resolved")
 )

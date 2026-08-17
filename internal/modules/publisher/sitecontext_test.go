@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -232,8 +233,9 @@ func TestPublishArticle_MultilingualURLs_PrimaryEN(t *testing.T) {
 	}
 }
 
-func TestPublishArticle_FallbackWithoutResolver(t *testing.T) {
-	// No resolver registered → legacy defensive fallback stays compatible.
+func TestPublishArticle_NoResolver_ExplicitError(t *testing.T) {
+	// No resolver registered → publishing fails explicitly; the service never
+	// falls back to a placeholder domain.
 	cfg := &config.Config{}
 	log := logger.New(cfg)
 	svc := NewService(cfg, log, nil, nil)
@@ -243,14 +245,90 @@ func TestPublishArticle_FallbackWithoutResolver(t *testing.T) {
 		Title:    "Teste",
 		Language: "",
 	})
-	if err != ErrDatabaseNotAvail {
-		t.Errorf("expected ErrDatabaseNotAvail (nil DB), got %v", err)
+	if !errors.Is(err, ErrDomainUnresolved) {
+		t.Errorf("expected ErrDomainUnresolved (no resolver), got %v", err)
 	}
 
-	// URL preview path without resolver: fallback domain + pt.
-	url := svc.GenerateSlugURL(context.Background(), siteID, "teste")
-	if url != "https://example.com/teste" {
-		t.Errorf("fallback url = %q, want https://example.com/teste", url)
+	// URL preview path without resolver: explicit error, never example.com.
+	_, err = svc.GenerateSlugURL(context.Background(), siteID, "teste")
+	if !errors.Is(err, ErrDomainUnresolved) {
+		t.Errorf("expected ErrDomainUnresolved for slug URL, got %v", err)
+	}
+}
+
+func TestPublishArticle_NoVerifiedDomain_ExplicitError(t *testing.T) {
+	// Resolver registered but the site has no verified domain → the service
+	// must fail explicitly instead of emitting a placeholder domain.
+	svc, _ := siteContextSvc(t, sitedomain.SiteContext{
+		Domain:          "",
+		PrimaryLanguage: "pt",
+	})
+	siteID := uuid.New()
+
+	_, err := svc.PublishArticle(context.Background(), siteID, uuid.New(), PublishRequest{
+		Title:    "Teste",
+		Language: "",
+	})
+	if !errors.Is(err, ErrNoVerifiedDomain) {
+		t.Errorf("expected ErrNoVerifiedDomain, got %v", err)
+	}
+
+	_, err = svc.GenerateSlugURL(context.Background(), siteID, "teste")
+	if !errors.Is(err, ErrNoVerifiedDomain) {
+		t.Errorf("expected ErrNoVerifiedDomain for slug URL, got %v", err)
+	}
+}
+
+func TestPublishArticle_ResolverError_ExplicitError(t *testing.T) {
+	// Resolver failure (degraded DB) → publish fails explicitly.
+	svc, _ := siteContextSvc(t, sitedomain.SiteContext{})
+	svc.SetSiteResolver(&fakeSiteResolver{err: errors.New("db down")})
+	siteID := uuid.New()
+
+	_, err := svc.PublishArticle(context.Background(), siteID, uuid.New(), PublishRequest{
+		Title:    "Teste",
+		Language: "",
+	})
+	if !errors.Is(err, ErrDomainUnresolved) {
+		t.Errorf("expected ErrDomainUnresolved (resolver error), got %v", err)
+	}
+}
+
+func TestPublishArticle_AIWorkSimple_OfficialDomain(t *testing.T) {
+	// AIWorkSimple resolves to its official domain; the placeholder domain is
+	// never used anywhere in the published URLs.
+	pinID, err := uuid.Parse(aiWorkSimpleID)
+	if err != nil {
+		t.Fatalf("invalid pin id: %v", err)
+	}
+	svc, mock := siteContextSvc(t, sitedomain.SiteContext{
+		Domain:          "https://www.aiworksimple.com",
+		PrimaryLanguage: "en",
+	})
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM publications`).
+		WithArgs(pinID, "test-article").
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
+	expectInsertPublication(mock)
+
+	resp, err := svc.PublishArticle(context.Background(), pinID, uuid.New(), PublishRequest{
+		Title:    "Test Article",
+		Language: "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Publication.URL != "https://www.aiworksimple.com/test-article" {
+		t.Errorf("url = %q, want official domain root", resp.Publication.URL)
+	}
+	if resp.Publication.CanonicalURL != "https://www.aiworksimple.com/test-article" {
+		t.Errorf("canonical = %q, want official domain root", resp.Publication.CanonicalURL)
+	}
+	if resp.Publication.Language != "en" {
+		t.Errorf("language = %q, want pinned %q", resp.Publication.Language, "en")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 
@@ -411,7 +489,10 @@ func TestGenerateSlugURL_ResolvedDomain(t *testing.T) {
 		PrimaryLanguage: "en",
 	})
 
-	url := svc.GenerateSlugURL(context.Background(), uuid.New(), "test-article")
+	url, err := svc.GenerateSlugURL(context.Background(), uuid.New(), "test-article")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if url != "https://aiworksimple.com/test-article" {
 		t.Errorf("url = %q, want %q", url, "https://aiworksimple.com/test-article")
 	}
@@ -423,7 +504,10 @@ func TestGenerateSlugURL_PTSite(t *testing.T) {
 		PrimaryLanguage: "pt",
 	})
 
-	url := svc.GenerateSlugURL(context.Background(), uuid.New(), "teste")
+	url, err := svc.GenerateSlugURL(context.Background(), uuid.New(), "teste")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if url != "https://dominio-pt.com/teste" {
 		t.Errorf("url = %q, want %q", url, "https://dominio-pt.com/teste")
 	}

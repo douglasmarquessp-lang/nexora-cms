@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -27,7 +28,6 @@ type Service struct {
 	val               *Validator
 	eventBus          *kernel.EventBus
 	auditLog          *audit.Logger
-	siteDomain        string
 	siteResolver      sitedomain.Resolver
 	publishGate       PublishGate
 	contentEnhancer   ContentEnhancer
@@ -49,7 +49,6 @@ func NewService(cfg *config.Config, log *logger.Logger, db *database.Database, c
 		repo:              NewRepository(pool),
 		val:               NewValidator(),
 		auditLog:          audit.New(pool, log),
-		siteDomain:        "https://example.com",
 		publishGate:       nil,
 		minPublishScore:   cfg.SEO.MinPublishScore,
 		minEditorialScore: cfg.Editorial.MinFinalScore,
@@ -61,54 +60,51 @@ func (s *Service) SetEventBus(bus *kernel.EventBus) {
 	s.eventBus = bus
 }
 
-// SiteDomain returns the configured fallback site base domain. It is used
-// only when the site resolver is unavailable or has no resolvable domain;
-// with a resolver, production URLs come from the site's own configuration.
-func (s *Service) SiteDomain() string {
-	return s.siteDomain
-}
-
 // SetSiteResolver registers the per-site context resolver (domain + primary
-// language). When nil, the service falls back to its legacy defaults.
+// language). Publication URLs always come from the site's own configuration;
+// when no resolver is registered or the site has no verified domain, calls
+// fail explicitly instead of falling back to a placeholder domain.
 func (s *Service) SetSiteResolver(r sitedomain.Resolver) {
 	s.siteResolver = r
 }
 
 // resolveSiteContext resolves the public domain and primary language for a
-// site. Falls back to the legacy defaults when no resolver is registered or
-// resolution fails (degraded DB, missing site). When the resolver succeeds
-// but the site has no verified domain/locale, the defensive fallbacks keep
-// existing behavior for sites that were never configured.
-func (s *Service) resolveSiteContext(ctx context.Context, siteID uuid.UUID) sitedomain.SiteContext {
-	fallback := sitedomain.SiteContext{Domain: s.siteDomain, PrimaryLanguage: "pt"}
+// site. It returns an explicit error when no resolver is registered or the
+// site has no verified domain, so callers never publish with a placeholder
+// domain.
+func (s *Service) resolveSiteContext(ctx context.Context, siteID uuid.UUID) (sitedomain.SiteContext, error) {
 	if s.siteResolver == nil {
-		return fallback
+		return sitedomain.SiteContext{}, ErrDomainUnresolved
 	}
 	sc, err := s.siteResolver.Resolve(ctx, siteID)
 	if err != nil {
-		s.log.Warn("site resolver failed, using fallback domain/language",
+		if errors.Is(err, sitedomain.ErrNoVerifiedDomain) {
+			return sitedomain.SiteContext{}, ErrNoVerifiedDomain
+		}
+		s.log.Warn("site resolver failed, refusing to publish without a resolved domain",
 			"site_id", siteID.String(), "error", err)
-		return fallback
+		return sitedomain.SiteContext{}, ErrDomainUnresolved
 	}
 	if sc.Domain == "" {
-		sc.Domain = s.siteDomain
+		return sitedomain.SiteContext{}, ErrNoVerifiedDomain
 	}
-	if sc.PrimaryLanguage == "" {
-		sc.PrimaryLanguage = "pt"
-	}
-	return sc
+	return sc, nil
 }
 
 // effectiveLanguage returns the publish language for a site: an explicit
 // request is honored (subject to the caller's validation), an empty request
 // falls back to the site's primary language, and the site-level pin
 // (sitelang) keeps its existing precedence as the top layer.
-func (s *Service) effectiveLanguage(ctx context.Context, siteID uuid.UUID, requested string) string {
+func (s *Service) effectiveLanguage(ctx context.Context, siteID uuid.UUID, requested string) (string, error) {
 	lang := strings.ToLower(requested)
 	if lang == "" {
-		lang = s.resolveSiteContext(ctx, siteID).PrimaryLanguage
+		sc, err := s.resolveSiteContext(ctx, siteID)
+		if err != nil {
+			return "", err
+		}
+		lang = sc.PrimaryLanguage
 	}
-	return sitelang.Resolve(siteID, lang)
+	return sitelang.Resolve(siteID, lang), nil
 }
 
 // SetPublishGate registers the SEO publish gate. When set and the configured
@@ -286,7 +282,10 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 		return nil, ErrTitleRequired
 	}
 
-	sc := s.resolveSiteContext(ctx, siteID)
+	sc, err := s.resolveSiteContext(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
 	// The site's primary language is the root URL language; the pin (sitelang
 	// override) supersedes the locale-derived primary wherever it applies.
 	prim := sitelang.Resolve(siteID, sc.PrimaryLanguage)
@@ -351,41 +350,41 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 	readingTime := int(math.Ceil(float64(wordCount) / 200))
 
 	pub := &Publication{
-		ID:               pubID,
-		SiteID:           siteID,
-		PostID:           req.PostID,
-		Title:            req.Title,
-		Content:          req.Content,
-		Excerpt:          req.Excerpt,
-		Slug:             slug,
-		URL:              url,
-		CanonicalURL:     canonical,
-		Language:         lang,
-		Translations:     req.Translations,
-		MultilingualURLs: buildMultilingualURLs(req.Translations, slug, sc.Domain, prim),
-		Status:           PubStatusPublished,
-		Visibility:       vis,
-		AuthorID:         req.AuthorID,
-		PublishedBy:      &userID,
-		PublishedAt:      &now,
-		IsFeatured:       req.IsFeatured,
-		MetaTitle:        req.MetaTitle,
-		MetaDescription:  req.MetaDescription,
-		OgImage:          req.OgImage,
-		FeaturedImageURL: req.FeaturedImageURL,
-		FeaturedImageAlt: req.FeaturedImageAlt,
+		ID:                  pubID,
+		SiteID:              siteID,
+		PostID:              req.PostID,
+		Title:               req.Title,
+		Content:             req.Content,
+		Excerpt:             req.Excerpt,
+		Slug:                slug,
+		URL:                 url,
+		CanonicalURL:        canonical,
+		Language:            lang,
+		Translations:        req.Translations,
+		MultilingualURLs:    buildMultilingualURLs(req.Translations, slug, sc.Domain, prim),
+		Status:              PubStatusPublished,
+		Visibility:          vis,
+		AuthorID:            req.AuthorID,
+		PublishedBy:         &userID,
+		PublishedAt:         &now,
+		IsFeatured:          req.IsFeatured,
+		MetaTitle:           req.MetaTitle,
+		MetaDescription:     req.MetaDescription,
+		OgImage:             req.OgImage,
+		FeaturedImageURL:    req.FeaturedImageURL,
+		FeaturedImageAlt:    req.FeaturedImageAlt,
 		FeaturedImageCredit: req.FeaturedImageCredit,
-		Tags:             req.Tags,
-		Categories:       req.Categories,
-		WordCount:        wordCount,
-		ReadingTime:      readingTime,
-		Revision:         1,
-		Checksum:         s.val.ComputeChecksum(&Publication{Title: req.Title, Content: req.Content, Slug: slug, Tags: req.Tags, Categories: req.Categories, Revision: 1}),
-		Source:           coalesceStr(req.Source, "manual"),
-		Metadata:         req.Metadata,
-		CreatedBy:        &userID,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		Tags:                req.Tags,
+		Categories:          req.Categories,
+		WordCount:           wordCount,
+		ReadingTime:         readingTime,
+		Revision:            1,
+		Checksum:            s.val.ComputeChecksum(&Publication{Title: req.Title, Content: req.Content, Slug: slug, Tags: req.Tags, Categories: req.Categories, Revision: 1}),
+		Source:              coalesceStr(req.Source, "manual"),
+		Metadata:            req.Metadata,
+		CreatedBy:           &userID,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	// The social card (og_image) and the featured image must agree: when only
 	// one of them is provided, mirror it onto the other so the public article
@@ -431,24 +430,28 @@ func (s *Service) PublishArticle(ctx context.Context, siteID, userID uuid.UUID, 
 
 func (s *Service) PublishGeneratedArticle(ctx context.Context, req PublishGeneratedRequest) (*Publication, error) {
 	pubReq := PublishRequest{
-		Title:            req.Title,
-		Content:          req.Content,
-		Excerpt:          req.Excerpt,
-		Slug:             req.Slug,
-		Language:         req.Language,
-		MetaTitle:        req.MetaTitle,
-		MetaDescription:  req.MetaDescription,
-		FeaturedImageURL: req.FeaturedImageURL,
-		FeaturedImageAlt: req.FeaturedImageAlt,
+		Title:               req.Title,
+		Content:             req.Content,
+		Excerpt:             req.Excerpt,
+		Slug:                req.Slug,
+		Language:            req.Language,
+		MetaTitle:           req.MetaTitle,
+		MetaDescription:     req.MetaDescription,
+		FeaturedImageURL:    req.FeaturedImageURL,
+		FeaturedImageAlt:    req.FeaturedImageAlt,
 		FeaturedImageCredit: req.FeaturedImageCredit,
-		Tags:             req.Tags,
-		Categories:       req.Categories,
-		Source:           coalesceStr(req.Source, "generated"),
+		Tags:                req.Tags,
+		Categories:          req.Categories,
+		Source:              coalesceStr(req.Source, "generated"),
 	}
 	// Site-level pin (e.g. AIWorkSimple = English-only): generated content
 	// is always published in the site's pinned language when no explicit
 	// language was requested; otherwise the site's primary language applies.
-	pubReq.Language = s.effectiveLanguage(ctx, req.SiteID, req.Language)
+	lang, err := s.effectiveLanguage(ctx, req.SiteID, req.Language)
+	if err != nil {
+		return nil, err
+	}
+	pubReq.Language = lang
 	keyword := req.Keyword // "" → enhancer/gate derive deterministically from title+content
 	var enhMeta string
 	var enh *ContentEnhancement
@@ -608,7 +611,10 @@ func (s *Service) UpdatePublication(ctx context.Context, siteID, userID uuid.UUI
 		if exists {
 			return nil, ErrDuplicateSlug
 		}
-		sc := s.resolveSiteContext(ctx, siteID)
+		sc, err := s.resolveSiteContext(ctx, siteID)
+		if err != nil {
+			return nil, err
+		}
 		updates["slug"] = newSlug
 		updates["url"] = s.val.GenerateURL(newSlug, existing.Language, sitelang.Resolve(siteID, sc.PrimaryLanguage), sc.Domain)
 		if existing.CanonicalURL == "" || strings.Contains(existing.CanonicalURL, existing.Slug) {
@@ -657,7 +663,10 @@ func (s *Service) UpdatePublication(ctx context.Context, siteID, userID uuid.UUI
 		updates["canonical_url"] = s.val.SanitizeURL(*req.CanonicalURL)
 	}
 	if req.Translations != nil {
-		sc := s.resolveSiteContext(ctx, siteID)
+		sc, err := s.resolveSiteContext(ctx, siteID)
+		if err != nil {
+			return nil, err
+		}
 		updates["translations"] = *req.Translations
 		updates["multilingual_urls"] = buildMultilingualURLs(*req.Translations, existing.Slug, sc.Domain, sitelang.Resolve(siteID, sc.PrimaryLanguage))
 		changes["translations"] = map[string]interface{}{"changed": true}
@@ -1020,11 +1029,16 @@ func (s *Service) GenerateSlug(ctx context.Context, siteID uuid.UUID, title stri
 
 // GenerateSlugURL returns the preview URL for a slug in the site's effective
 // (primary + pinned) language and resolved domain. It is used by the
-// generate-slug endpoint so the returned URL reflects the real site.
-func (s *Service) GenerateSlugURL(ctx context.Context, siteID uuid.UUID, slug string) string {
-	sc := s.resolveSiteContext(ctx, siteID)
+// generate-slug endpoint so the returned URL reflects the real site. It
+// returns an explicit error when the site has no verified domain, so the
+// endpoint never emits a placeholder domain.
+func (s *Service) GenerateSlugURL(ctx context.Context, siteID uuid.UUID, slug string) (string, error) {
+	sc, err := s.resolveSiteContext(ctx, siteID)
+	if err != nil {
+		return "", err
+	}
 	prim := sitelang.Resolve(siteID, sc.PrimaryLanguage)
-	return s.val.GenerateURL(slug, prim, prim, sc.Domain)
+	return s.val.GenerateURL(slug, prim, prim, sc.Domain), nil
 }
 
 // --- SEO Events ---

@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"nexora/internal/pkg/config"
 	"nexora/internal/pkg/database"
 	"nexora/internal/pkg/logger"
+	"nexora/internal/pkg/sitedomain"
 )
 
 func TestNewService(t *testing.T) {
@@ -36,6 +38,13 @@ func setupMockDB(t *testing.T) (*Service, pgxmock.PgxPoolIface) {
 
 	svc := NewService(cfg, log, &database.Database{Pool: mock}, nil)
 	svc.auditLog = audit.New(nil, log)
+	// Publishing resolves the site domain before touching the DB; tests that
+	// reach DB-backed paths need a deterministic resolver so the site context
+	// never blocks on a placeholder-domain failure.
+	svc.SetSiteResolver(&fakeSiteResolver{sc: sitedomain.SiteContext{
+		Domain:          "https://testsite.local",
+		PrimaryLanguage: "pt",
+	}})
 	return svc, mock
 }
 
@@ -319,8 +328,8 @@ func TestPublishArticle_NoDB(t *testing.T) {
 		Title:    "Test",
 		Language: "pt",
 	})
-	if err != ErrDatabaseNotAvail {
-		t.Errorf("expected ErrDatabaseNotAvail, got %v", err)
+	if !errors.Is(err, ErrDomainUnresolved) {
+		t.Errorf("expected ErrDomainUnresolved (no resolver → refuses to publish without a domain), got %v", err)
 	}
 }
 

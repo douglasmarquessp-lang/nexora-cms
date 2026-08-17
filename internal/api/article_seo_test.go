@@ -147,8 +147,52 @@ func TestDeriveSiteDomain(t *testing.T) {
 	if d := deriveSiteDomain("http://sub.example.org/path"); d != "http://sub.example.org" {
 		t.Errorf("unexpected domain: %q", d)
 	}
-	if d := deriveSiteDomain(""); d != "https://example.com" {
-		t.Errorf("expected fallback domain, got %q", d)
+	if d := deriveSiteDomain(""); d != "" {
+		t.Errorf("expected empty domain (no placeholder fallback), got %q", d)
+	}
+	if d := deriveSiteDomain("https://example.com/x"); d != "" {
+		t.Errorf("expected empty domain for example.com, got %q", d)
+	}
+	if d := deriveSiteDomain("https://sub.example.com/x"); d != "" {
+		t.Errorf("expected empty domain for subdomain of example.com, got %q", d)
+	}
+	if d := deriveSiteDomain("not a url", "https://meusite.com"); d != "https://meusite.com" {
+		t.Errorf("expected real domain to win, got %q", d)
+	}
+}
+
+func TestBuildArticleSEO_SuppressesPlaceholderURLs(t *testing.T) {
+	// A legacy publication still carrying an example.com URL must never emit
+	// it into hreflang or schema output.
+	pub := pubFixture()
+	pub.URL = "https://example.com/guia-ia"
+	pub.CanonicalURL = "https://example.com/guia-ia"
+	pub.MultilingualURLs = map[string]interface{}{
+		"pt": "https://example.com/guia-ia",
+		"en": "https://example.com/en/guia-ia",
+	}
+
+	seo := buildArticleSEO(pub, "")
+	if len(seo.Hreflang) != 0 {
+		t.Errorf("expected no hreflang for placeholder URLs, got %v", seo.Hreflang)
+	}
+	joined := strings.Join(append(seo.SchemaJSONLD, seo.SiteSchemaJSONLD...), " ")
+	if strings.Contains(joined, "example.com") {
+		t.Errorf("placeholder domain leaked into schemas: %s", joined)
+	}
+	if len(seo.SiteSchemaJSONLD) != 0 {
+		t.Errorf("expected no site schemas without a resolved domain, got %v", seo.SiteSchemaJSONLD)
+	}
+}
+
+func TestBuildArticleSEO_SuppressesPlaceholderSiteDomain(t *testing.T) {
+	// Even if a caller passes an example.com site domain, it must not reach
+	// the breadcrumb/site schemas.
+	pub := pubFixture()
+	seo := buildArticleSEO(pub, "https://example.com")
+	joined := strings.Join(append(seo.SchemaJSONLD, seo.SiteSchemaJSONLD...), " ")
+	if strings.Contains(joined, "example.com") {
+		t.Errorf("placeholder site domain leaked into schemas: %s", joined)
 	}
 }
 
