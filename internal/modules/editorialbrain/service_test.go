@@ -240,29 +240,86 @@ func TestCheckEditorialScoreFromReview(t *testing.T) {
 	}
 }
 
-func TestCheckEditorialScoreFailOpen(t *testing.T) {
+// TestCheckEditorialScoreNoDB asserts the gate never fabricates a score: an
+// infrastructure failure is a real error, not a silent 100.
+func TestCheckEditorialScoreNoDB(t *testing.T) {
 	svc := NewService(&config.Config{}, logger.New(&config.Config{}), nil)
 	score, err := svc.CheckEditorialScore(context.Background(), publisher.EditorialGateInput{
 		SiteID: uuid.New(), Title: "x", Content: "y",
 	})
-	if err != nil || score != 100 {
-		t.Errorf("expected fail-open 100, got %v / %v", score, err)
+	if err == nil {
+		t.Errorf("expected error without database, got score %v", score)
 	}
+	if score != 0 {
+		t.Errorf("expected score 0 on error, got %v", score)
+	}
+}
 
+// TestCheckEditorialScoreNoReview asserts the gate signals absence instead of
+// fabricating a score: the caller (publisher) decides the disposition.
+func TestCheckEditorialScoreNoReview(t *testing.T) {
 	m, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	svc = newTestSvc(t, m)
+	svc := newTestSvc(t, m)
 	m.ExpectQuery(`SELECT final_score FROM editorial_reviews`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(pgx.ErrNoRows)
-	score, err = svc.CheckEditorialScore(context.Background(), publisher.EditorialGateInput{
+	score, err := svc.CheckEditorialScore(context.Background(), publisher.EditorialGateInput{
 		SiteID: uuid.New(), Title: "x", Content: "y",
 	})
-	if err != nil || score != 100 {
-		t.Errorf("expected fail-open 100 on no rows, got %v / %v", score, err)
+	if !errors.Is(err, publisher.ErrNoEditorialReview) {
+		t.Errorf("expected ErrNoEditorialReview, got %v", err)
+	}
+	if score != 0 {
+		t.Errorf("expected score 0 without review, got %v", score)
+	}
+}
+
+// TestReviewForGate asserts the auto-publish reviewer runs a full, real
+// editorial review and returns its final note (never a fabricated value).
+func TestReviewForGate(t *testing.T) {
+	m, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	svc := newTestSvc(t, m)
+	siteID := uuid.New()
+
+	// ReviewArticle persists: 1 review + 1 block + 1 evidence + 1 audit row.
+	m.ExpectExec(`INSERT INTO editorial_reviews`).
+		WithArgs(pgxmock.AnyArg(), siteID, pgxmock.AnyArg(), pgxmock.AnyArg(), "O Gemini 3", pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "needs_review",
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	m.ExpectExec(`INSERT INTO editorial_block_scores`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), siteID, pgxmock.AnyArg(),
+			pgxmock.AnyArg(), 0, pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	m.ExpectExec(`INSERT INTO editorial_evidence`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), siteID, pgxmock.AnyArg(), false,
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	m.ExpectExec(`INSERT INTO audit_log`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "editorial.review_created", "editorial_review",
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	score, err := svc.ReviewForGate(context.Background(), publisher.EditorialGateInput{
+		SiteID: siteID, Title: "O Gemini 3", Content: "O Gemini 3 foi lançado em 2026.", Language: "pt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score <= 0 || score > 100 {
+		t.Errorf("final note out of range: %v", score)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -122,8 +122,9 @@ func stepsBefore(step string, list []string) []string {
 
 // expectMappedStep queues the mocked DB sequence for one AI-mapped workflow
 // step: getStepByName -> mark running -> mark completed -> current_step ->
-// calcProgress (listSteps) -> progress write -> getJobByID rebuild.
-func expectMappedStep(t *testing.T, mock pgxmock.PgxPoolIface, jobID uuid.UUID, step string, done []string) {
+// calcProgress (listSteps) -> progress write -> getJobByID rebuild. wordCount
+// feeds the rebuild row (in production the persisted job word_count).
+func expectMappedStep(t *testing.T, mock pgxmock.PgxPoolIface, jobID uuid.UUID, step string, done []string, wordCount int) {
 	t.Helper()
 
 	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
@@ -153,7 +154,7 @@ func expectMappedStep(t *testing.T, mock pgxmock.PgxPoolIface, jobID uuid.UUID, 
 
 	mock.ExpectQuery(`SELECT .+ FROM workflow_jobs WHERE`).
 		WithArgs(jobID, pgxmock.AnyArg()).
-		WillReturnRows(wfJobRow(jobID, uuid.New(), JobStatusRunning, progress))
+		WillReturnRows(wfJobRowWC(jobID, uuid.New(), JobStatusRunning, progress, "pt", wordCount))
 }
 
 // TestExecuteWorkflow_PublisherStepFailsOnGate verifies that when publishing is
@@ -195,7 +196,7 @@ func TestExecuteWorkflow_PublisherStepFailsOnGate(t *testing.T) {
 			continue
 		}
 		done := stepsBefore(step, wfMappedSteps)
-		expectMappedStep(t, mock, jobID, step, done)
+		expectMappedStep(t, mock, jobID, step, done, 0)
 	}
 
 	// publisher: running then failed by the blocked publish
@@ -267,7 +268,7 @@ func TestExecuteWorkflow_PublisherStepSuccess(t *testing.T) {
 		WithArgs(jobID, siteID).
 		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, 0))
 
-	expectStepsThroughPublisher(t, mock, jobID, pubID)
+	expectStepsThroughPublisher(t, mock, jobID, pubID, 0)
 
 	// finished: only executed after the publisher step succeeded
 	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
@@ -315,7 +316,7 @@ func TestExecuteWorkflow_PublisherStepSuccess(t *testing.T) {
 // publish-flow tests: job load, mapped steps (human_writer skipped), publisher
 // step success (publication created), progress calc, and the immediate
 // publication_id persistence on the job row.
-func expectStepsThroughPublisher(t *testing.T, mock pgxmock.PgxPoolIface, jobID, pubID uuid.UUID) {
+func expectStepsThroughPublisher(t *testing.T, mock pgxmock.PgxPoolIface, jobID, pubID uuid.UUID, wordCount int) {
 	t.Helper()
 	for _, step := range wfMockStepOrder {
 		if step == "human_writer" {
@@ -329,7 +330,7 @@ func expectStepsThroughPublisher(t *testing.T, mock pgxmock.PgxPoolIface, jobID,
 			continue
 		}
 		done := stepsBefore(step, wfMappedSteps)
-		expectMappedStep(t, mock, jobID, step, done)
+		expectMappedStep(t, mock, jobID, step, done, wordCount)
 	}
 
 	// publisher: running -> success (publication created)
@@ -435,7 +436,7 @@ func TestExecuteWorkflow_PostPublishFailureCompletesJob(t *testing.T) {
 		WithArgs(jobID, siteID).
 		WillReturnRows(wfJobRow(jobID, siteID, JobStatusRunning, 0))
 
-	expectStepsThroughPublisher(t, mock, jobID, pubID)
+	expectStepsThroughPublisher(t, mock, jobID, pubID, 0)
 
 	// finished: the final-review stage fails (provider outage)
 	mock.ExpectQuery(`SELECT .+ FROM workflow_steps WHERE workflow_job_id = \$1 AND step_name = \$2`).
@@ -503,7 +504,7 @@ func TestExecuteWorkflow_NoPublicationFailsJob(t *testing.T) {
 			continue
 		}
 		done := stepsBefore(step, wfMappedSteps)
-		expectMappedStep(t, mock, jobID, step, done)
+		expectMappedStep(t, mock, jobID, step, done, 0)
 	}
 
 	// publisher step: skipped (nil publisherSvc), no publication produced
