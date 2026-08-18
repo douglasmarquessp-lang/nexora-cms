@@ -86,7 +86,9 @@ async function fetchAPI<T>(
     try {
       const body = await res.json();
       code = body?.error?.code || code;
-    } catch {}
+    } catch {
+      // response body may not be JSON — keep the default code
+    }
     throw new ApiError(res.status, code, `API request failed: ${res.statusText}`);
   }
 

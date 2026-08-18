@@ -1,4 +1,5 @@
 import type { Article } from "@/site/lib/api";
+import Link from "next/link";
 import ArticleCard from "./ArticleCard";
 
 interface ArticleListProps {
@@ -43,7 +44,7 @@ export default function ArticleList({ articles, total }: ArticleListProps) {
 
       {articles.length >= 9 && total > articles.length && (
         <div className="mt-10 text-center">
-          <a
+          <Link
             href="/artigos"
             className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-700 transition-all hover:bg-gray-50 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
@@ -51,7 +52,7 @@ export default function ArticleList({ articles, total }: ArticleListProps) {
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
             </svg>
-          </a>
+          </Link>
         </div>
       )}
     </section>

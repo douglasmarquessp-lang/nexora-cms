@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getArticleBySlug, formatDate, readingTimeLabel } from "@/site/lib/api";
+import { isFeaturedImageEmbedded } from "@/site/lib/featuredImage";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -75,15 +76,16 @@ export default async function ArticlePage({ params }: Props) {
           )}
         </div>
 
-        {article.featured_image_url && (
-          <div className="mb-8 rounded-lg overflow-hidden">
-            <img
-              src={article.featured_image_url}
-              alt={article.title}
-              className="w-full h-auto object-cover"
-            />
-          </div>
-        )}
+        {article.featured_image_url &&
+          !isFeaturedImageEmbedded(article.featured_image_url, article.content) && (
+            <div className="mb-8 rounded-lg overflow-hidden">
+              <img
+                src={article.featured_image_url}
+                alt={article.title}
+                className="w-full h-auto object-cover"
+              />
+            </div>
+          )}
 
         {article.excerpt && (
           <p className="text-xl text-gray-600 mb-8 leading-relaxed">
