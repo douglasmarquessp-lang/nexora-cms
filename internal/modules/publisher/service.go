@@ -368,6 +368,18 @@ func (s *Service) publishArticleInternal(ctx context.Context, siteID, userID uui
 		return nil, ErrTitleRequired
 	}
 
+	if req.PostID != nil {
+		if err := s.checkQualityGate(ctx, QualityGateInput{
+			SiteID:      siteID,
+			Title:       req.Title,
+			Content:     req.Content,
+			Language:    req.Language,
+			ContentType: "article",
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	sc, err := s.resolveSiteContext(ctx, siteID)
 	if err != nil {
 		return nil, err

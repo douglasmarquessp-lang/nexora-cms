@@ -60,8 +60,8 @@ func TestPexelsClient_SearchImage_Success(t *testing.T) {
 		if r.URL.Query().Get("orientation") != "landscape" {
 			t.Errorf("expected landscape orientation, got %q", r.URL.Query().Get("orientation"))
 		}
-		if r.URL.Query().Get("per_page") != "1" {
-			t.Errorf("expected per_page=1, got %q", r.URL.Query().Get("per_page"))
+		if r.URL.Query().Get("per_page") != "15" {
+			t.Errorf("expected per_page=15, got %q", r.URL.Query().Get("per_page"))
 		}
 	})
 	defer srv.Close()

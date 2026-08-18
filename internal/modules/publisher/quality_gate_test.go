@@ -301,3 +301,26 @@ func TestPublishGeneratedArticle_QualityGateFailsOpen(t *testing.T) {
 		t.Errorf("expected fail-open to the SEO gate on quality gate error, got %v", err)
 	}
 }
+
+func TestPublishArticle_PostID_QualityGateEnforcement(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.SEO.MinPublishScore = 80
+	log := logger.New(cfg)
+	svc := NewService(cfg, log, nil, nil)
+	fq := &fakeQualityGate{passed: false}
+	svc.SetQualityGate(fq)
+
+	postID := uuid.New()
+	_, err := svc.PublishArticle(context.Background(), uuid.New(), uuid.New(), PublishRequest{
+		PostID:   &postID,
+		Title:    "Artigo Curto",
+		Content:  "conteúdo raso",
+		Language: "pt",
+	})
+	if !errors.Is(err, ErrQualityGateBlocked) {
+		t.Errorf("expected ErrQualityGateBlocked for manual PublishArticle with PostID, got %v", err)
+	}
+	if fq.calls != 1 {
+		t.Errorf("expected the quality gate to run exactly once for manual PublishArticle with PostID, got %d", fq.calls)
+	}
+}

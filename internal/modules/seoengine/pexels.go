@@ -77,7 +77,7 @@ func (c *PexelsClient) SearchImage(ctx context.Context, query string) (*PexelsIm
 	q := u.Query()
 	q.Set("query", strings.TrimSpace(query))
 	q.Set("orientation", "landscape")
-	q.Set("per_page", "1")
+	q.Set("per_page", "15")
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -135,7 +135,13 @@ func parsePexelsSearchResponse(body []byte, query string) (*PexelsImage, error) 
 	if len(parsed.Photos) == 0 {
 		return nil, ErrPexelsNoResults
 	}
-	p := parsed.Photos[0]
+	// Select a pseudo-random index to avoid duplicate images across different articles with the same keyword.
+	// Using time-based seed ensures high variety in production, while keeping index 0 for single-photo test mocks.
+	idx := int(time.Now().UnixNano()) % len(parsed.Photos)
+	if idx < 0 {
+		idx = 0
+	}
+	p := parsed.Photos[idx]
 	if p.Src.Large == "" {
 		return nil, fmt.Errorf("%w: photo without image url", ErrPexelsUnavailable)
 	}
